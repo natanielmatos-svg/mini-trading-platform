@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Mini Plataforma de Trading - Binance MTF Pro</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #0f172a;
+      color: #e5e7eb;
+      margin: 0;
+      padding: 0;
+    }
+    header {
+      padding: 10px 20px;
+      background: #020617;
+      border-bottom: 1px solid #1f2937;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 18px;
+    }
+    header .symbol-inputs {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      flex-wrap: wrap;
+    }
+    header input, header select, header button {
+      font-size: 12px;
+      padding: 4px 6px;
+      border-radius: 4px;
+      border: 1px solid #1f2937;
+      background: #020617;
+      color: #e5e7eb;
+    }
+    header button {
+      cursor: pointer;
+    }
+    .container {
+      display: flex;
+      padding: 20px;
+      gap: 20px;
+      box-sizing: border-box;
+      flex-wrap: wrap;
+    }
+    .chart-area {
+      flex: 3;
+      min-width: 280px;
+      background: #020617;
+      border-radius: 8px;
+      border: 1px solid #1f2937;
+      min-height: 360px;
+      position: relative;
+      overflow: hidden;
+    }
+    #priceChart {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    .side-panel {
+      flex: 1;
+      min-width: 260px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .card {
+      background: #020617;
+      border-radius: 8px;
+      border: 1px solid #1f2937;
+      padding: 12px;
+    }
+    .card h2 {
+      margin: 0 0 10px 0;
+      font-size: 14px;
+      color: #e5e7eb;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      text-align: center;
+    }
+    th, td {
+      padding: 6px 4px;
+      border: 1px solid #1f2937;
+    }
+    th {
+      background: #1f2937;
+      color: #e5e7eb;
+    }
+    .bull {
+      background: #16a34a;
+      color: #f9fafb;
+      font-weight: bold;
+    }
+    .bear {
+      background: #dc2626;
+      color: #f9fafb;
+      font-weight: bold;
+    }
+    label {
+      font-size: 12px;
+      display: block;
+      margin-bottom: 4px;
+    }
+    input {
+      width: 100%;
+      padding: 4px 6px;
+      border-radius: 4px;
+      border: 1px solid #1f2937;
+      background: #020617;
+      color: #e5e7eb;
+      font-size: 12px;
+      box-sizing: border-box;
+    }
+    p.note {
+      margin-top: 8px;
+      font-size: 11px;
+      color: #9ca3af;
+    }
+    .status {
+      font-size: 11px;
+      color: #9ca3af;
+      margin-top: 4px;
+      white-space: pre-line;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Mini Plataforma de Trading</h1>
+    <div class="symbol-inputs">
+      <span>Binance:</span>
+      <label>
+        Símbolo
+        <input id="symbolInput" value="BTCUSDT" style="width:90px;" />
+      </label>
+      <label>
+        Timeframe gráfico
+        <select id="intervalSelect">
+          <option value="1m">1m</option>
+          <option value="5m">5m</option>
+          <option value="15m">15m</option>
+          <option value="1h" selected>1h</option>
+          <option value="4h">4h</option>
+          <option value="1d">1d</option>
+        </select>
+      </label>
+      <button id="loadBtn">Cargar datos</button>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="chart-area">
+      <canvas id="priceChart"></canvas>
+    </div>
+
+    <div class="side-panel">
+      <div class="card">
+        <h2>Parámetros de EMAs</h2>
+        <label for="emaFast">EMA rápida:</label>
+        <input type="number" id="emaFast" value="20" min="1" />
+        <label for="emaSlow" style="margin-top:8px;">EMA lenta:</label>
+        <input type="number" id="emaSlow" value="50" min="1" />
+        <div class="status" id="statusText">Estado: esperando datos...</div>
+      </div>
+
+      <div class="card">
+        <h2>Tendencia Multi-Timeframe (H1 / H4 / D1 / W1)</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>H1</th>
+              <th>H4</th>
+              <th>D1</th>
+              <th>W1</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td id="cell-h1">-</td>
+              <td id="cell-h4">-</td>
+              <td id="cell-d1">-</td>
+              <td id="cell-w1">-</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="note">
+          Datos OHLC reales desde Binance vía tu backend /api/klines.<br>
+          Cada celda usa su propio timeframe (1h, 4h, 1d, 1w) para EMA rápida vs lenta.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function ema(values, length) {
+      if (!values || values.length === 0 || length <= 0) return null;
+      const k = 2 / (length + 1);
+      let emaPrev = values[0];
+      for (let i = 1; i < values.length; i++) {
+        emaPrev = values[i] * k + emaPrev * (1 - k);
+      }
+      return emaPrev;
+    }
+
+    function emaSeries(values, length) {
+      if (!values || values.length === 0 || length <= 0) return [];
+      const k = 2 / (length + 1);
+      let emaPrev = values[0];
+      const out = [emaPrev];
+      for (let i = 1; i < values.length; i++) {
+        emaPrev = values[i] * k + emaPrev * (1 - k);
+        out.push(emaPrev);
+      }
+      return out;
+    }
+
+    let chartCandles = [];
+    let closesH1 = [];
+    let closesH4 = [];
+    let closesD1 = [];
+    let closesW1 = [];
+
+    const priceChartCanvas = document.getElementById("priceChart");
+    const ctx = priceChartCanvas.getContext("2d");
+    const statusText = document.getElementById("statusText");
+
+    function resizeCanvas() {
+      priceChartCanvas.width = priceChartCanvas.clientWidth;
+      priceChartCanvas.height = priceChartCanvas.clientHeight;
+      drawChart();
+    }
+    window.addEventListener("resize", resizeCanvas);
+
+    function drawChart() {
+      const w = priceChartCanvas.width;
+      const h = priceChartCanvas.height;
+      if (w === 0 || h === 0) return;
+
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = "#020617";
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.strokeStyle = "#1f2937";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(40, 10);
+      ctx.lineTo(40, h - 20);
+      ctx.lineTo(w - 10, h - 20);
+      ctx.stroke();
+
+      if (!chartCandles || chartCandles.length < 2) return;
+
+      const highs = chartCandles.map(c => c.high);
+      const lows = chartCandles.map(c => c.low);
+      const minPrice = Math.min(...lows);
+      const maxPrice = Math.max(...highs);
+
+      const plotWidth = w - 50;
+      const plotHeight = h - 40;
+      const xStep = plotWidth / (chartCandles.length - 1 || 1);
+      const candleWidth = Math.max(2, xStep * 0.6);
+
+      function yFromPrice(price) {
+        const range = maxPrice - minPrice || 1;
+        const normalized = (price - minPrice) / range;
+        return (h - 20) - normalized * plotHeight;
+      }
+
+      for (let i = 0; i < chartCandles.length; i++) {
+        const c = chartCandles[i];
+        const x = 40 + i * xStep;
+        const yOpen = yFromPrice(c.open);
+        const yClose = yFromPrice(c.close);
+        const yHigh = yFromPrice(c.high);
+        const yLow = yFromPrice(c.low);
+        const isBull = c.close >= c.open;
+
+        ctx.strokeStyle = isBull ? "#22c55e" : "#ef4444";
+        ctx.fillStyle = isBull ? "#22c55e" : "#ef4444";
+
+        ctx.beginPath();
+        ctx.moveTo(x, yHigh);
+        ctx.lineTo(x, yLow);
+        ctx.stroke();
+
+        const bodyTop = Math.min(yOpen, yClose);
+        const bodyBottom = Math.max(yOpen, yClose);
+        const bodyHeight = Math.max(1, bodyBottom - bodyTop);
+        ctx.fillRect(x - candleWidth / 2, bodyTop, candleWidth, bodyHeight);
+      }
+
+      const closes = chartCandles.map(c => c.close);
+      const lenFast = parseInt(document.getElementById("emaFast").value, 10);
+      const lenSlow = parseInt(document.getElementById("emaSlow").value, 10);
+
+      const emaFastSeries = emaSeries(closes, lenFast);
+      const emaSlowSeries = emaSeries(closes, lenSlow);
+
+      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = "#38bdf8";
+      ctx.beginPath();
+      emaFastSeries.forEach((val, i) => {
+        const x = 40 + i * xStep;
+        const y = yFromPrice(val);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      ctx.strokeStyle = "#f97316";
+      ctx.beginPath();
+      emaSlowSeries.forEach((val, i) => {
+        const x = 40 + i * xStep;
+        const y = yFromPrice(val);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      const lastPrice = closes[closes.length - 1];
+      const lastY = yFromPrice(lastPrice);
+      ctx.fillStyle = "#e5e7eb";
+      ctx.font = "11px Arial";
+      ctx.fillText(lastPrice.toFixed(2), 5, lastY + 4);
+    }
+
+    const cellH1 = document.getElementById("cell-h1");
+    const cellH4 = document.getElementById("cell-h4");
+    const cellD1 = document.getElementById("cell-d1");
+    const cellW1 = document.getElementById("cell-w1");
+    const emaFastInput = document.getElementById("emaFast");
+    const emaSlowInput = document.getElementById("emaSlow");
+
+    function setCellTrend(cell, fast, slow) {
+      cell.classList.remove("bull", "bear");
+      if (fast == null || slow == null) {
+        cell.textContent = "-";
+        return;
+      }
+      if (fast > slow) {
+        cell.textContent = "Alcista";
+        cell.classList.add("bull");
+      } else {
+        cell.textContent = "Bajista";
+        cell.classList.add("bear");
+      }
+    }
+
+    function updateTable() {
+      const lenFast = parseInt(emaFastInput.value, 10);
+      const lenSlow = parseInt(emaSlowInput.value, 10);
+
+      const fastH1 = ema(closesH1, lenFast);
+      const slowH1 = ema(closesH1, lenSlow);
+      const fastH4 = ema(closesH4, lenFast);
+      const slowH4 = ema(closesH4, lenSlow);
+      const fastD1 = ema(closesD1, lenFast);
+      const slowD1 = ema(closesD1, lenSlow);
+      const fastW1 = ema(closesW1, lenFast);
+      const slowW1 = ema(closesW1, lenSlow);
+
+      setCellTrend(cellH1, fastH1, slowH1);
+      setCellTrend(cellH4, fastH4, slowH4);
+      setCellTrend(cellD1, fastD1, slowD1);
+      setCellTrend(cellW1, fastW1, slowW1);
+    }
+
+    emaFastInput.addEventListener('input', () => {
+      updateTable();
+      drawChart();
+    });
+    emaSlowInput.addEventListener('input', () => {
+      updateTable();
+      drawChart();
+    });
+
+    async function fetchKlines(symbol, interval, limit = 300) {
+      const url = `/api/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${encodeURIComponent(limit)}`;
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        throw new Error("HTTP " + resp.status + " al pedir " + url);
+      }
+      const data = await resp.json();
+      return data.map(k => ({
+        open: parseFloat(k[1]),
+        high: parseFloat(k[2]),
+        low: parseFloat(k[3]),
+        close: parseFloat(k[4]),
+      }));
+    }
+
+    async function loadData() {
+      const symbol = document.getElementById('symbolInput').value.trim().toUpperCase() || 'BTCUSDT';
+      const interval = document.getElementById('intervalSelect').value;
+
+      statusText.textContent = `Estado: cargando ${symbol} (gráfico: ${interval}, MTF: 1h/4h/1d/1w)...`;
+
+      try {
+        chartCandles = await fetchKlines(symbol, interval);
+
+        const [candH1, candH4, candD1, candW1] = await Promise.all([
+          fetchKlines(symbol, '1h'),
+          fetchKlines(symbol, '4h'),
+          fetchKlines(symbol, '1d'),
+          fetchKlines(symbol, '1w'),
+        ]);
+
+        closesH1 = candH1.map(c => c.close);
+        closesH4 = candH4.map(c => c.close);
+        closesD1 = candD1.map(c => c.close);
+        closesW1 = candW1.map(c => c.close);
+
+        statusText.textContent =
+          `Estado: datos cargados OK para ${symbol}.
+` +
+          `Velas gráfico: ${chartCandles.length}
+` +
+          `H1/H4/D1/W1: ${closesH1.length}/${closesH4.length}/${closesD1.length}/${closesW1.length}`;
+
+        updateTable();
+        drawChart();
+      } catch (err) {
+        console.error(err);
+        statusText.textContent =
+          "Estado: error cargando datos.
+" +
+          "Mensaje: " + err.message + "\n" +
+          "Verifica que el servidor en la nube esté funcionando.";
+      }
+    }
+
+    document.getElementById('loadBtn').addEventListener('click', loadData);
+
+    setInterval(() => {
+      const symbol = document.getElementById('symbolInput').value.trim();
+      if (symbol) loadData();
+    }, 60000);
+
+    function init() {
+      resizeCanvas();
+      loadData();
+    }
+    window.addEventListener('load', init);
+  </script>
+</body>
+</html>
