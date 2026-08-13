@@ -1,0 +1,76 @@
+[
+  {
+    "id": "18001",
+    "slug": "presidential-election-winner-2028",
+    "ticker": "presidential-election-winner-2028",
+    "title": "Presidential Election Winner 2028",
+    "endDate": "2028-11-07T12:00:00Z",
+    "negRisk": true,
+    "liquidity": "4200000",
+    "volume": "91000000",
+    "markets": [
+      {
+        "id": "5101",
+        "question": "Will Gavin Newsom win the 2028 US Presidential Election?",
+        "groupItemTitle": "Gavin Newsom",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "outcomePrices": "[\"0.45\", \"0.55\"]",
+        "bestBid": 0.44,
+        "bestAsk": 0.46,
+        "volumeNum": 41000000,
+        "liquidityNum": 1900000,
+        "closed": false,
+        "endDate": "2028-11-07T12:00:00Z"
+      },
+      {
+        "id": "5102",
+        "question": "Will JD Vance win the 2028 US Presidential Election?",
+        "groupItemTitle": "JD Vance",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "outcomePrices": "[\"0.38\", \"0.62\"]",
+        "bestBid": 0.37,
+        "bestAsk": 0.39,
+        "volumeNum": 36000000,
+        "liquidityNum": 1600000,
+        "closed": false,
+        "endDate": "2028-11-07T12:00:00Z"
+      },
+      {
+        "id": "5103",
+        "question": "Will Josh Shapiro win the 2028 US Presidential Election?",
+        "groupItemTitle": "Josh Shapiro",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "outcomePrices": "[\"0.20\", \"0.80\"]",
+        "bestBid": 0.19,
+        "bestAsk": 0.21,
+        "volumeNum": 14000000,
+        "liquidityNum": 700000,
+        "closed": false,
+        "endDate": "2028-11-07T12:00:00Z"
+      }
+    ]
+  },
+  {
+    "id": "18002",
+    "slug": "fed-decision-december-2026",
+    "title": "Fed decreases interest rates in December 2026?",
+    "endDate": "2026-12-16T19:00:00Z",
+    "negRisk": false,
+    "liquidity": "880000",
+    "volume": "12400000",
+    "markets": [
+      {
+        "id": "5201",
+        "question": "Fed decreases interest rates in December 2026?",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "outcomePrices": "[\"0.63\", \"0.37\"]",
+        "bestBid": 0.62,
+        "bestAsk": 0.64,
+        "volumeNum": 12400000,
+        "liquidityNum": 880000,
+        "closed": false,
+        "endDate": "2026-12-16T19:00:00Z"
+      }
+    ]
+  }
+]

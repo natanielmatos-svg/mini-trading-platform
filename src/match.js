@@ -1,0 +1,152 @@
+'use strict';
+
+const { textSimilarity, tokenize, diceSimilarity, canonicalLabelKey } = require('./normalize');
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Peso aproximado de un evento como "ancla" de su grupo: la fuente más líquida
+// y creíble es la que fija el título y el conjunto de opciones canónicas.
+function eventWeight(event) {
+  const depth = Math.log1p((event.liquidity || 0) + (event.volume || 0) * 0.25);
+  return (event.credibility || 0.5) * (0.5 + depth);
+}
+
+// Se tokeniza la clave canónica, no la etiqueta cruda: así "Yes" de una
+// plataforma y "Sí" de otra cuentan como la misma opción al comparar eventos.
+function optionLabelTokens(event) {
+  const tokens = new Set();
+  for (const option of event.options) {
+    for (const token of tokenize(option.key || canonicalLabelKey(option.label))) {
+      tokens.add(token);
+    }
+  }
+  return tokens;
+}
+
+// Dos plataformas casi nunca escriben la pregunta igual ("Will X win the 2028
+// election?" vs "2028 Presidential Election Winner"), así que el título por sí
+// solo no basta: el conjunto de opciones aporta la otra mitad de la señal.
+function eventSimilarity(a, b) {
+  const titleScore = textSimilarity(a.title, b.title);
+  const optionScore = diceSimilarity(optionLabelTokens(a), optionLabelTokens(b));
+  return 0.65 * titleScore + 0.35 * optionScore;
+}
+
+function closeDatesCompatible(a, b, maxGapDays) {
+  if (!a.closesAt || !b.closesAt) return true; // sin fecha no se descarta
+  const gap = Math.abs(new Date(a.closesAt) - new Date(b.closesAt));
+  return gap <= maxGapDays * DAY_MS;
+}
+
+// Agrupación voraz: los eventos se ordenan por relevancia y cada uno se une al
+// primer grupo compatible. Es O(n·grupos) y suficiente para unos cientos de
+// eventos; un clustering jerárquico no cambiaría el resultado en la práctica.
+function clusterEvents(events, { threshold = 0.5, maxCloseGapDays = 30 } = {}) {
+  const sorted = [...events].sort((a, b) => eventWeight(b) - eventWeight(a));
+  const clusters = [];
+
+  for (const event of sorted) {
+    let best = null;
+    let bestScore = 0;
+
+    for (const cluster of clusters) {
+      // Una plataforma aporta como mucho un evento por grupo; como vamos de más
+      // a menos líquido, el primero en entrar es el mejor de esa plataforma.
+      if (cluster.events.some((e) => e.platform === event.platform)) continue;
+
+      const score = Math.min(
+        ...cluster.events.map((e) =>
+          closeDatesCompatible(e, event, maxCloseGapDays) ? eventSimilarity(e, event) : 0
+        )
+      );
+
+      if (score >= threshold && score > bestScore) {
+        best = cluster;
+        bestScore = score;
+      }
+    }
+
+    if (best) {
+      best.events.push(event);
+      best.matchScores.push(bestScore);
+    } else {
+      clusters.push({ events: [event], matchScores: [] });
+    }
+  }
+
+  return clusters.map((cluster) => ({
+    events: cluster.events,
+    anchor: cluster.events[0],
+    matchScore: cluster.matchScores.length
+      ? cluster.matchScores.reduce((a, b) => a + b, 0) / cluster.matchScores.length
+      : 1,
+  }));
+}
+
+const OPTION_MATCH_THRESHOLD = 0.6;
+
+// Une las opciones equivalentes de todas las plataformas del grupo. El ancla
+// define las opciones canónicas; lo que no encaje en ninguna se añade como
+// opción propia (hay plataformas que listan candidatos que otras no).
+function canonicalizeOptions(cluster) {
+  const groups = [];
+
+  const findGroup = (option) => {
+    let best = null;
+    let bestScore = OPTION_MATCH_THRESHOLD;
+
+    for (const group of groups) {
+      if (group.key && option.key && group.key === option.key) return group;
+      const score = textSimilarity(group.label, option.label);
+      if (score > bestScore) {
+        best = group;
+        bestScore = score;
+      }
+    }
+    return best;
+  };
+
+  for (const event of cluster.events) {
+    for (const option of event.options) {
+      const existing = findGroup(option);
+      const key = option.key || canonicalLabelKey(option.label);
+      const target = existing || {
+        // Una opción binaria se muestra siempre igual, venga de la plataforma
+        // que venga ("Yes", "Sí" y "True" son la misma respuesta).
+        label: key === 'yes' ? 'Sí' : key === 'no' ? 'No' : option.label,
+        key,
+        quotes: [],
+      };
+      if (!existing) groups.push(target);
+
+      const already = target.quotes.find((q) => q.platform === event.platform);
+      if (already) {
+        // Misma plataforma cotizando dos veces la misma opción: nos quedamos
+        // con la más líquida en lugar de contarla dos veces.
+        if ((option.liquidity || 0) > (already.option.liquidity || 0)) {
+          already.option = option;
+          already.event = event;
+        }
+        continue;
+      }
+
+      target.quotes.push({
+        platform: event.platform,
+        platformLabel: event.platformLabel,
+        credibility: event.credibility,
+        option,
+        event,
+      });
+    }
+  }
+
+  return groups;
+}
+
+module.exports = {
+  eventWeight,
+  eventSimilarity,
+  clusterEvents,
+  canonicalizeOptions,
+  OPTION_MATCH_THRESHOLD,
+};
