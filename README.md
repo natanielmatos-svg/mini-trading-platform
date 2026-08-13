@@ -14,6 +14,7 @@ npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet
 npm test             # 32 tests, sin red
+npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
 
 ## Qué hace el analizador
@@ -164,5 +165,6 @@ public/
   index.html           plataforma de trading
   predicciones.html    analizador de predicciones
 data/demo/             datos de ejemplo (también usados por los tests)
+scripts/build-static.js  instantánea estática autocontenida para compartir
 test/                  32 tests, sin red
 ```
