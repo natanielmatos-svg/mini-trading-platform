@@ -65,9 +65,12 @@ async function comprobarMercado() {
 // alerta: sobre datos de verdad, ¿cuántas veces habría avisado, y cómo acabó
 // cada aviso?
 //
-// Cada vela se evalúa en dos momentos, como hace la interfaz con cada tick:
-// al abrir (con la vela entera por delante, que es cuando un aviso previo
-// tiene sentido) y al cerrar (que es cuando se confirman compras y ventas).
+// Cada vela se recorre en cuatro momentos, y el orden importa: apertura (con
+// la vela entera por delante, que es cuando un aviso previo tiene sentido),
+// después el extremo que va EN CONTRA de la posición, luego el que va a
+// favor, y por último el cierre. Mirar sólo apertura y cierre daba por bueno
+// un objetivo alcanzado en una vela que antes había pasado por el stop, y eso
+// infla el resultado. Ante la duda, pierde: es la convención honesta.
 // Las señales se deduplican por su identificador, igual que en el navegador.
 function repasarSenales(candles, interval = '1h') {
   const compras = [];
@@ -84,12 +87,17 @@ function repasarSenales(candles, interval = '1h') {
     // empezar, y sin él el motor no puede emitir avisos previos.
     const analisis = analyzeBreakout(ventana, { interval, now: vela.openTime + 1, livePrice: vela.open });
 
-    const momentos = [
-      { price: vela.open, now: vela.openTime + 1, breakout: analisis },
-      { price: vela.close, now: vela.closeTime, breakout: null },
+    const medio = vela.openTime + Math.round((vela.closeTime - vela.openTime) / 2);
+    // Perezosos: el lado de la posición puede cambiar dentro de la propia vela.
+    const pasos = [
+      () => ({ price: vela.open, now: vela.openTime + 1, breakout: analisis }),
+      () => ({ price: position && position.side === 'corta' ? vela.high : vela.low, now: medio, breakout: null }),
+      () => ({ price: position && position.side === 'corta' ? vela.low : vela.high, now: medio, breakout: null }),
+      () => ({ price: vela.close, now: vela.closeTime, breakout: null }),
     ];
 
-    for (const momento of momentos) {
+    for (const paso of pasos) {
+      const momento = paso();
       const { signals, position: siguiente } = evaluateSignals({
         candles: ventana,
         position,
@@ -141,6 +149,7 @@ function repasarSenales(candles, interval = '1h') {
     `        Con 0,2% de comisión ida y vuelta quedaría en ${(neta * 100).toFixed(2)}% por operación. ` +
       `${cerradas.length} operaciones no bastan para concluir nada: es una comprobación de comportamiento, no un backtest.`
   );
+  console.log('        Los stops se miran contra el mínimo y el máximo de cada vela, y ante la duda pierde.');
 }
 
 async function main() {
