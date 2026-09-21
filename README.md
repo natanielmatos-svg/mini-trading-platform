@@ -4,7 +4,7 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 
 | Ruta | Qué es |
 |---|---|
-| `/index.html` | **Plataforma de trading**: velas de Binance en vivo, tendencia multi-timeframe con EMAs y análisis de ruptura de la vela en curso |
+| `/index.html` | **Plataforma de trading**: velas de Binance en vivo, tendencia multi-timeframe con EMAs, análisis de ruptura de la vela en curso y avisos de entrada y salida con sonido |
 | `/predicciones.html` | **Analizador de predicciones**: agrega Polymarket, Robinhood/Kalshi y Manifold y dice qué opción es la más probable de cada evento |
 
 ## Arranque
@@ -13,7 +13,7 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet (también el gráfico)
-npm test             # 113 tests, sin red
+npm test             # 137 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -90,6 +90,62 @@ Y la confirmación se separa del pronóstico: **un cierre** por encima del nivel
 con volumen por encima de 1,3× la media. Un pico que toca el nivel y vuelve
 dentro antes del cierre es un rechazo, no una ruptura.
 
+### Avisos de entrada y salida
+
+El panel de ruptura dice qué es probable; los avisos dicen **cuándo actuar**, y
+suenan aunque estés en otra pestaña. Se encienden con el interruptor de la
+tarjeta *Avisos*, que pide permiso de notificaciones y desbloquea el sonido.
+El botón *Probar* lanza una alerta de mentira para comprobar que ambos
+funcionan antes de fiarte de ellos.
+
+Tres tipos, cada uno con su sonido:
+
+| Aviso | Cuándo salta | Sonido |
+|---|---|---|
+| **Aviso previo** | La probabilidad de romper pasa del 70% y la vela sigue abierta | Dos notas iguales |
+| **Entrada** | Una vela **cierra** al otro lado del nivel con al menos 1,3× el volumen medio | Dos notas ascendentes |
+| **Salida** | Stop, objetivo, ruptura falsa o señal contraria | Dos notas descendentes |
+
+La regla que lo gobierna todo es la misma que ya definía el análisis: **una
+ruptura sólo cuenta si la vela cierra al otro lado del nivel y con volumen**.
+Un pico que toca el nivel y vuelve dentro es un rechazo, y actuar sobre él es
+la forma más habitual de perder dinero con este tipo de sistema. Por eso el
+aviso previo existe pero está separado de la entrada, y dice explícitamente que
+todavía no lo es.
+
+Al confirmarse una entrada se abre un **seguimiento en papel** con stop
+—bajo el mínimo de la vela que rompió, más un margen de 0,1 ATR— y objetivo
+—el siguiente nivel por delante, o el doble del riesgo si no hay ninguno—. Ese
+seguimiento se dibuja en el gráfico y se cierra solo cuando salta una salida:
+
+- **Stop**: el precio vuelve al otro lado del stop.
+- **Objetivo**: el precio alcanza el nivel fijado al entrar.
+- **Ruptura falsa**: una vela posterior cierra de vuelta al lado de partida.
+  Es la trampa clásica.
+- **Señal contraria**: se confirma la ruptura del lado opuesto.
+
+Detalles que conviene saber:
+
+- **No manda ninguna orden a ningún sitio.** Es un seguimiento en papel: no
+  sabe cuánto dinero tienes ni habla con ningún bróker.
+- **Los avisos son del par que tienes abierto.** No vigila las veintinueve
+  criptos a la vez: eso serían veintinueve conexiones y otros tantos análisis.
+- **Al abrir la página no suena nada.** La primera evaluación sólo toma nota:
+  gritar por una ruptura que ocurrió mientras el navegador estaba cerrado es
+  ruido. Esas señales aparecen en el historial marcadas como anteriores.
+- **Una señal no se repite**, aunque se evalúe cien veces: cada una lleva un
+  identificador derivado de la vela que la produjo.
+- El seguimiento sobrevive a recargas (`localStorage`), y si el navegador no
+  deja guardar —modo privado— todo sigue funcionando, sólo se olvida.
+
+### Criptomonedas
+
+El desplegable trae los pares contra USDT que alguien querría mirar, agrupados
+por tipo, y una opción *Otro par…* para escribir cualquier otro. La lista vive
+en `src/symbols.js`; cuando hay red se contrasta con Binance y los pares que
+hayan dejado de cotizar no se ofrecen. Si Binance no responde, se sirve sin
+verificar antes que dejar el desplegable vacío.
+
 ### Límites del método
 
 - La muestra es **incondicional**: no sabe si la vela ya gastó su empuje. Una
@@ -98,6 +154,9 @@ dentro antes del cierre es un rechazo, no una ruptura.
 - El ATR con el que se normaliza cada vela histórica es **el previo a esa vela**,
   nunca el posterior; si no, el cálculo miraría el futuro y saldrían números
   preciosos e inútiles.
+- Los avisos heredan todos estos límites: son reglas mecánicas sobre el
+  histórico, no una lectura del mercado. No tienen en cuenta noticias, ni el
+  libro de órdenes, ni las comisiones, ni el deslizamiento.
 - Frecuencia histórica no es probabilidad futura. Es análisis de mercado, no una
   recomendación de inversión.
 
@@ -276,6 +335,19 @@ Análisis de ruptura de la vela en curso. Parámetros: `symbol`, `interval`,
 }
 ```
 
+### `GET /api/symbols`
+
+Catálogo de criptomonedas para el desplegable, agrupado. `verified` dice si se
+pudo contrastar con Binance.
+
+```jsonc
+{
+  "verified": true, "count": 29,
+  "groups": [{ "name": "Principales",
+               "symbols": [{ "symbol": "BTCUSDT", "name": "Bitcoin", "available": true }] }]
+}
+```
+
 ### `GET /api/stream`
 
 Precio en vivo por SSE. Parámetros: `symbol`, `interval`. Emite eventos `kline`
@@ -416,7 +488,10 @@ agrupan en una sola llamada, para no chocar con los rate limits.
 ```
 server.js              rutas HTTP
 src/
-  indicators.js        EMA, ATR, RSI, pivotes — lo usan el servidor Y el navegador
+  indicators.js        EMA, ATR, RSI, pivotes, niveles — servidor Y navegador
+  format.js            formato de precios y porcentajes — servidor Y navegador
+  signals.js           entradas y salidas — servidor Y navegador
+  symbols.js           catálogo de criptomonedas del desplegable
   klines.js            velas: validación, caché por timeframe y modo demo
   breakout.js          niveles, distancia en ATR y frecuencia histórica
   stream.js            WebSocket compartido hacia Binance → SSE a los clientes
@@ -429,7 +504,7 @@ src/
   providers/           un módulo por plataforma
 public/
   index.html           plataforma de trading (maquetación)
-  app.js               gráfico, tabla multi-timeframe y panel de ruptura
+  app.js               gráfico, tabla multi-timeframe, ruptura y avisos
   predicciones.html    analizador de predicciones
 data/demo/             datos de ejemplo (también usados por los tests)
 scripts/smoke.js         valida las APIs reales antes de desplegar
@@ -437,5 +512,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  113 tests, sin red
+test/                  137 tests, sin red
 ```

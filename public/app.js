@@ -1,40 +1,52 @@
 'use strict';
 
-// Plataforma de trading: gráfico, tabla multi-timeframe y panel de ruptura.
+// Plataforma de trading: gráfico, tabla multi-timeframe, panel de ruptura y
+// avisos de entrada y salida.
 //
-// Antes esto vivía dentro de index.html con su propia copia de la EMA. Ahora
-// los indicadores llegan de /lib/indicators.js, que es el mismo archivo que
-// usa el servidor para el análisis: no puede haber dos EMAs que discrepen.
+// Los indicadores, el formato de números y el motor de señales llegan de
+// /lib/*.js, que son los mismos archivos que ejecuta el servidor: no puede
+// haber dos versiones de la misma regla.
 
-// Todo el archivo va dentro de una función: indicators.js declara sus funciones
-// en el ámbito global y sin esto `emaSeries` chocaría con la copia local.
 (function () {
 const { emaSeries, ema, shareAtLeast, requiredExcursion } = globalThis.Indicators;
+const { formatPrice, num, formatPercent, formatClock } = globalThis.Format;
+const { evaluateSignals } = globalThis.Signals;
 
 const MTF = ['1h', '4h', '1d', '1w'];
 const CANDLES = 300;
+const EVAL_THROTTLE_MS = 1000;
+const PREFS_KEY = 'mtp.alertas';
 
 const state = {
   symbol: 'BTCUSDT',
   interval: '1h',
   candles: [],
-  mtf: {},          // timeframe -> array de velas
+  mtf: {},
   breakout: null,
-  live: null,       // último tick del WebSocket
-  source: null,     // 'binance' | 'demo'
+  live: null,
+  source: null,
   fetchedAt: null,
   loading: false,
   failures: 0,
-  streamState: 'desconectado',
   sse: null,
   refreshTimer: null,
-  hover: null,      // índice de la vela bajo el cursor
+  hover: null,
+  lastEval: 0,
+  alerts: {
+    enabled: false,
+    primed: false,          // la primera evaluación no suena: sería una alerta de algo ya pasado
+    seen: new Set(),
+    history: [],
+    positions: {},          // 'BTCUSDT|1h' -> seguimiento en papel
+    audio: null,
+  },
 };
 
 const $ = (id) => document.getElementById(id);
 
 const el = {
   canvas: $('priceChart'),
+  symbolSelect: $('symbolSelect'),
   symbol: $('symbolInput'),
   interval: $('intervalSelect'),
   load: $('loadBtn'),
@@ -49,49 +61,19 @@ const el = {
   tooltip: $('tooltip'),
   breakout: $('breakoutPanel'),
   countdown: $('countdown'),
+  alertToggle: $('alertToggle'),
+  alertTest: $('alertTest'),
+  alertHint: $('alertHint'),
+  position: $('positionBox'),
+  history: $('signalHistory'),
+  modal: $('alertModal'),
+  modalCard: $('alertCard'),
 };
 
 const ctx = el.canvas.getContext('2d');
 
-// ---------------------------------------------------------------------------
-// Utilidades
-// ---------------------------------------------------------------------------
-
 const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
-
-function decimalsFor(price) {
-  if (!(price > 0)) return 2;
-  if (price >= 1000) return 1;
-  if (price >= 10) return 2;
-  if (price >= 1) return 4;
-  return 6;
-}
-
-function fmtPrice(value) {
-  if (!Number.isFinite(value)) return '—';
-  const d = decimalsFor(Math.abs(value));
-  return value.toLocaleString('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d });
-}
-
-function fmtNum(value, decimals = 2) {
-  if (!Number.isFinite(value)) return '—';
-  return value.toLocaleString('es-ES', { maximumFractionDigits: decimals });
-}
-
-function fmtPct(fraction, decimals = 1) {
-  if (!Number.isFinite(fraction)) return '—';
-  return `${fmtNum(fraction * 100, decimals)}%`;
-}
-
-function fmtClock(ms) {
-  if (!Number.isFinite(ms) || ms <= 0) return '00:00';
-  const total = Math.floor(ms / 1000);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  const pad = (n) => String(n).padStart(2, '0');
-  return h ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
-}
+const pairKey = () => `${state.symbol}|${state.interval}`;
 
 function fmtTimeAxis(ms, interval) {
   const d = new Date(ms);
@@ -99,6 +81,10 @@ function fmtTimeAxis(ms, interval) {
     return d.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' });
   }
   return d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+}
+
+function fmtHora(ms) {
+  return new Date(ms).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 function intervalToMs(interval) {
@@ -124,6 +110,33 @@ function emaLengths() {
 }
 
 // ---------------------------------------------------------------------------
+// Preferencias (localStorage es opcional: en modo privado lanza excepción)
+// ---------------------------------------------------------------------------
+
+function loadPrefs() {
+  try {
+    const raw = localStorage.getItem(PREFS_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    state.alerts.enabled = Boolean(saved.enabled);
+    state.alerts.positions = saved.positions && typeof saved.positions === 'object' ? saved.positions : {};
+  } catch {
+    /* sin persistencia se sigue funcionando, sólo se olvida entre recargas */
+  }
+}
+
+function savePrefs() {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({
+      enabled: state.alerts.enabled,
+      positions: state.alerts.positions,
+    }));
+  } catch {
+    /* idem */
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Datos
 // ---------------------------------------------------------------------------
 
@@ -144,6 +157,37 @@ async function getJson(url) {
 
 function klinesUrl(interval, limit = CANDLES) {
   return `/api/klines?symbol=${encodeURIComponent(state.symbol)}&interval=${interval}&limit=${limit}`;
+}
+
+async function loadSymbols() {
+  try {
+    const { groups, verified } = await getJson('/api/symbols');
+    el.symbolSelect.innerHTML = '';
+
+    for (const group of groups) {
+      const optgroup = document.createElement('optgroup');
+      optgroup.label = group.name;
+      for (const s of group.symbols) {
+        const option = document.createElement('option');
+        option.value = s.symbol;
+        option.textContent = `${s.name} · ${s.symbol.replace('USDT', '/USDT')}`;
+        optgroup.appendChild(option);
+      }
+      el.symbolSelect.appendChild(optgroup);
+    }
+
+    const otro = document.createElement('option');
+    otro.value = '__otro';
+    otro.textContent = 'Otro par…';
+    el.symbolSelect.appendChild(otro);
+
+    el.symbolSelect.value = state.symbol;
+    if (!el.symbolSelect.value) selectOther(state.symbol);
+    el.symbolSelect.title = verified ? 'Pares verificados contra Binance' : 'Lista sin verificar (Binance no respondió)';
+  } catch {
+    // Sin la lista se sigue pudiendo escribir el par a mano.
+    selectOther(state.symbol);
+  }
 }
 
 async function loadAll({ silent = false } = {}) {
@@ -169,6 +213,7 @@ async function loadAll({ silent = false } = {}) {
     state.failures = 0;
 
     await loadBreakout();
+    evaluateAlerts();
     render();
     setStatus('');
   } catch (err) {
@@ -195,7 +240,9 @@ async function loadBreakout() {
 // minuto no lo levanta y sí llena su log.
 function scheduleRefresh() {
   clearTimeout(state.refreshTimer);
-  if (document.hidden) return; // una pestaña de fondo no necesita datos frescos
+  // Con los avisos encendidos la pestaña oculta sigue trabajando: para eso
+  // están los avisos, para enterarte cuando no estás mirando.
+  if (document.hidden && !state.alerts.enabled) return;
 
   const base = clamp(intervalToMs(state.interval) / 20, 20_000, 120_000);
   const delay = state.failures ? Math.min(base * 2 ** state.failures, 600_000) : base;
@@ -233,7 +280,6 @@ function connectStream() {
     }
   });
 
-  // EventSource reconecta solo; aquí sólo se refleja en la interfaz.
   sse.onerror = () => setStreamState(sse.readyState === EventSource.CLOSED ? 'desconectado' : 'reconectando');
   sse.onopen = () => setStreamState('en vivo');
 }
@@ -259,8 +305,6 @@ function onTick(tick) {
     loadAll({ silent: true });
   }
 
-  // La tabla multi-timeframe también se mueve: la vela en curso de cada
-  // timeframe comparte el último precio con la del gráfico.
   for (const tf of MTF) {
     const series = state.mtf[tf];
     const tail = series && series[series.length - 1];
@@ -271,21 +315,276 @@ function onTick(tick) {
     }
   }
 
-  // Si el precio se ha ido lejos desde el último análisis, los niveles y el
-  // texto se han quedado viejos: merece la pena volver a pedirlos.
   const b = state.breakout;
   if (b && b.ok && b.atr > 0 && Math.abs(tick.close - state.breakoutPriceAtFetch) > b.atr * 0.35) {
     state.breakoutPriceAtFetch = tick.close;
     loadBreakout().then(render);
   }
 
+  evaluateAlerts();
   requestRender();
 }
 
 function setStreamState(label) {
-  state.streamState = label;
   el.streamLabel.textContent = label;
   el.streamDot.className = `dot ${['en vivo', 'demo'].includes(label) ? 'on' : label === 'desconectado' || label === 'error' ? 'off' : 'warn'}`;
+}
+
+// ---------------------------------------------------------------------------
+// Avisos de entrada y salida
+// ---------------------------------------------------------------------------
+
+// El sonido se sintetiza: dos notas ascendentes para entrar, dos descendentes
+// para salir, una sola para el aviso previo. Sin archivos que cargar y se
+// distinguen sin mirar la pantalla, que es el sentido de que suene.
+const PATTERNS = {
+  entrada: [{ freq: 660, at: 0, dur: 0.12 }, { freq: 990, at: 0.13, dur: 0.22 }],
+  salida: [{ freq: 780, at: 0, dur: 0.12 }, { freq: 440, at: 0.13, dur: 0.28 }],
+  aviso: [{ freq: 880, at: 0, dur: 0.09 }, { freq: 880, at: 0.16, dur: 0.09 }],
+};
+
+// El navegador no deja sonar sin un gesto previo del usuario. El contexto se
+// puede crear en cualquier momento, pero nace suspendido y hay que reanudarlo
+// desde un gesto. Al volver a la página con los avisos ya encendidos no hay
+// ningún gesto todavía, así que se deja armado un `resume` para el primer
+// clic o tecla que llegue: sin esto, quien dejó los avisos puestos ayer se
+// encontraba hoy con alertas mudas.
+function unlockAudio() {
+  if (!state.alerts.audio) {
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    if (!Ctor) return;
+    try {
+      state.alerts.audio = new Ctor();
+    } catch {
+      return; // sin audio los avisos siguen saliendo en pantalla
+    }
+  }
+  if (state.alerts.audio.state === 'suspended') {
+    state.alerts.audio.resume().then(renderAlertHint).catch(() => {});
+  }
+}
+
+function armarAudioConPrimerGesto() {
+  const activar = () => {
+    unlockAudio();
+    renderAlertHint();
+  };
+  document.addEventListener('pointerdown', activar, { once: true });
+  document.addEventListener('keydown', activar, { once: true });
+}
+
+function playSound(kind) {
+  if (!state.alerts.audio) unlockAudio();
+  const audio = state.alerts.audio;
+  if (!audio || audio.state === 'closed') return;
+  if (audio.state === 'suspended') audio.resume();
+
+  const now = audio.currentTime;
+  for (const note of PATTERNS[kind] || PATTERNS.aviso) {
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = note.freq;
+    // Ataque y caída suaves: un oscilador cortado en seco chasquea.
+    gain.gain.setValueAtTime(0.0001, now + note.at);
+    gain.gain.exponentialRampToValueAtTime(0.22, now + note.at + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + note.at + note.dur);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(now + note.at);
+    osc.stop(now + note.at + note.dur + 0.02);
+  }
+}
+
+function notify(signal) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  try {
+    // `tag` con el id de la señal: si llega dos veces, el sistema la sustituye
+    // en vez de apilar dos globos iguales.
+    new Notification(signal.title, { body: `${signal.message}\n${signal.detail}`, tag: signal.id });
+  } catch {
+    /* algunos navegadores exigen service worker; el popout de la página queda */
+  }
+}
+
+function showModal(signal) {
+  const clase = signal.type === 'entrada' ? (signal.side === 'larga' ? 'bull' : 'bear') : signal.type === 'salida' ? 'exit' : 'warn';
+
+  el.modalCard.className = `alert-card ${clase}`;
+  el.modalCard.innerHTML = `
+    <div class="alert-kind">${signal.type === 'entrada' ? 'ENTRADA' : signal.type === 'salida' ? 'SALIDA' : 'AVISO'}</div>
+    <h3>${signal.title}</h3>
+    <p>${signal.message}</p>
+    <p class="alert-detail">${signal.detail}</p>
+    <p class="alert-time">${fmtHora(signal.at)} · ${formatPrice(signal.price)}</p>
+    <div class="alert-actions">
+      <button id="alertOk">Entendido</button>
+      <button id="alertMute" class="ghost">Silenciar avisos</button>
+    </div>
+    <p class="disclaimer">Análisis técnico automático sobre datos públicos. No es una recomendación de inversión.</p>`;
+
+  el.modal.classList.add('open');
+  $('alertOk').addEventListener('click', hideModal);
+  $('alertMute').addEventListener('click', () => {
+    setAlerts(false);
+    hideModal();
+  });
+  $('alertOk').focus();
+}
+
+function hideModal() {
+  el.modal.classList.remove('open');
+}
+
+function pushSignal(signal, { silent = false } = {}) {
+  state.alerts.seen.add(signal.id);
+  state.alerts.history.unshift({ ...signal, silent });
+  state.alerts.history = state.alerts.history.slice(0, 20);
+
+  if (!silent && state.alerts.enabled) {
+    playSound(signal.sound);
+    notify(signal);
+    showModal(signal);
+  }
+  renderAlerts();
+}
+
+// Se evalúa con cada tick, así que se limita a una vez por segundo: buscar
+// pivotes sobre 300 velas diez veces por segundo no aporta nada.
+function evaluateAlerts({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && now - state.lastEval < EVAL_THROTTLE_MS) return;
+  state.lastEval = now;
+
+  if (!state.candles.length) return;
+
+  const key = pairKey();
+  const { signals, position } = evaluateSignals({
+    candles: state.candles,
+    breakout: state.breakout,
+    position: state.alerts.positions[key] || null,
+    price: state.live ? state.live.close : null,
+    symbol: state.symbol,
+    interval: state.interval,
+    now,
+  });
+
+  if (position) state.alerts.positions[key] = position;
+  else delete state.alerts.positions[key];
+
+  // La primera evaluación tras cargar la página no suena: avisar a gritos de
+  // una ruptura que ocurrió antes de abrir el navegador es ruido, no una
+  // alerta. Queda en el historial marcada como anterior.
+  const primera = !state.alerts.primed;
+  state.alerts.primed = true;
+
+  for (const signal of signals) {
+    if (state.alerts.seen.has(signal.id)) continue;
+    pushSignal(signal, { silent: primera });
+  }
+
+  if (signals.length || primera) savePrefs();
+  renderAlerts();
+}
+
+function setAlerts(enabled) {
+  state.alerts.enabled = enabled;
+  el.alertToggle.checked = enabled;
+
+  if (enabled) {
+    unlockAudio();
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().then(renderAlertHint);
+    }
+  }
+
+  savePrefs();
+  renderAlertHint();
+  scheduleRefresh();
+}
+
+function renderAlertHint() {
+  if (!state.alerts.enabled) {
+    el.alertHint.textContent = 'Apagados. Sin sonido ni ventana emergente.';
+    return;
+  }
+  const permiso = 'Notification' in window ? Notification.permission : 'no soportado';
+  const fuera =
+    permiso === 'granted'
+      ? 'También avisa fuera de la pestaña.'
+      : permiso === 'denied'
+        ? 'El navegador bloqueó las notificaciones: sólo avisa con la pestaña abierta.'
+        : 'Acepta las notificaciones para que avise fuera de la pestaña.';
+
+  const audio = state.alerts.audio;
+  const sonido = !audio
+    ? ' Sonido sin inicializar.'
+    : audio.state === 'suspended'
+      ? ' El navegador espera un clic tuyo para poder sonar.'
+      : '';
+
+  el.alertHint.textContent = `Encendidos para ${state.symbol} ${state.interval}. ${fuera}${sonido}`;
+}
+
+function renderAlerts() {
+  const position = state.alerts.positions[pairKey()];
+
+  if (!position) {
+    el.position.innerHTML = '<p class="muted">Sin seguimiento abierto. Se abre solo cuando una vela confirma la ruptura.</p>';
+  } else {
+    const price = state.live ? state.live.close : state.candles.length ? state.candles[state.candles.length - 1].close : position.entry;
+    const cambio = position.side === 'larga'
+      ? (price - position.entry) / position.entry
+      : (position.entry - price) / position.entry;
+
+    el.position.innerHTML = `
+      <div class="position ${position.side === 'larga' ? 'bull' : 'bear'}">
+        <header>
+          <span>Seguimiento ${position.side} · ${position.symbol} ${position.interval}</span>
+          <strong class="${cambio >= 0 ? 'up' : 'down'}">${cambio >= 0 ? '+' : ''}${formatPercent(cambio, 2)}</strong>
+        </header>
+        <div class="detail">
+          Entrada ${formatPrice(position.entry)} · stop ${formatPrice(position.stop)} · objetivo ${formatPrice(position.target)}
+          ${position.rewardRisk ? ` · ratio ${num(position.rewardRisk)}:1` : ''}
+        </div>
+        <button class="ghost small" id="positionDrop">Descartar seguimiento</button>
+      </div>`;
+
+    $('positionDrop').addEventListener('click', () => {
+      delete state.alerts.positions[pairKey()];
+      savePrefs();
+      renderAlerts();
+    });
+  }
+
+  el.history.innerHTML = state.alerts.history.length
+    ? state.alerts.history
+        .map(
+          (s) => `<li class="sig ${s.type}${s.silent ? ' silent' : ''}">
+            <span class="when">${fmtHora(s.at)}</span>
+            <span class="what">${s.title}</span>
+            <span class="why">${s.message}${s.silent ? ' <em>(ocurrió antes de abrir la página)</em>' : ''}</span>
+          </li>`
+        )
+        .join('')
+    : '<li class="muted">Todavía no ha saltado ninguna señal.</li>';
+}
+
+// Alerta de prueba: sirve para comprobar que el sonido y el permiso de
+// notificaciones funcionan antes de fiarse de ellos.
+function testAlert() {
+  unlockAudio();
+  const price = state.live ? state.live.close : 0;
+  showModal({
+    type: 'entrada',
+    side: 'larga',
+    at: Date.now(),
+    price,
+    title: `Prueba de aviso · ${state.symbol} ${state.interval}`,
+    message: 'Si has oído dos notas ascendentes y ves esta ventana, los avisos funcionan.',
+    detail: 'Las entradas suenan ascendentes, las salidas descendentes y los avisos previos son dos notas iguales.',
+  });
+  playSound('entrada');
+  notify({ id: 'prueba', title: 'Prueba de aviso', message: 'Los avisos funcionan.', detail: '' });
 }
 
 // ---------------------------------------------------------------------------
@@ -312,6 +611,7 @@ function render() {
   renderTable();
   renderPrice();
   renderBreakout();
+  renderAlerts();
 }
 
 function setStatus(text, isError = false) {
@@ -319,7 +619,7 @@ function setStatus(text, isError = false) {
   if (text) parts.push(text);
   if (state.fetchedAt) {
     const origen = state.source === 'demo' ? 'datos de ejemplo' : 'Binance';
-    parts.push(`${state.candles.length} velas de ${state.interval} · ${origen} · actualizado ${new Date(state.fetchedAt).toLocaleTimeString('es-ES')}`);
+    parts.push(`${state.candles.length} velas de ${state.interval} · ${origen} · actualizado ${fmtHora(state.fetchedAt)}`);
   }
   el.status.textContent = parts.join('\n');
   el.status.classList.toggle('error', isError);
@@ -332,8 +632,8 @@ function renderPrice() {
   const reference = candles.length > 1 ? candles[candles.length - 2].close : last.open;
   const change = (last.close - reference) / reference;
 
-  el.price.textContent = fmtPrice(last.close);
-  el.priceChange.textContent = `${change >= 0 ? '+' : ''}${fmtPct(change, 2)}`;
+  el.price.textContent = formatPrice(last.close);
+  el.priceChange.textContent = `${change >= 0 ? '+' : ''}${formatPercent(change, 2)}`;
   el.priceChange.className = `change ${change >= 0 ? 'up' : 'down'}`;
 }
 
@@ -393,15 +693,21 @@ function drawChart() {
   let maxPrice = Math.max(...highs);
   let minPrice = Math.min(...lows);
 
-  // Los niveles de ruptura entran en la escala: un nivel fuera de pantalla no
-  // sirve de nada.
+  // Los niveles de ruptura y el seguimiento entran en la escala: un nivel
+  // fuera de pantalla no sirve de nada.
+  const extras = [];
   const b = state.breakout;
   if (b && b.ok) {
-    for (const side of [b.up, b.down]) {
-      if (side && Number.isFinite(side.level) && side.level < maxPrice * 1.05 && side.level > minPrice * 0.95) {
-        maxPrice = Math.max(maxPrice, side.level);
-        minPrice = Math.min(minPrice, side.level);
-      }
+    if (b.up) extras.push(b.up.level);
+    if (b.down) extras.push(b.down.level);
+  }
+  const position = state.alerts.positions[pairKey()];
+  if (position) extras.push(position.stop, position.target);
+
+  for (const value of extras) {
+    if (Number.isFinite(value) && value < maxPrice * 1.08 && value > minPrice * 0.92) {
+      maxPrice = Math.max(maxPrice, value);
+      minPrice = Math.min(minPrice, value);
     }
   }
 
@@ -428,7 +734,7 @@ function drawChart() {
     ctx.stroke();
     ctx.fillStyle = '#64748b';
     ctx.textAlign = 'left';
-    ctx.fillText(fmtPrice(price), PAD.left + plotW + 6, y);
+    ctx.fillText(formatPrice(price), PAD.left + plotW + 6, y);
   }
 
   // Eje de tiempo: unas seis marcas, alineadas a velas reales.
@@ -492,17 +798,20 @@ function drawChart() {
     drawSeries(emaSeries(closes, slow), '#f97316', xFor, yFor);
   }
 
-  // Niveles de ruptura.
+  // Niveles de ruptura y, si hay seguimiento, stop y objetivo.
   if (b && b.ok) {
-    if (b.up) drawLevel(b.up.level, '#f87171', 'R', xFor, yFor, plotW);
-    if (b.down) drawLevel(b.down.level, '#4ade80', 'S', xFor, yFor, plotW);
+    if (b.up) drawLevel(b.up.level, '#f87171', 'R', yFor, plotW);
+    if (b.down) drawLevel(b.down.level, '#4ade80', 'S', yFor, plotW);
+  }
+  if (position) {
+    drawLevel(position.stop, '#fb7185', 'STOP', yFor, plotW, true);
+    drawLevel(position.target, '#38bdf8', 'OBJ', yFor, plotW, true);
   }
 
-  // Precio actual.
   const last = candles[candles.length - 1];
   drawPriceTag(last.close, last.close >= last.open ? '#22c55e' : '#ef4444', plotW, yFor);
 
-  if (state.hover !== null) drawCrosshair(xFor, yFor, plotW, plotH);
+  if (state.hover !== null) drawCrosshair(xFor, plotH);
 }
 
 function drawSeries(series, color, xFor, yFor) {
@@ -523,11 +832,11 @@ function drawSeries(series, color, xFor, yFor) {
   ctx.stroke();
 }
 
-function drawLevel(price, color, tag, xFor, yFor, plotW) {
+function drawLevel(price, color, tag, yFor, plotW, dense = false) {
   if (!Number.isFinite(price)) return;
   const y = yFor(price);
   ctx.save();
-  ctx.setLineDash([5, 4]);
+  ctx.setLineDash(dense ? [2, 4] : [5, 4]);
   ctx.strokeStyle = color;
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -540,7 +849,7 @@ function drawLevel(price, color, tag, xFor, yFor, plotW) {
   ctx.font = 'bold 10px system-ui, sans-serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'bottom';
-  ctx.fillText(`${tag} ${fmtPrice(price)}`, PAD.left + 4, y - 2);
+  ctx.fillText(`${tag} ${formatPrice(price)}`, PAD.left + 4, y - 2);
 }
 
 function drawPriceTag(price, color, plotW, yFor) {
@@ -554,7 +863,7 @@ function drawPriceTag(price, color, plotW, yFor) {
   ctx.stroke();
   ctx.restore();
 
-  const label = fmtPrice(price);
+  const label = formatPrice(price);
   ctx.font = 'bold 11px system-ui, sans-serif';
   const width = ctx.measureText(label).width + 10;
   ctx.fillStyle = color;
@@ -565,7 +874,7 @@ function drawPriceTag(price, color, plotW, yFor) {
   ctx.fillText(label, PAD.left + plotW + 7, y);
 }
 
-function drawCrosshair(xFor, yFor, plotW, plotH) {
+function drawCrosshair(xFor, plotH) {
   const c = state.candles[state.hover];
   if (!c) return;
   const x = xFor(state.hover);
@@ -597,11 +906,11 @@ function onCanvasMove(event) {
 
   el.tooltip.innerHTML = `
     <strong>${new Date(c.openTime).toLocaleString('es-ES')}</strong>
-    <span>A ${fmtPrice(c.open)}</span>
-    <span>M ${fmtPrice(c.high)}</span>
-    <span>m ${fmtPrice(c.low)}</span>
-    <span>C ${fmtPrice(c.close)} <em class="${change >= 0 ? 'up' : 'down'}">${change >= 0 ? '+' : ''}${fmtPct(change, 2)}</em></span>
-    <span>Vol ${fmtNum(c.volume, 0)}</span>`;
+    <span>A ${formatPrice(c.open)}</span>
+    <span>M ${formatPrice(c.high)}</span>
+    <span>m ${formatPrice(c.low)}</span>
+    <span>C ${formatPrice(c.close)} <em class="${change >= 0 ? 'up' : 'down'}">${change >= 0 ? '+' : ''}${formatPercent(change, 2)}</em></span>
+    <span>Vol ${num(c.volume, 0)}</span>`;
   el.tooltip.style.display = 'grid';
   el.tooltip.style.left = `${clamp(x + 14, 8, rect.width - 170)}px`;
   el.tooltip.style.top = `${clamp(event.clientY - rect.top + 12, 8, rect.height - 120)}px`;
@@ -642,7 +951,7 @@ function renderTable() {
     const label = gap > 0.0005 ? 'Alcista' : gap < -0.0005 ? 'Bajista' : 'Plano';
     cell.textContent = label;
     cell.classList.add(label === 'Alcista' ? 'bull' : label === 'Bajista' ? 'bear' : 'flat');
-    cell.title = `EMA${fast} ${fmtPrice(f)} vs EMA${slow} ${fmtPrice(s)} (${gap >= 0 ? '+' : ''}${fmtPct(gap, 2)})`;
+    cell.title = `EMA${fast} ${formatPrice(f)} vs EMA${slow} ${formatPrice(s)} (${gap >= 0 ? '+' : ''}${formatPercent(gap, 2)})`;
   }
 }
 
@@ -694,7 +1003,7 @@ function renderBreakout() {
   const up = liveSide(b.up, b.sample.up, price, b.atr, remaining);
   const down = liveSide(b.down, b.sample.down, price, b.atr, remaining);
 
-  el.countdown.textContent = `cierra en ${fmtClock(b.candle.closeTime - now)}`;
+  el.countdown.textContent = `cierra en ${formatClock(b.candle.closeTime - now)}`;
 
   const bias = verdictFor(up, down, remaining);
 
@@ -726,8 +1035,8 @@ function verdictFor(up, down, remaining) {
   const pu = up && Number.isFinite(up.probability) ? up.probability : null;
   const pd = down && Number.isFinite(down.probability) ? down.probability : null;
 
-  if (up && up.broken) return { text: `nivel ${fmtPrice(up.level)} superado al alza`, cls: 'bull' };
-  if (down && down.broken) return { text: `nivel ${fmtPrice(down.level)} perdido a la baja`, cls: 'bear' };
+  if (up && up.broken) return { text: `nivel ${formatPrice(up.level)} superado al alza`, cls: 'bull' };
+  if (down && down.broken) return { text: `nivel ${formatPrice(down.level)} perdido a la baja`, cls: 'bear' };
   if (pu === null || pd === null) return { text: 'sin lado claro', cls: 'flat' };
 
   if (pu < 0.05 && pd < 0.05) {
@@ -752,15 +1061,15 @@ function sideHtml(side, title, cls) {
     <div class="side ${cls}">
       <header>
         <span>${title}</span>
-        <strong>${side.broken ? 'superado' : fmtPct(probability, 0)}</strong>
+        <strong>${side.broken ? 'superado' : formatPercent(probability, 0)}</strong>
       </header>
       <div class="bar"><span style="width:${width}%"></span></div>
       <div class="detail">
         ${side.broken
-          ? `El precio ya ha pasado ${fmtPrice(side.level)} dentro de la vela. Sólo cuenta si cierra al otro lado.`
-          : `Nivel ${fmtPrice(side.level)} · faltan ${fmtNum(side.distancePct, 2)}% (${fmtNum(side.distanceAtr, 2)} ATR) · ${side.touches} ${side.touches === 1 ? 'toque' : 'toques'}${side.fallback ? ' (extremo del rango)' : ''}${
+          ? `El precio ya ha pasado ${formatPrice(side.level)} dentro de la vela. Sólo cuenta si cierra al otro lado.`
+          : `Nivel ${formatPrice(side.level)} · faltan ${num(side.distancePct, 2)}% (${num(side.distanceAtr, 2)} ATR) · ${side.touches} ${side.touches === 1 ? 'toque' : 'toques'}${side.fallback ? ' (extremo del rango)' : ''}${
               side.remaining < 0.35 && Number.isFinite(side.probabilityFullCandle)
-                ? `<br>Con una vela entera por delante sería ${fmtPct(side.probabilityFullCandle, 0)}.`
+                ? `<br>Con una vela entera por delante sería ${formatPercent(side.probabilityFullCandle, 0)}.`
                 : ''
             }`}
       </div>
@@ -771,37 +1080,65 @@ function sideHtml(side, title, cls) {
 // Arranque
 // ---------------------------------------------------------------------------
 
-function applyControls() {
-  const symbol = el.symbol.value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '') || 'BTCUSDT';
+function selectOther(symbol) {
+  el.symbolSelect.value = '__otro';
+  el.symbol.hidden = false;
   el.symbol.value = symbol;
+}
 
-  const changed = symbol !== state.symbol || el.interval.value !== state.interval;
-  state.symbol = symbol;
+function applyControls({ symbol = null } = {}) {
+  const elegido = symbol || (el.symbolSelect.value === '__otro' ? el.symbol.value : el.symbolSelect.value);
+  const limpio = String(elegido || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '') || 'BTCUSDT';
+
+  const changed = limpio !== state.symbol || el.interval.value !== state.interval;
+  state.symbol = limpio;
   state.interval = el.interval.value;
+  if (el.symbolSelect.value === '__otro') el.symbol.value = limpio;
 
   if (changed) {
     state.candles = [];
     state.live = null;
     state.breakout = null;
+    state.alerts.primed = false; // par nuevo: no se grita por lo que ya había pasado
     connectStream();
+    renderAlertHint();
   }
   loadAll();
 }
 
 function init() {
+  loadPrefs();
   resizeCanvas();
 
-  el.load.addEventListener('click', applyControls);
-  el.interval.addEventListener('change', applyControls);
+  el.symbolSelect.addEventListener('change', () => {
+    if (el.symbolSelect.value === '__otro') {
+      el.symbol.hidden = false;
+      el.symbol.focus();
+      return;
+    }
+    el.symbol.hidden = true;
+    applyControls();
+  });
+
   el.symbol.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') applyControls();
   });
 
+  el.load.addEventListener('click', () => applyControls());
+  el.interval.addEventListener('change', () => applyControls());
+
   for (const input of [el.emaFast, el.emaSlow]) {
-    input.addEventListener('input', () => {
-      render();
-    });
+    input.addEventListener('input', render);
   }
+
+  el.alertToggle.addEventListener('change', () => setAlerts(el.alertToggle.checked));
+  el.alertTest.addEventListener('click', testAlert);
+  el.modal.addEventListener('click', (e) => {
+    if (e.target === el.modal) hideModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') hideModal();
+  });
 
   el.canvas.addEventListener('mousemove', onCanvasMove);
   el.canvas.addEventListener('mouseleave', hideTooltip);
@@ -815,10 +1152,9 @@ function init() {
 
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
-      clearTimeout(state.refreshTimer);
+      if (!state.alerts.enabled) clearTimeout(state.refreshTimer);
       return;
     }
-    // Al volver, los datos pueden ser de hace rato: se refresca ya.
     loadAll({ silent: true });
   });
 
@@ -827,6 +1163,15 @@ function init() {
     if (!document.hidden && state.breakout && state.breakout.ok) renderBreakout();
   }, 1000);
 
+  el.alertToggle.checked = state.alerts.enabled;
+  if (state.alerts.enabled) {
+    unlockAudio();
+    armarAudioConPrimerGesto();
+  }
+  renderAlertHint();
+  renderAlerts();
+
+  loadSymbols();
   connectStream();
   loadAll();
 }

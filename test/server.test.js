@@ -80,9 +80,18 @@ test('/api/breakout responde con veredicto, explicación y muestra', async () =>
 
 test('/api/breakout acepta el precio en vivo del cliente', async () => {
   const normal = (await getJson('/api/breakout?interval=1h')).body;
-  const conPrecio = (await getJson(`/api/breakout?interval=1h&price=${normal.price * 1.002}`)).body;
-  assert.notStrictEqual(conPrecio.price, normal.price);
-  assert.ok(conPrecio.up.distance !== normal.up.distance, 'la distancia al nivel cambia con el precio');
+  const masAlto = normal.price * 1.002;
+  const conPrecio = (await getJson(`/api/breakout?interval=1h&price=${masAlto}`)).body;
+
+  assert.ok(conPrecio.price > normal.price, 'el precio del cliente manda sobre el de la vela cacheada');
+  // Con el precio más arriba, el soporte queda necesariamente más lejos. Se
+  // mira ese lado y no la resistencia: subir el precio puede dejarlo por
+  // encima del último techo, y entonces no hay resistencia que medir.
+  assert.ok(conPrecio.down, 'subiendo el precio siempre queda soporte por debajo');
+  assert.ok(
+    conPrecio.down.distance > normal.down.distance,
+    `soporte a ${conPrecio.down.distance} debería estar más lejos que ${normal.down.distance}`
+  );
 });
 
 test('/api/breakout ignora un precio absurdo', async () => {
@@ -99,6 +108,41 @@ test('los indicadores se sirven al navegador desde el mismo archivo que usa el s
   assert.match(code, /function emaSeries/);
 });
 
+test('/api/symbols sirve el desplegable agrupado', async () => {
+  const { status, body } = await getJson('/api/symbols');
+  assert.strictEqual(status, 200);
+  assert.strictEqual(body.verified, false, 'en demo no se contrasta con Binance');
+  assert.ok(body.groups.length >= 3);
+
+  const todos = body.groups.flatMap((g) => g.symbols);
+  assert.ok(todos.length >= 20);
+  assert.ok(todos.every((s) => s.symbol && s.name && s.available));
+  assert.ok(todos.some((s) => s.symbol === 'BTCUSDT'));
+});
+
+test('sólo se publican al navegador los tres módulos compartidos', async () => {
+  for (const modulo of ['indicators.js', 'format.js', 'signals.js']) {
+    const res = await fetch(`${base}/lib/${modulo}`);
+    assert.strictEqual(res.status, 200, `/lib/${modulo}`);
+    assert.match(res.headers.get('content-type'), /javascript/);
+    await res.text();
+  }
+
+  // El resto de src/ no se publica: ahí están los proveedores y la orquestación.
+  for (const prohibido of ['api.js', 'providers/index.js', '../package.json', '../server.js']) {
+    const res = await fetch(`${base}/lib/${prohibido}`);
+    assert.ok(res.status === 404, `/lib/${prohibido} devolvió ${res.status}`);
+    await res.arrayBuffer().catch(() => {});
+  }
+});
+
+test('el motor de señales que recibe el navegador es el mismo que usa Node', async () => {
+  const código = await (await fetch(`${base}/lib/signals.js`)).text();
+  assert.match(código, /globalThis\.Signals/);
+  assert.match(código, /function evaluateSignals/);
+  assert.match(código, /cierre, no toque/, 'la regla de confirmación viaja con el módulo');
+});
+
 test('el HTML se revalida y lleva cabeceras de seguridad', async () => {
   const res = await fetch(`${base}/index.html`);
   assert.strictEqual(res.headers.get('cache-control'), 'no-cache');
@@ -106,6 +150,9 @@ test('el HTML se revalida y lleva cabeceras de seguridad', async () => {
   assert.strictEqual(res.headers.get('x-frame-options'), 'SAMEORIGIN');
   const html = await res.text();
   assert.match(html, /name="viewport"/, 'sin viewport el móvil renderiza a escala de escritorio');
+  assert.match(html, /id="symbolSelect"/, 'el desplegable de criptos');
+  assert.match(html, /id="alertModal"/, 'la ventana emergente de avisos');
+  assert.match(html, /\/lib\/signals\.js/, 'el navegador carga el motor de señales');
 });
 
 test('/api/stream entrega ticks por SSE', async () => {

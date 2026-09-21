@@ -34,9 +34,12 @@ const {
   clusterLevels,
   shareAtLeast,
   requiredExcursion,
+  findLevels,
 } = require('./indicators');
 
 const MIN_CANDLES = 60;
+
+const { formatPrice, formatDuration, num, priceDecimals } = require('./format');
 
 function pct(value) {
   return Math.round(value * 1000) / 10; // 0.4312 -> 43.1
@@ -46,42 +49,6 @@ function round(value, decimals = 2) {
   if (!Number.isFinite(value)) return null;
   const f = 10 ** decimals;
   return Math.round(value * f) / f;
-}
-
-// Los decimales útiles dependen del precio: 64321.5 y 0.00004312 necesitan
-// escalas distintas para no perder información ni llenar la pantalla de ceros.
-function priceDecimals(price) {
-  if (!(price > 0)) return 2;
-  if (price >= 1000) return 1;
-  if (price >= 10) return 2;
-  if (price >= 1) return 4;
-  return 6;
-}
-
-// En español el separador decimal es la coma: escribir "2.931%" en una frase
-// se lee como dos mil novecientos treinta y uno por ciento.
-function num(value, decimals = 2) {
-  if (!Number.isFinite(value)) return '—';
-  return value.toLocaleString('es-ES', { maximumFractionDigits: decimals });
-}
-
-function formatPrice(price) {
-  if (!Number.isFinite(price)) return '—';
-  return price.toLocaleString('es-ES', {
-    minimumFractionDigits: priceDecimals(price),
-    maximumFractionDigits: priceDecimals(price),
-  });
-}
-
-function formatDuration(ms) {
-  if (!Number.isFinite(ms) || ms <= 0) return 'nada';
-  const mins = Math.round(ms / 60000);
-  if (mins < 60) return `${mins} min`;
-  const hours = Math.floor(mins / 60);
-  const rest = mins % 60;
-  if (hours < 24) return rest ? `${hours} h ${rest} min` : `${hours} h`;
-  const days = Math.floor(hours / 24);
-  return `${days} d ${hours % 24} h`;
 }
 
 // Excursión de cada vela cerrada desde su apertura, en ATR. Es la muestra
@@ -100,35 +67,6 @@ function excursionSample(candles, atrLength) {
   }
 
   return { up, down };
-}
-
-// El nivel más cercano por encima y por debajo del precio. Si no hay pivote
-// (activo en subida libre, por ejemplo), se usa el extremo del rango reciente:
-// romper el máximo de las últimas 50 velas también es romper algo.
-function findLevels(candles, price, tolerance, lookback = 60) {
-  const { highs, lows } = pivots(candles, 3);
-  const recent = candles.slice(-lookback);
-  const rangeHigh = Math.max(...recent.map((c) => c.high));
-  const rangeLow = Math.min(...recent.map((c) => c.low));
-
-  // Los extremos del rango reciente entran como candidatos junto a los pivotes:
-  // romper el máximo de las últimas 60 velas es romper algo aunque ahí no haya
-  // ningún giro previo. Gana el nivel más cercano al precio, sea del tipo que
-  // sea, porque es el que la vela en curso puede alcanzar.
-  const resistances = clusterLevels(highs, tolerance).filter((l) => l.price > price);
-  if (rangeHigh > price) resistances.push({ price: rangeHigh, touches: 1, lastTouch: null, fallback: true });
-
-  const supports = clusterLevels(lows, tolerance).filter((l) => l.price < price);
-  if (rangeLow < price) supports.push({ price: rangeLow, touches: 1, lastTouch: null, fallback: true });
-
-  const resistance = resistances.length
-    ? resistances.reduce((best, l) => (l.price < best.price ? l : best))
-    : null;
-  const support = supports.length
-    ? supports.reduce((best, l) => (l.price > best.price ? l : best))
-    : null;
-
-  return { resistance, support, rangeHigh, rangeLow };
 }
 
 function describeLevel(level, price, atr, sample, remainingFraction, direction) {
@@ -460,4 +398,4 @@ function buildExplanation({ interval, price, atr, up, down, current, remainingMs
   return lines;
 }
 
-module.exports = { analyzeBreakout, num, excursionSample, findLevels, formatPrice, formatDuration, MIN_CANDLES };
+module.exports = { analyzeBreakout, excursionSample, findLevels, formatPrice, formatDuration, MIN_CANDLES };

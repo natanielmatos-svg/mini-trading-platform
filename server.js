@@ -16,6 +16,7 @@ const { listProviders } = require('./src/providers');
 const { getKlines, parseSymbol, parseInterval, parseLimit, INTERVALS } = require('./src/klines');
 const { analyzeBreakout } = require('./src/breakout');
 const { MarketStream, sseClient } = require('./src/stream');
+const { verifySymbols, groups } = require('./src/symbols');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -36,13 +37,20 @@ app.use((req, res, next) => {
   next();
 });
 
-// Los indicadores los comparten servidor y navegador: el mismo archivo que usa
-// el análisis de ruptura se sirve al gráfico. Va por una ruta explícita y no
-// exponiendo src/ entero, que además del código tiene los proveedores.
-app.get('/lib/indicators.js', (req, res) => {
+// Tres módulos los comparten servidor y navegador: los indicadores, el formato
+// de números y el motor de señales. El navegador carga exactamente el mismo
+// archivo que ejecuta el análisis, así que no puede haber dos versiones de la
+// misma regla. Lista blanca explícita y no `express.static('src')`: ahí dentro
+// están también los proveedores y la orquestación.
+const SHARED_MODULES = ['indicators.js', 'format.js', 'signals.js'];
+
+app.get('/lib/:file', (req, res) => {
+  if (!SHARED_MODULES.includes(req.params.file)) {
+    return res.status(404).json({ error: 'Ese módulo no se publica al navegador' });
+  }
   res.type('application/javascript');
   res.setHeader('Cache-Control', 'public, max-age=3600');
-  res.sendFile(path.join(__dirname, 'src', 'indicators.js'));
+  res.sendFile(path.join(__dirname, 'src', req.params.file));
 });
 
 // Carpeta pública. El HTML se revalida siempre —si no, un despliegue no se ve
@@ -163,6 +171,26 @@ app.get('/api/klines', async (req, res) => {
   } catch (err) {
     marketError(res, err, '/api/klines');
   }
+});
+
+// Criptomonedas del desplegable. Cuando hay red se contrasta con Binance para
+// no ofrecer un par que haya dejado de cotizar.
+app.get('/api/symbols', async (req, res) => {
+  const demo = DEMO_ALWAYS || req.query.demo === '1';
+  const { symbols, verified, reason } = await verifySymbols({ demo });
+  const disponibles = new Set(symbols.filter((s) => s.available !== false).map((s) => s.symbol));
+
+  sendJson(res, {
+    verified,
+    reason,
+    count: symbols.length,
+    groups: groups().map((g) => ({
+      name: g.name,
+      symbols: g.symbols
+        .map((s) => ({ ...s, available: !verified || disponibles.has(s.symbol) }))
+        .filter((s) => s.available),
+    })),
+  });
 });
 
 // Análisis de ruptura de la vela en curso: niveles, distancia en ATR y la

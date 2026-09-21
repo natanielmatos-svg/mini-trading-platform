@@ -1,5 +1,10 @@
 'use strict';
 
+// Todo el módulo va dentro de una función. En Node da igual —cada archivo ya
+// tiene su ámbito— pero en el navegador se carga con <script> y el ámbito es
+// global: sin esto, dos módulos que declaren `const API` se pisan y el segundo
+// no llega a definirse.
+(function () {
 // Indicadores técnicos compartidos por el servidor (análisis de ruptura) y por
 // el navegador (gráfico y tabla multi-timeframe). Vivían duplicados dentro de
 // public/index.html, donde no había forma de probarlos.
@@ -191,6 +196,35 @@ function quantile(sample, q) {
   return clean[lower] + (clean[upper] - clean[lower]) * (pos - lower);
 }
 
+// El nivel más cercano por encima y por debajo del precio. Si no hay pivote
+// (activo en subida libre, por ejemplo), se usa el extremo del rango reciente:
+// romper el máximo de las últimas 50 velas también es romper algo.
+function findLevels(candles, price, tolerance, lookback = 60) {
+  const { highs, lows } = pivots(candles, 3);
+  const recent = candles.slice(-lookback);
+  const rangeHigh = Math.max(...recent.map((c) => c.high));
+  const rangeLow = Math.min(...recent.map((c) => c.low));
+
+  // Los extremos del rango reciente entran como candidatos junto a los pivotes:
+  // romper el máximo de las últimas 60 velas es romper algo aunque ahí no haya
+  // ningún giro previo. Gana el nivel más cercano al precio, sea del tipo que
+  // sea, porque es el que la vela en curso puede alcanzar.
+  const resistances = clusterLevels(highs, tolerance).filter((l) => l.price > price);
+  if (rangeHigh > price) resistances.push({ price: rangeHigh, touches: 1, lastTouch: null, fallback: true });
+
+  const supports = clusterLevels(lows, tolerance).filter((l) => l.price < price);
+  if (rangeLow < price) supports.push({ price: rangeLow, touches: 1, lastTouch: null, fallback: true });
+
+  const resistance = resistances.length
+    ? resistances.reduce((best, l) => (l.price < best.price ? l : best))
+    : null;
+  const support = supports.length
+    ? supports.reduce((best, l) => (l.price > best.price ? l : best))
+    : null;
+
+  return { resistance, support, rangeHigh, rangeLow };
+}
+
 // Cuánto recorrido hay que exigirle a lo que queda de vela para alcanzar un
 // nivel que está a `distanceAtr` de distancia. La volatilidad de un recorrido
 // escala con la raíz del tiempo, así que a media vela el listón sube ~1,41x.
@@ -216,6 +250,7 @@ const API = {
   shareAtLeast,
   quantile,
   requiredExcursion,
+  findLevels,
 };
 
 // El mismo archivo lo carga Node (análisis de ruptura) y el navegador (gráfico
@@ -224,3 +259,4 @@ const API = {
 // pintando "Bajista" cuando el parámetro era NaN.
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
 else globalThis.Indicators = API;
+})();
