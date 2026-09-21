@@ -20,10 +20,17 @@
 
 const { buildDemoCandles, intervalMs, getKlines } = require('./klines');
 
-const WS_BASE = process.env.BINANCE_WS || 'wss://stream.binance.com:9443/ws';
+// Sin `/ws`: se usa el endpoint combinado, que permite pedir dos flujos en una
+// sola conexión.
+const WS_BASE = (process.env.BINANCE_WS || 'wss://stream.binance.com:9443').replace(/\/ws$/, '');
 const HEARTBEAT_MS = 20_000;   // por debajo del proxy_read_timeout de Nginx
 const LINGER_MS = 30_000;      // margen antes de cerrar el upstream sin clientes
 const DEMO_TICK_MS = 2_000;
+const DEMO_PRICE_MS = 400;     // el precio se mueve más a menudo que la vela
+// BTCUSDT puede operar decenas de veces por segundo. Retransmitir cada
+// operación a cada cliente es tráfico que nadie puede leer: el ojo no
+// distingue más de unas diez actualizaciones por segundo, así que se agrupan.
+const PRICE_THROTTLE_MS = 100;
 const POLL_MIN_MS = 5_000;
 const MAX_BACKOFF_MS = 30_000;
 const WS_RETRY_AFTER_MS = 5 * 60_000; // tras degradar a poll, reintentar el WS
@@ -40,6 +47,18 @@ function tickFromKline(k) {
     volume: Number(k.v),
     trades: Number(k.n) || 0,
     closed: Boolean(k.x),
+  };
+}
+
+// El precio de una operación agregada. El flujo de velas empuja cada uno o dos
+// segundos —suficiente para dibujar, insuficiente para que el número de la
+// pantalla parezca vivo—, así que el precio viene de @aggTrade, que manda una
+// actualización por operación.
+function priceFromAggTrade(msg) {
+  return {
+    price: Number(msg.p),
+    quantity: Number(msg.q),
+    at: Number(msg.T) || Date.now(),
   };
 }
 
@@ -85,6 +104,7 @@ class MarketStream {
 
     room.clients.add(client);
     if (room.lastTick) client.send('kline', { symbol, interval, source: room.source, ...room.lastTick });
+    if (room.lastPrice) client.send('price', { symbol, interval, source: room.source, ...room.lastPrice });
     this.ensureUpstream(room);
 
     return () => this.unsubscribe(symbol, interval, client);
@@ -107,10 +127,42 @@ class MarketStream {
 
   broadcast(room, tick) {
     room.lastTick = tick;
-    const payload = { symbol: room.symbol, interval: room.interval, source: room.source, ...tick };
+    this.emit(room, 'kline', tick);
+  }
+
+  // El precio va por su propio evento: llega mucho más a menudo que la vela y
+  // el navegador sólo tiene que repintar un número, no recalcular el gráfico.
+  //
+  // Se guarda siempre el último (quien se suscriba ahora quiere el de verdad)
+  // pero se manda como mucho diez veces por segundo. Lo que se descarta son
+  // los precios intermedios, nunca el más reciente: al vencer la ventana sale
+  // el último que haya entrado.
+  broadcastPrice(room, price) {
+    room.lastPrice = price;
+
+    const ahora = Date.now();
+    const desde = ahora - (room.priceSentAt || 0);
+
+    if (desde >= PRICE_THROTTLE_MS) {
+      room.priceSentAt = ahora;
+      this.emit(room, 'price', price);
+      return;
+    }
+
+    if (room.priceFlush) return;
+    room.priceFlush = setTimeout(() => {
+      room.priceFlush = null;
+      room.priceSentAt = Date.now();
+      if (room.lastPrice) this.emit(room, 'price', room.lastPrice);
+    }, PRICE_THROTTLE_MS - desde);
+    room.priceFlush.unref?.();
+  }
+
+  emit(room, event, data) {
+    const payload = { symbol: room.symbol, interval: room.interval, source: room.source, ...data };
     for (const client of room.clients) {
       try {
-        client.send('kline', payload);
+        client.send(event, payload);
       } catch {
         room.clients.delete(client);
       }
@@ -140,9 +192,13 @@ class MarketStream {
 
   stopUpstream(room) {
     if (room.timer) clearInterval(room.timer);
+    if (room.priceTimer) clearInterval(room.priceTimer);
     if (room.retryTimer) clearTimeout(room.retryTimer);
+    if (room.priceFlush) clearTimeout(room.priceFlush);
     room.timer = null;
+    room.priceTimer = null;
     room.retryTimer = null;
+    room.priceFlush = null;
     if (room.ws) {
       try {
         room.ws.close();
@@ -155,13 +211,26 @@ class MarketStream {
   }
 
   startDemo(room) {
-    const emit = () => {
+    const emitVela = () => {
       const [candle] = buildDemoCandles({ symbol: room.symbol, interval: room.interval, limit: 1, now: Date.now() });
       if (candle) this.broadcast(room, tickFromCandle(candle));
     };
-    emit();
-    room.timer = setInterval(emit, DEMO_TICK_MS);
+
+    // El precio se mueve entre vela y vela, como en el mercado: pequeñas
+    // sacudidas alrededor del cierre que lleva la vela en curso.
+    const emitPrecio = () => {
+      const base = room.lastTick ? room.lastTick.close : null;
+      if (!base) return;
+      const sacudida = (Math.random() - 0.5) * base * 0.0004;
+      this.broadcastPrice(room, { price: base + sacudida, quantity: Math.random() * 2, at: Date.now() });
+    };
+
+    emitVela();
+    emitPrecio();
+    room.timer = setInterval(emitVela, DEMO_TICK_MS);
+    room.priceTimer = setInterval(emitPrecio, DEMO_PRICE_MS);
     room.timer.unref?.();
+    room.priceTimer.unref?.();
   }
 
   startPolling(room) {
@@ -170,7 +239,10 @@ class MarketStream {
       try {
         const { candles } = await getKlines({ symbol: room.symbol, interval: room.interval, limit: 2, demo: this.demo });
         const last = candles[candles.length - 1];
-        if (last) this.broadcast(room, tickFromCandle(last));
+        if (last) {
+          this.broadcast(room, tickFromCandle(last));
+          this.broadcastPrice(room, { price: last.close, quantity: 0, at: Date.now() });
+        }
       } catch (err) {
         this.notifyStatus(room, 'error', err.message);
       }
@@ -181,7 +253,10 @@ class MarketStream {
   }
 
   startWebSocket(room) {
-    const url = `${WS_BASE}/${room.symbol.toLowerCase()}@kline_${room.interval}`;
+    // Dos flujos en una conexión: la vela para el gráfico y el análisis, y las
+    // operaciones para que el precio se mueva de verdad.
+    const par = room.symbol.toLowerCase();
+    const url = `${WS_BASE}/stream?streams=${par}@kline_${room.interval}/${par}@aggTrade`;
     let ws;
 
     try {
@@ -207,8 +282,14 @@ class MarketStream {
       room.failures = 0;
 
       try {
-        const msg = JSON.parse(typeof event.data === 'string' ? event.data : String(event.data));
-        if (msg && msg.k) this.broadcast(room, tickFromKline(msg.k));
+        const bruto = JSON.parse(typeof event.data === 'string' ? event.data : String(event.data));
+        // El endpoint combinado envuelve cada mensaje en {stream, data}; el
+        // simple los manda pelados. Se aceptan las dos formas.
+        const msg = bruto && bruto.data ? bruto.data : bruto;
+        if (!msg) return;
+
+        if (msg.e === 'aggTrade' || msg.p !== undefined) this.broadcastPrice(room, priceFromAggTrade(msg));
+        else if (msg.k) this.broadcast(room, tickFromKline(msg.k));
       } catch {
         /* un mensaje ilegible no debe tumbar el stream */
       }
@@ -271,6 +352,7 @@ class MarketStream {
       interval: room.interval,
       clients: room.clients.size,
       source: room.source,
+      price: room.lastPrice ? room.lastPrice.price : null,
     }));
   }
 
@@ -331,4 +413,4 @@ function sseClient(res, { heartbeatMs = HEARTBEAT_MS } = {}) {
   };
 }
 
-module.exports = { MarketStream, sseClient, tickFromKline, tickFromCandle, HEARTBEAT_MS };
+module.exports = { MarketStream, sseClient, tickFromKline, tickFromCandle, priceFromAggTrade, HEARTBEAT_MS };

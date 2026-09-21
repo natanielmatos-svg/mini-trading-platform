@@ -107,3 +107,46 @@ test('a media vela se exige raíz de dos veces el recorrido', () => {
   assert.ok(requiredExcursion(1, 0.1) > requiredExcursion(1, 0.5), 'menos tiempo, más listón');
   assert.strictEqual(requiredExcursion(NaN, 1), null);
 });
+
+// --- Ventana de la vela (src/format.js) ------------------------------------
+
+const { candleWindow, formatClock } = require('../src/format');
+
+test('la ventana de la vela se calcula del reloj y no se queda vieja', () => {
+  const paso = 900_000; // 15m
+  const apertura = 1_700_000_000_000 - (1_700_000_000_000 % paso);
+
+  const v = candleWindow(apertura + 300_000, paso);
+  assert.strictEqual(v.open, apertura);
+  assert.strictEqual(v.close, apertura + paso - 1);
+  assert.strictEqual(v.remainingMs, 600_000, 'quedan 10 de los 15 minutos');
+  assert.ok(Math.abs(v.elapsed - 1 / 3) < 1e-9);
+});
+
+test('con una apertura conocida se avanza en saltos exactos, no desde el epoch', () => {
+  // Las semanas de Binance empiezan en lunes; el epoch cayó en jueves, así que
+  // el bucket del reloj daría una apertura equivocada.
+  const semana = 604_800_000;
+  const lunes = Date.UTC(2026, 0, 5); // lunes
+  const dentroDeTresSemanas = lunes + semana * 3 + 3_600_000;
+
+  const v = candleWindow(dentroDeTresSemanas, semana, lunes);
+  assert.strictEqual(v.open, lunes + semana * 3);
+  assert.strictEqual(v.remainingMs, semana - 3_600_000);
+});
+
+test('una apertura en el futuro no rebobina la ventana', () => {
+  const paso = 60_000;
+  const v = candleWindow(1000, paso, 500_000);
+  assert.strictEqual(v.open, 500_000, 'no se salta hacia atrás');
+});
+
+test('la vela recién cerrada da cero, no un número negativo', () => {
+  const paso = 900_000;
+  const apertura = 900_000;
+  const v = candleWindow(apertura + paso, paso, apertura);
+  assert.strictEqual(v.open, apertura + paso, 'ya es la siguiente vela');
+  assert.strictEqual(v.remainingMs, paso);
+  // Y el reloj nunca imprime negativos.
+  assert.strictEqual(formatClock(-5000), '00:00');
+});

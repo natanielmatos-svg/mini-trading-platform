@@ -46,10 +46,23 @@ function textFrame(text) {
   return Buffer.concat([header, payload]);
 }
 
+// El endpoint combinado envuelve cada mensaje en {stream, data}.
+function envuelto(stream, data) {
+  return JSON.stringify({ stream, data });
+}
+
+// Mensaje tal y como lo publica Binance en <par>@aggTrade.
+function aggTradeMessage({ symbol = 'BTCUSDT', price, cantidad = '0.015' }) {
+  return envuelto(`${symbol.toLowerCase()}@aggTrade`, {
+    e: 'aggTrade', E: Date.now(), s: symbol, a: 123,
+    p: price.toFixed(8), q: cantidad, f: 1, l: 2, T: Date.now(), m: false, M: true,
+  });
+}
+
 // Mensaje tal y como lo publica Binance en <par>@kline_<intervalo>.
 function klineMessage({ symbol = 'BTCUSDT', interval = '1h', t, close, cerrada = false }) {
   const step = 3_600_000;
-  return JSON.stringify({
+  return envuelto(`${symbol.toLowerCase()}@kline_${interval}`, {
     e: 'kline',
     E: Date.now(),
     s: symbol,
@@ -179,7 +192,11 @@ test('se suscribe a la ruta que documenta Binance', { skip: soloConWs }, async (
   hub.subscribe('BTCUSDT', '1h', fakeClient());
 
   assert.ok(await hasta(() => ws.rutas.length > 0), 'no llegó a conectar');
-  assert.strictEqual(ws.rutas[0], '/btcusdt@kline_1h', 'par en minúsculas y @kline_<intervalo>');
+  assert.strictEqual(
+    ws.rutas[0],
+    '/stream?streams=btcusdt@kline_1h/btcusdt@aggTrade',
+    'los dos flujos en una sola conexión: velas y operaciones'
+  );
   hub.closeAll();
 });
 
@@ -203,6 +220,74 @@ test('un mensaje kline real se convierte en tick y llega al cliente', { skip: so
   assert.strictEqual(tick.volume, 812.4);
   assert.strictEqual(tick.trades, 4210);
   assert.strictEqual(tick.closed, false);
+  hub.closeAll();
+});
+
+test('una operación agregada mueve el precio sin esperar a la vela', { skip: soloConWs }, async () => {
+  const hub = new stream.MarketStream();
+  const client = fakeClient();
+  hub.subscribe('BTCUSDT', '1h', client);
+
+  assert.ok(await hasta(() => ws.sockets.length > 0));
+  emitir(aggTradeMessage({ price: 86640.64 }));
+
+  assert.ok(await hasta(() => client.events.some((e) => e.event === 'price')), 'no llegó ningún precio');
+  const precio = client.events.find((e) => e.event === 'price').data;
+
+  assert.strictEqual(precio.price, 86640.64);
+  assert.strictEqual(precio.quantity, 0.015);
+  assert.strictEqual(precio.symbol, 'BTCUSDT');
+  assert.ok(precio.at > 0);
+  hub.closeAll();
+});
+
+test('el precio va por su propio evento y no como una vela', { skip: soloConWs }, async () => {
+  const hub = new stream.MarketStream();
+  const client = fakeClient();
+  hub.subscribe('BTCUSDT', '1h', client);
+
+  assert.ok(await hasta(() => ws.sockets.length > 0));
+  emitir(aggTradeMessage({ price: 86000 }));
+
+  assert.ok(await hasta(() => client.events.some((e) => e.event === 'price')));
+  assert.strictEqual(client.events.filter((e) => e.event === 'kline').length, 0, 'una operación no es una vela');
+  hub.closeAll();
+});
+
+test('una ráfaga de operaciones se agrupa, pero el último precio siempre llega', { skip: soloConWs }, async () => {
+  const hub = new stream.MarketStream();
+  const client = fakeClient();
+  hub.subscribe('BTCUSDT', '1h', client);
+
+  assert.ok(await hasta(() => ws.sockets.length > 0));
+
+  // Cuarenta operaciones seguidas, como BTCUSDT en un minuto movido.
+  for (let i = 0; i < 40; i++) emitir(aggTradeMessage({ price: 86000 + i }));
+
+  // El último precio tiene que acabar llegando, aunque los intermedios no.
+  assert.ok(
+    await hasta(() => client.events.some((e) => e.event === 'price' && e.data.price === 86039)),
+    'el precio más reciente no llegó'
+  );
+
+  const enviados = client.events.filter((e) => e.event === 'price').length;
+  assert.ok(enviados < 40, `se retransmitieron ${enviados} de 40: no se está agrupando`);
+  assert.ok(hub.rooms.get('BTCUSDT|1h').lastPrice.price === 86039, 'se guarda el último, no el último enviado');
+  hub.closeAll();
+});
+
+test('quien llega tarde recibe el último precio sin esperar a la siguiente operación', { skip: soloConWs }, async () => {
+  const hub = new stream.MarketStream();
+  hub.subscribe('BTCUSDT', '1h', fakeClient());
+  assert.ok(await hasta(() => ws.sockets.length > 0));
+  emitir(aggTradeMessage({ price: 86500 }));
+  await hasta(() => hub.rooms.get('BTCUSDT|1h').lastPrice);
+
+  const tarde = fakeClient();
+  hub.subscribe('BTCUSDT', '1h', tarde);
+  const precio = tarde.events.find((e) => e.event === 'price');
+  assert.ok(precio, 'la vista debería pintar el precio al instante');
+  assert.strictEqual(precio.data.price, 86500);
   hub.closeAll();
 });
 

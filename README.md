@@ -13,7 +13,7 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet (también el gráfico)
-npm test             # 165 tests, sin red
+npm test             # 173 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -24,7 +24,7 @@ Windows (PowerShell incluido). Hace falta Node 20 o superior: `node -v`.
 ### Cómo se prueba
 
 ```bash
-npm test          # 165 tests, sin red, en unos cinco segundos
+npm test          # 173 tests, sin red, en unos cinco segundos
 npm run smoke     # llama a las APIs de verdad — la única prueba que las valida
 ```
 
@@ -50,7 +50,7 @@ Velas de Binance, EMAs sobre el gráfico, tendencia en cuatro timeframes y un
 panel que responde a una sola pregunta: **¿esta vela va a romper, y hacia
 dónde?**
 
-### Precio en vivo
+### Precio en vivo y bloque de tiempo
 
 El navegador no habla con Binance. Abre una conexión SSE a `/api/stream` y el
 servidor mantiene **un solo WebSocket por símbolo y timeframe**, compartido
@@ -58,6 +58,29 @@ entre todos los clientes: cien pestañas abiertas siguen siendo una conexión
 saliente. Si el WebSocket no levanta —Node antiguo, red que lo bloquea— tras
 tres intentos se degrada a sondeo periódico sobre la caché y se avisa en la
 interfaz; cinco minutos después se vuelve a intentar el WebSocket.
+
+Son **dos flujos en una sola conexión**: `@kline_<intervalo>` para la vela y
+`@aggTrade` para el precio. El de velas empuja cada uno o dos segundos —
+suficiente para dibujar, insuficiente para que el número parezca vivo—, así
+que el precio viene de las operaciones y llega en cuanto alguien opera. Cada
+uno viaja en su propio evento SSE (`kline` y `price`): el navegador repinta un
+número sin recalcular el gráfico.
+
+BTCUSDT puede operar decenas de veces por segundo, y retransmitir cada
+operación a cada cliente es tráfico que nadie puede leer, así que el servidor
+las **agrupa a diez por segundo**. Lo que se descarta son los precios
+intermedios, nunca el más reciente.
+
+**El bloque de tiempo** es la tarjeta de arriba del panel: el precio en vivo
+—que destella verde o rojo al moverse— y una cuenta atrás hasta que cierre la
+vela en curso, con la barra vaciándose, en ámbar en el último cuarto y en rojo
+en el último 10%. Si eliges 15m, el cronómetro baja de 15:00 a 00:00 y vuelve
+a empezar con la vela siguiente.
+
+El cronómetro sale del reloj del navegador anclado a la apertura que dio
+Binance, no del análisis: antes lo tomaba del payload de `/api/breakout`, que
+se refresca cada uno o dos minutos, y al cerrar una vela se quedaba clavado en
+`00:00` hasta el siguiente refresco.
 
 Las velas históricas vienen de `/api/klines`, que las cachea entre 5 y 60
 segundos según el timeframe y agrupa las peticiones simultáneas en una sola
@@ -401,13 +424,17 @@ pudo contrastar con Binance.
 
 ### `GET /api/stream`
 
-Precio en vivo por SSE. Parámetros: `symbol`, `interval`. Emite eventos `kline`
-(cada actualización de la vela en curso) y `status` (estado del upstream), más
-un comentario de latido cada 20 s para que ningún proxy corte la conexión.
+Precio en vivo por SSE. Parámetros: `symbol`, `interval`. Emite tres eventos
+—`kline` (la vela en curso), `price` (cada operación, agrupada a diez por
+segundo) y `status` (estado del upstream)— más un comentario de latido cada
+20 s para que ningún proxy corte la conexión.
 
 ```
 event: kline
 data: {"symbol":"BTCUSDT","interval":"1h","source":"ws","close":64180.5,"closed":false,…}
+
+event: price
+data: {"symbol":"BTCUSDT","interval":"1h","source":"ws","price":64181.2,"quantity":0.015,"at":1790000000000}
 ```
 
 ## Despliegue en un VPS
@@ -563,5 +590,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  165 tests, sin red
+test/                  173 tests, sin red
 ```
