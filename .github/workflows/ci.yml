@@ -16,11 +16,14 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      # Sin esto, el primer Node que falla cancela los demás y no se ve si el
+      # fallo es de esa versión o de todas.
+      fail-fast: false
       matrix:
-        node: ['20', '22']
+        node: ['20', '22', '24']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -42,8 +45,8 @@ jobs:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm

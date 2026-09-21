@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "demo": "node scripts/demo.js",
-    "test": "node --test \"test/*.test.js\"",
+    "test": "node --test",
     "static": "node scripts/build-static.js",
     "smoke": "node scripts/smoke.js",
     "diagnose": "node scripts/diagnose.js"

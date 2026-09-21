@@ -15,6 +15,13 @@ const crypto = require('node:crypto');
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
+// Node no trae WebSocket global hasta la 22. En Node 20 —que el proyecto
+// soporta— el hub lo detecta y se va directo a sondeo, así que aquí no hay
+// nada que probar contra un servidor WebSocket: se prueba la degradación.
+const SIN_WS = typeof WebSocket !== 'function';
+const soloConWs = SIN_WS && 'este Node no trae WebSocket global: el hub usa sondeo';
+const soloSinWs = !SIN_WS && 'este Node trae WebSocket global';
+
 // Trama de texto del servidor: sin máscara, que es lo que manda el estándar
 // para el lado servidor. Con esto basta para emitir; lo que llegue del cliente
 // se ignora, que en este flujo no manda nada.
@@ -167,7 +174,7 @@ test.beforeEach(() => {
   ws.cerrarAlConectar = false;
 });
 
-test('se suscribe a la ruta que documenta Binance', async () => {
+test('se suscribe a la ruta que documenta Binance', { skip: soloConWs }, async () => {
   const hub = new stream.MarketStream();
   hub.subscribe('BTCUSDT', '1h', fakeClient());
 
@@ -176,7 +183,7 @@ test('se suscribe a la ruta que documenta Binance', async () => {
   hub.closeAll();
 });
 
-test('un mensaje kline real se convierte en tick y llega al cliente', async () => {
+test('un mensaje kline real se convierte en tick y llega al cliente', { skip: soloConWs }, async () => {
   const hub = new stream.MarketStream();
   const client = fakeClient();
   hub.subscribe('BTCUSDT', '1h', client);
@@ -199,7 +206,7 @@ test('un mensaje kline real se convierte en tick y llega al cliente', async () =
   hub.closeAll();
 });
 
-test('la marca x del mensaje distingue la vela cerrada', async () => {
+test('la marca x del mensaje distingue la vela cerrada', { skip: soloConWs }, async () => {
   const hub = new stream.MarketStream();
   const client = fakeClient();
   hub.subscribe('ETHUSDT', '15m', client);
@@ -211,7 +218,7 @@ test('la marca x del mensaje distingue la vela cerrada', async () => {
   hub.closeAll();
 });
 
-test('un mensaje ilegible no tumba el stream', async () => {
+test('un mensaje ilegible no tumba el stream', { skip: soloConWs }, async () => {
   const hub = new stream.MarketStream();
   const client = fakeClient();
   hub.subscribe('BTCUSDT', '1h', client);
@@ -225,7 +232,7 @@ test('un mensaje ilegible no tumba el stream', async () => {
   hub.closeAll();
 });
 
-test('cien pestañas del mismo par son una sola conexión con Binance', async () => {
+test('cien pestañas del mismo par son una sola conexión con Binance', { skip: soloConWs }, async () => {
   const hub = new stream.MarketStream();
   const clientes = Array.from({ length: 100 }, () => fakeClient());
   for (const c of clientes) hub.subscribe('BTCUSDT', '1h', c);
@@ -239,7 +246,7 @@ test('cien pestañas del mismo par son una sola conexión con Binance', async ()
   hub.closeAll();
 });
 
-test('si el socket se cae, se reconecta', async () => {
+test('si el socket se cae, se reconecta', { skip: soloConWs }, async () => {
   const hub = new stream.MarketStream();
   const client = fakeClient();
   hub.subscribe('BTCUSDT', '1h', client);
@@ -253,7 +260,7 @@ test('si el socket se cae, se reconecta', async () => {
   hub.closeAll();
 });
 
-test('si el WebSocket no levanta, se degrada a sondeo y sigue habiendo precio', async () => {
+test('si el WebSocket no levanta, se degrada a sondeo y sigue habiendo precio', { skip: soloConWs }, async () => {
   ws.cerrarAlConectar = true;
   const hub = new stream.MarketStream();
   const client = fakeClient();
@@ -275,7 +282,18 @@ test('si el WebSocket no levanta, se degrada a sondeo y sigue habiendo precio', 
   hub.closeAll();
 });
 
-test('closeAll cierra la conexión con Binance', async () => {
+test('en un Node sin WebSocket global se va directo a sondeo, sin intentarlo', { skip: soloSinWs }, async () => {
+  const hub = new stream.MarketStream();
+  const client = fakeClient();
+  hub.subscribe('BTCUSDT', '1h', client);
+
+  assert.ok(await hasta(() => client.events.some((e) => e.event === 'kline')), 'sin WebSocket debería sondear');
+  assert.strictEqual(hub.stats()[0].source, 'poll');
+  assert.strictEqual(ws.conexiones.length, 0, 'ni siquiera intenta abrir el WebSocket');
+  hub.closeAll();
+});
+
+test('closeAll cierra la conexión con Binance', { skip: soloConWs }, async () => {
   const hub = new stream.MarketStream();
   hub.subscribe('BTCUSDT', '1h', fakeClient());
   assert.ok(await hasta(() => ws.sockets.length > 0));
