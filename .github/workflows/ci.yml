@@ -1,16 +1,24 @@
 name: CI
 
-# Los 113 tests no usan red: corren igual en cualquier runner y tardan menos de
-# un segundo. Hasta ahora sólo se ejecutaban si alguien se acordaba.
+# Los 165 tests no usan red: corren igual en cualquier runner y tardan unos
+# cinco segundos. Hasta ahora sólo se ejecutaban si alguien se acordaba.
+#
+# `push` se limita a main: con `['**']` y `pull_request` a la vez, cada push a
+# una rama con PR abierto lanzaba la suite dos veces sobre el mismo commit.
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   schedule:
     # Una vez al día se comprueban las APIs de verdad: Binance, Polymarket,
     # Kalshi y Manifold son públicas y pueden cambiar un campo sin avisar.
     # Mejor enterarse por un correo de Actions que por un usuario.
     - cron: '17 6 * * *'
+
+# Un push nuevo deja obsoleta la ejecución anterior de la misma rama.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
