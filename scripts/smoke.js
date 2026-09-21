@@ -15,6 +15,7 @@ const providers = require('../src/providers');
 const { analyzeEvents } = require('../src/analyze');
 const { getKlines, BINANCE_API } = require('../src/klines');
 const { analyzeBreakout } = require('../src/breakout');
+const { evaluateSignals } = require('../src/signals');
 
 const TOLERANTE = process.argv.includes('--tolerante');
 
@@ -49,11 +50,67 @@ async function comprobarMercado() {
     }
 
     console.log(`  OK    Ruptura: ${ruptura.explanation[1]}`);
+    repasarSenales(candles);
     return true;
   } catch (err) {
     console.log(`  FALLO Binance: ${trunc(err.message)}`);
     return false;
   }
+}
+
+// Pasa el motor de señales por todo el histórico real, vela a vela, como si se
+// hubiera vivido en directo. No es un backtest serio —no hay comisiones, ni
+// deslizamiento, ni se opera la vela de apertura— pero responde a la pregunta
+// que importa antes de fiarse de una alerta: sobre datos de verdad, ¿cuántas
+// veces habría avisado, y cómo acabó cada aviso?
+function repasarSenales(candles) {
+  const compras = [];
+  let position = null;
+  let avisos = 0;
+
+  for (let i = 80; i < candles.length; i++) {
+    const cerradas = candles.slice(0, i).map((c) => ({ ...c, closed: true }));
+    const enCurso = { ...candles[i], closed: false };
+    const { signals, position: siguiente } = evaluateSignals({
+      candles: [...cerradas, enCurso],
+      position,
+      price: candles[i].close,
+      symbol: 'BTCUSDT',
+      interval: '1h',
+      now: candles[i].openTime + 1,
+    });
+
+    for (const s of signals) {
+      if (s.type === 'aviso') avisos++;
+      else if (s.action === 'comprar') compras.push({ entrada: s.price, abierta: true });
+      else if (s.action.startsWith('vender_') && compras.length) {
+        const ultima = compras[compras.length - 1];
+        ultima.abierta = false;
+        ultima.salida = s.price;
+        ultima.motivo = s.reason;
+        ultima.resultado = s.change;
+      }
+    }
+    position = siguiente;
+  }
+
+  const cerradas = compras.filter((c) => !c.abierta);
+  if (!compras.length) {
+    console.log(`  INFO  Señales: ninguna compra en ${candles.length - 80} velas. Normal: el sistema exige cierre fuera del nivel y volumen.`);
+    return;
+  }
+
+  const ganadoras = cerradas.filter((c) => c.resultado > 0).length;
+  const media = cerradas.length ? cerradas.reduce((a, c) => a + c.resultado, 0) / cerradas.length : 0;
+  const motivos = {};
+  for (const c of cerradas) motivos[c.motivo] = (motivos[c.motivo] || 0) + 1;
+
+  console.log(
+    `  INFO  Señales sobre el histórico real: ${compras.length} compras (${cerradas.length} cerradas, ` +
+      `${ganadoras} en positivo), media ${(media * 100).toFixed(2)}% por operación, ${avisos} avisos previos.`
+  );
+  console.log(`        Motivos de venta: ${Object.entries(motivos).map(([k, v]) => `${k} ${v}`).join(', ') || '—'}`);
+  console.log('        Sin comisiones ni deslizamiento: es una comprobación de comportamiento, no un backtest.');
 }
 
 async function main() {
