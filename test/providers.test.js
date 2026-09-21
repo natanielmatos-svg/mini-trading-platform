@@ -96,3 +96,69 @@ test('Los eventos sin opciones utilizables se descartan en vez de romper', () =>
   assert.equal(kalshi.mapEvent({ event_ticker: 'X', title: 'x', markets: [] }), null);
   assert.equal(manifold.mapMarket({ id: 'x', question: 'x', outcomeType: 'MULTIPLE_CHOICE' }), null);
 });
+
+// Kalshi renombró sus campos de precio: de enteros en centavos (yes_bid) a
+// decimales en dólares (yes_bid_dollars). Los fixtures de arriba cubren el
+// formato viejo; estos, el nuevo.
+
+test('Kalshi: lee los campos nuevos en dólares', () => {
+  const event = kalshi.mapEvent({
+    event_ticker: 'FED-26DEC',
+    series_ticker: 'KXFED',
+    title: '¿Baja tipos la Fed en diciembre?',
+    mutually_exclusive: true,
+    markets: [
+      {
+        ticker: 'FED-26DEC-Y',
+        status: 'active',
+        yes_sub_title: 'Sí',
+        no_sub_title: 'No',
+        yes_bid_dollars: 0.62,
+        yes_ask_dollars: 0.64,
+        no_bid_dollars: 0.36,
+        no_ask_dollars: 0.38,
+        last_price_dollars: 0.63,
+        volume_fp: 1180000,
+        liquidity_dollars: 340000,
+        close_time: '2026-12-16T19:00:00Z',
+      },
+    ],
+  });
+
+  assert.ok(event, 'el evento no debería descartarse');
+  assert.equal(event.options.length, 2);
+  assert.ok(Math.abs(event.options[0].price - 0.63) < 1e-9, 'Sí = (0.62+0.64)/2');
+  assert.ok(Math.abs(event.options[1].price - 0.37) < 1e-9, 'No = (0.36+0.38)/2');
+  assert.equal(event.options[0].liquidity, 340000, 'liquidity_dollars ya viene en dólares');
+});
+
+test('Kalshi: priceOf prefiere dólares y cae a centavos', () => {
+  assert.equal(kalshi.priceOf({ yes_bid_dollars: 0.45, yes_bid: 99 }, 'yes_bid'), 0.45);
+  assert.equal(kalshi.priceOf({ yes_bid: 45 }, 'yes_bid'), 0.45);
+  assert.equal(kalshi.priceOf({}, 'yes_bid'), null);
+  // Un valor fuera de rango en cualquiera de las dos escalas se descarta en vez
+  // de colarse como probabilidad imposible.
+  assert.equal(kalshi.priceOf({ yes_bid_dollars: 45 }, 'yes_bid'), null);
+  assert.equal(kalshi.priceOf({ yes_bid_dollars: 0 }, 'yes_bid'), null);
+});
+
+test('Kalshi: descarta las combinadas de varias patas', () => {
+  const base = {
+    ticker: 'KXMVE-X',
+    status: 'active',
+    yes_sub_title: 'yes Toronto,yes Detroit',
+    yes_bid_dollars: 0.3,
+    yes_ask_dollars: 0.32,
+    close_time: '2026-12-16T19:00:00Z',
+  };
+
+  assert.equal(
+    kalshi.mapEvent({ event_ticker: 'E', title: 'Combinada', markets: [{ ...base, mve_collection_ticker: 'KXMVECROSSCATEGORY-X' }] }),
+    null,
+    'una combinada no es una opción de un evento'
+  );
+  assert.equal(
+    kalshi.mapEvent({ event_ticker: 'E', title: 'Combinada', markets: [{ ...base, mve_selected_legs: [{}, {}] }] }),
+    null
+  );
+});

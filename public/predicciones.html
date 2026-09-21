@@ -592,14 +592,14 @@
 
           <div class="verdict">
             <div>
-              <span class="eyebrow">Más probable</span>
+              <span class="eyebrow">${event.verdict.decisive ? 'Más probable' : 'Empate técnico · va por delante'}</span>
               <p class="verdict-name">${esc(top.label)}</p>
               <p class="verdict-note">${detail.join(' · ') || 'única opción cotizada'}</p>
             </div>
             <div class="verdict-pct">${pct(top.probability)}</div>
           </div>
 
-          <ol class="board">${event.options.map((o, i) => renderOption(o, i === 0)).join('')}</ol>
+          <ol class="board">${event.options.map((o) => renderOption(o, o.label === top.label)).join('')}</ol>
           ${notes ? `<div class="notes">${notes}</div>` : ''}
           ${arb}
           ${renderDetail(event)}

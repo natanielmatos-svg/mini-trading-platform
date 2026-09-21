@@ -104,7 +104,6 @@ function textSimilarity(a, b) {
 
 const YES_LABELS = new Set(['yes', 'si', 'sí', 'true', 'a favor']);
 const NO_LABELS = new Set(['no', 'false', 'en contra']);
-
 // "Yes"/"Sí"/"True" son la misma opción en plataformas distintas; sin esto el
 // emparejamiento binario entre Polymarket y Kalshi falla en la mitad de casos.
 function canonicalLabelKey(label) {
@@ -112,6 +111,41 @@ function canonicalLabelKey(label) {
   if (YES_LABELS.has(normalized)) return 'yes';
   if (NO_LABELS.has(normalized)) return 'no';
   return normalized;
+}
+
+// En un mercado de predicción el año es parte del contrato, no un detalle del
+// enunciado: "la Cámara en 2026" y "las presidenciales de 2032" no son el mismo
+// evento por mucho que compartan el molde de la pregunta.
+function extractYears(text) {
+  const years = new Set();
+  for (const match of String(text || '').matchAll(/\b(19|20)\d{2}\b/g)) {
+    years.add(match[0]);
+  }
+  return years;
+}
+
+// Dos enunciados se refieren a periodos incompatibles si ambos citan años y no
+// comparten ninguno. Basta con que coincida uno: un título puede mencionar de
+// paso otro año ("el campeón de 2024, ¿repite en 2026?").
+function yearsConflict(a, b) {
+  const ya = extractYears(a);
+  const yb = extractYears(b);
+  if (ya.size === 0 || yb.size === 0) return false;
+  for (const year of ya) if (yb.has(year)) return false;
+  return true;
+}
+
+// Cajones de sastre: agrupan "cualquier otro" y no son una respuesta. Aparecen
+// sobre todo en Manifold, cuyos mercados de varias opciones suelen cerrar la
+// lista con "Other" en vez de enumerar la cola entera como hace Polymarket.
+const CATCH_ALL_LABELS = new Set([
+  'other', 'others', 'otro', 'otros', 'another', 'someone else', 'anyone else',
+  'field', 'the field', 'any other', 'none of the above', 'ninguno', 'ninguna',
+  'otra opcion', 'otro candidato',
+]);
+
+function isCatchAll(label) {
+  return CATCH_ALL_LABELS.has(normalizeText(label));
 }
 
 module.exports = {
@@ -127,4 +161,7 @@ module.exports = {
   diceSimilarity,
   textSimilarity,
   canonicalLabelKey,
+  extractYears,
+  yearsConflict,
+  isCatchAll,
 };

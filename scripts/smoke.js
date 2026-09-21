@@ -24,7 +24,7 @@ function trunc(text, max = 90) {
 async function main() {
   console.log('Consultando Polymarket, Robinhood/Kalshi y Manifold...\n');
 
-  const { events, sources } = await providers.fetchAll({ limit: 40, timeoutMs: 15000 });
+  const { events, sources } = await providers.fetchAll({ limit: 100, timeoutMs: 20000 });
 
   let caidas = 0;
   for (const s of sources) {
@@ -41,7 +41,7 @@ async function main() {
     }
   }
 
-  const analyses = analyzeEvents(events, { limit: 5 });
+  const analyses = analyzeEvents(events, { limit: 500 });
   const cruzados = analyses.filter((a) => a.crossPlatform).length;
 
   console.log(`\n${events.length} eventos crudos → ${analyses.length} analizados, ${cruzados} contrastados entre plataformas.`);

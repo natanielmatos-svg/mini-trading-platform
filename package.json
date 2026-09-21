@@ -8,7 +8,8 @@
     "demo": "DEMO=1 node server.js",
     "test": "node --test \"test/*.test.js\"",
     "static": "node scripts/build-static.js",
-    "smoke": "node scripts/smoke.js"
+    "smoke": "node scripts/smoke.js",
+    "diagnose": "node scripts/diagnose.js"
   },
   "engines": {
     "node": ">=18"

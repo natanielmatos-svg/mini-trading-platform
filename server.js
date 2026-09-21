@@ -123,7 +123,7 @@ app.get('/api/klines', (req, res) => {
 // un parámetro de la petición: si el cliente pudiera elegirlo, cada valor sería
 // una clave de caché distinta y bastaría recorrerlos para multiplicar por
 // doscientas las llamadas a las APIs ajenas.
-const FETCH_LIMIT = Math.min(Number(process.env.PREDICTIONS_FETCH_LIMIT || 80), 200);
+const FETCH_LIMIT = Math.min(Number(process.env.PREDICTIONS_FETCH_LIMIT || 120), 200);
 
 function parseOptions(req) {
   const platforms = String(req.query.platforms || '')

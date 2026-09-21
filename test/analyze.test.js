@@ -39,7 +39,7 @@ test('un evento que sólo cotiza una plataforma no se mezcla con otros', () => {
 test('las opciones equivalentes se unifican entre plataformas', () => {
   const clusters = clusterEvents(events);
   const election = clusters.find((c) => c.events.length === 3);
-  const groups = canonicalizeOptions(election);
+  const { options: groups } = canonicalizeOptions(election);
 
   assert.equal(groups.length, 3, 'tres candidatos, no nueve opciones sueltas');
   for (const group of groups) {
@@ -162,8 +162,98 @@ test('el veredicto describe la opción ganadora en texto', () => {
   assert.ok(['alta', 'media', 'baja'].includes(election.verdict.confidenceLabel));
 });
 
+// Confianza y margen responden a preguntas distintas. Con 1,2 pts de ventaja no
+// hay favorito, por muy fiables que sean los datos, y el veredicto debe decirlo
+// en vez de dejar que "confianza alta" se lea como "hay ganador".
+test('un margen mínimo se presenta como empate, no como favorito', () => {
+  const { analyzeCluster } = require('../src/analyze');
+
+  const construir = (probabilidades) => {
+    const evento = {
+      platform: 'polymarket',
+      platformLabel: 'Polymarket',
+      credibility: 1,
+      title: 'Nominación demócrata 2028',
+      url: '',
+      closesAt: null,
+      mutuallyExclusive: true,
+      liquidity: 5e6,
+      volume: 5e7,
+      options: probabilidades.map(([label, p]) => ({
+        label,
+        key: label.toLowerCase(),
+        price: p,
+        impliedProb: p,
+        bid: p - 0.005,
+        ask: p + 0.005,
+        spread: 0.01,
+        priceSource: 'book',
+        liquidity: 5e5,
+        volume: 5e6,
+        url: '',
+      })),
+    };
+    return analyzeCluster({ events: [evento], anchor: evento, matchScore: 1 });
+  };
+
+  const empate = construir([['AOC', 0.35], ['Jon Ossoff', 0.34], ['Otro nombre', 0.31]]);
+  assert.equal(empate.verdict.decisive, false);
+  assert.match(empate.verdict.text, /Empate técnico/);
+  assert.match(empate.verdict.text, /Jon Ossoff/, 'debe nombrar a los dos empatados');
+  assert.ok(empate.flags.some((f) => f.code === 'too_close'));
+
+  const claro = construir([['AOC', 0.6], ['Jon Ossoff', 0.25], ['Otro nombre', 0.15]]);
+  assert.equal(claro.verdict.decisive, true);
+  assert.match(claro.verdict.text, /es la opción más probable/);
+});
+
 test('el ranking prioriza los eventos contrastados entre plataformas', () => {
   const analyses = analyzeEvents(events);
   assert.ok(analyses.length >= 3);
   assert.equal(analyses[0].crossPlatform, true);
+});
+
+// "Other" agrupa a todos los demás: es información útil, pero responder "lo más
+// probable es Otro" no contesta la pregunta que hace la app.
+test('un cajón de sastre nunca encabeza el veredicto', () => {
+  const { analyzeCluster } = require('../src/analyze');
+
+  const evento = {
+    platform: 'manifold',
+    platformLabel: 'Manifold',
+    credibility: 1,
+    title: '¿Quién gana en 2028?',
+    url: '',
+    closesAt: null,
+    mutuallyExclusive: true,
+    liquidity: 1e6,
+    volume: 1e6,
+    options: [
+      ['Other', 0.5],
+      ['JD Vance', 0.3],
+      ['Alexandria Ocasio-Cortez', 0.2],
+    ].map(([label, p]) => ({
+      label,
+      key: label.toLowerCase(),
+      price: p,
+      impliedProb: p,
+      bid: p - 0.01,
+      ask: p + 0.01,
+      spread: 0.02,
+      priceSource: 'book',
+      liquidity: 1e5,
+      volume: 1e5,
+      url: '',
+    })),
+  };
+
+  const analysis = analyzeCluster({ events: [evento], anchor: evento, matchScore: 1 });
+
+  assert.equal(analysis.mostLikely.label, 'JD Vance', 'debe ganar la opción real, no el cajón');
+  assert.equal(analysis.catchAll.label, 'Other', 'pero el cajón se sigue reportando');
+  assert.ok(analysis.catchAll.probability > analysis.mostLikely.probability);
+  // Y se avisa de que el mercado apunta fuera de la lista.
+  assert.ok(analysis.flags.some((f) => f.code === 'wide_field'));
+  // Sigue apareciendo en la lista de opciones: no se oculta información.
+  assert.ok(analysis.options.some((o) => o.label === 'Other' && o.catchAll === true));
 });
