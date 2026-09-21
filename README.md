@@ -4,7 +4,7 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 
 | Ruta | Qué es |
 |---|---|
-| `/index.html` | **Plataforma de trading**: velas de Binance en vivo, tendencia multi-timeframe con EMAs, análisis de ruptura de la vela en curso y avisos de entrada y salida con sonido |
+| `/index.html` | **Plataforma de trading**: velas de Binance en vivo, tendencia multi-timeframe con EMAs, análisis de ruptura de la vela en curso y avisos de compra y venta con sonido |
 | `/predicciones.html` | **Analizador de predicciones**: agrega Polymarket, Robinhood/Kalshi y Manifold y dice qué opción es la más probable de cada evento |
 
 ## Arranque
@@ -13,7 +13,7 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet (también el gráfico)
-npm test             # 137 tests, sin red
+npm test             # 139 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -90,39 +90,52 @@ Y la confirmación se separa del pronóstico: **un cierre** por encima del nivel
 con volumen por encima de 1,3× la media. Un pico que toca el nivel y vuelve
 dentro antes del cierre es un rechazo, no una ruptura.
 
-### Avisos de entrada y salida
+### Cuándo comprar y cuándo vender
 
-El panel de ruptura dice qué es probable; los avisos dicen **cuándo actuar**, y
+El panel de ruptura dice qué es probable; los avisos dicen **qué hacer**, y
 suenan aunque estés en otra pestaña. Se encienden con el interruptor de la
-tarjeta *Avisos*, que pide permiso de notificaciones y desbloquea el sonido.
-El botón *Probar* lanza una alerta de mentira para comprobar que ambos
-funcionan antes de fiarte de ellos.
-
-Tres tipos, cada uno con su sonido:
+tarjeta correspondiente, que pide permiso de notificaciones y desbloquea el
+sonido. El botón *Probar* lanza una alerta de mentira para comprobar que
+sonido y permisos funcionan antes de fiarte de ellos.
 
 | Aviso | Cuándo salta | Sonido |
 |---|---|---|
+| **COMPRAR** | Una vela **cierra** por encima de la resistencia con al menos 1,3× el volumen medio | Dos notas ascendentes |
+| **VENDER** | Stop, objetivo, ruptura falsa o señal contraria sobre lo comprado | Dos notas descendentes |
+| **Señal de venta** | Una vela cierra por debajo del soporte sin que haya nada comprado | Dos notas descendentes |
 | **Aviso previo** | La probabilidad de romper pasa del 70% y la vela sigue abierta | Dos notas iguales |
-| **Entrada** | Una vela **cierra** al otro lado del nivel con al menos 1,3× el volumen medio | Dos notas ascendentes |
-| **Salida** | Stop, objetivo, ruptura falsa o señal contraria | Dos notas descendentes |
 
 La regla que lo gobierna todo es la misma que ya definía el análisis: **una
 ruptura sólo cuenta si la vela cierra al otro lado del nivel y con volumen**.
-Un pico que toca el nivel y vuelve dentro es un rechazo, y actuar sobre él es
-la forma más habitual de perder dinero con este tipo de sistema. Por eso el
-aviso previo existe pero está separado de la entrada, y dice explícitamente que
+Un pico que toca el nivel y vuelve dentro es un rechazo, y comprar ahí es la
+forma más habitual de perder dinero con este tipo de sistema. Por eso el aviso
+previo existe pero está separado de la compra, y dice explícitamente que
 todavía no lo es.
 
-Al confirmarse una entrada se abre un **seguimiento en papel** con stop
-—bajo el mínimo de la vela que rompió, más un margen de 0,1 ATR— y objetivo
-—el siguiente nivel por delante, o el doble del riesgo si no hay ninguno—. Ese
-seguimiento se dibuja en el gráfico y se cierra solo cuando salta una salida:
+Al confirmarse una compra se abre un **seguimiento en papel** con el precio de
+compra, el stop —bajo el mínimo de la vela que rompió, más un margen de 0,1
+ATR— y el objetivo —el siguiente nivel por delante, o el doble del riesgo si no
+hay ninguno—. Ambos se dibujan en el gráfico, y el aviso dice literalmente
+cuándo vender: *«vender si baja de 109,68 o al llegar a 125,65»*. El
+seguimiento se cierra solo cuando llega ese momento:
 
-- **Stop**: el precio vuelve al otro lado del stop.
-- **Objetivo**: el precio alcanza el nivel fijado al entrar.
-- **Ruptura falsa**: una vela posterior cierra de vuelta al lado de partida.
-  Es la trampa clásica.
-- **Señal contraria**: se confirma la ruptura del lado opuesto.
+- **Stop**: el precio cae por debajo del stop. Se vende para no seguir perdiendo.
+- **Objetivo**: el precio alcanza el nivel fijado al comprar.
+- **Ruptura falsa**: una vela posterior cierra de vuelta por debajo del nivel
+  roto. Es la trampa clásica: se vende sin esperar al stop.
+- **Señal contraria**: se confirma una ruptura bajista con la compra abierta.
+
+#### Las dos operativas
+
+En contado no se puede vender lo que no se tiene, así que una ruptura bajista
+con la cartera vacía no es una operación. El desplegable *Operativa* decide qué
+hacer con ella:
+
+- **Contado: comprar y vender** (por defecto). La bajada no abre nada, pero
+  tampoco se calla: avisa como señal de venta para quien ya tenga la moneda y
+  de quedarse fuera para quien no.
+- **Contado y corto**. Además sigue las bajadas: *vender en corto* para abrir y
+  *recomprar* para cerrar, con el mismo stop y objetivo que en el otro sentido.
 
 Detalles que conviene saber:
 
@@ -131,7 +144,7 @@ Detalles que conviene saber:
 - **Los avisos son del par que tienes abierto.** No vigila las veintinueve
   criptos a la vez: eso serían veintinueve conexiones y otros tantos análisis.
 - **Al abrir la página no suena nada.** La primera evaluación sólo toma nota:
-  gritar por una ruptura que ocurrió mientras el navegador estaba cerrado es
+  gritar por una señal que ocurrió mientras el navegador estaba cerrado es
   ruido. Esas señales aparecen en el historial marcadas como anteriores.
 - **Una señal no se repite**, aunque se evalúe cien veces: cada una lleva un
   identificador derivado de la vela que la produjo.
@@ -154,9 +167,10 @@ verificar antes que dejar el desplegable vacío.
 - El ATR con el que se normaliza cada vela histórica es **el previo a esa vela**,
   nunca el posterior; si no, el cálculo miraría el futuro y saldrían números
   preciosos e inútiles.
-- Los avisos heredan todos estos límites: son reglas mecánicas sobre el
-  histórico, no una lectura del mercado. No tienen en cuenta noticias, ni el
-  libro de órdenes, ni las comisiones, ni el deslizamiento.
+- Los avisos de compra y venta heredan todos estos límites: son reglas
+  mecánicas sobre el histórico, no una lectura del mercado. No tienen en cuenta
+  noticias, ni el libro de órdenes, ni las comisiones, ni el deslizamiento, y
+  decir "comprar" es describir lo que hace la regla, no aconsejarte a ti.
 - Frecuencia histórica no es probabilidad futura. Es análisis de mercado, no una
   recomendación de inversión.
 
@@ -490,7 +504,7 @@ server.js              rutas HTTP
 src/
   indicators.js        EMA, ATR, RSI, pivotes, niveles — servidor Y navegador
   format.js            formato de precios y porcentajes — servidor Y navegador
-  signals.js           entradas y salidas — servidor Y navegador
+  signals.js           compras y ventas — servidor Y navegador
   symbols.js           catálogo de criptomonedas del desplegable
   klines.js            velas: validación, caché por timeframe y modo demo
   breakout.js          niveles, distancia en ATR y frecuencia histórica
@@ -512,5 +526,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  137 tests, sin red
+test/                  139 tests, sin red
 ```

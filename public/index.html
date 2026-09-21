@@ -141,6 +141,8 @@
 
     /* Avisos */
     .alert-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .mode { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); margin-top: 8px; }
+    .mode select { flex: 1; }
     .switch { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text); cursor: pointer; }
     .switch input { width: 16px; height: 16px; accent-color: var(--up); cursor: pointer; }
     button.ghost { background: transparent; color: var(--muted); }
@@ -159,8 +161,8 @@
 
     .signals { list-style: none; margin: 10px 0 0; padding: 0; max-height: 220px; overflow-y: auto; }
     .signals li { border-left: 3px solid var(--line); padding: 5px 0 5px 8px; margin-bottom: 7px; font-size: 11px; line-height: 1.45; }
-    .signals li.entrada { border-left-color: var(--up); }
-    .signals li.salida { border-left-color: var(--down); }
+    .signals li.compra { border-left-color: var(--up); }
+    .signals li.venta { border-left-color: var(--down); }
     .signals li.aviso { border-left-color: #f59e0b; }
     .signals li.silent { opacity: 0.6; }
     .signals .when { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
@@ -275,7 +277,7 @@
       </div>
 
       <div class="card">
-        <h2>Avisos de entrada y salida</h2>
+        <h2>Cuándo comprar y cuándo vender</h2>
         <div class="alert-controls">
           <label class="switch">
             <input type="checkbox" id="alertToggle" />
@@ -283,13 +285,19 @@
           </label>
           <button id="alertTest" class="ghost small">Probar</button>
         </div>
+        <label class="mode">Operativa
+          <select id="alertMode">
+            <option value="contado">Contado: comprar y vender</option>
+            <option value="ambos">Contado y corto</option>
+          </select>
+        </label>
         <p class="note" id="alertHint">Apagados.</p>
         <div id="positionBox"></div>
         <ul class="signals" id="signalHistory"></ul>
         <p class="note">
-          Entra cuando una vela <strong>cierra</strong> al otro lado del nivel con volumen, no cuando
-          lo toca. Sale al stop, al objetivo, si la vela siguiente devuelve el nivel o si se confirma
-          la ruptura contraria. Es un seguimiento en papel: no manda ninguna orden.
+          Compra cuando una vela <strong>cierra</strong> por encima de la resistencia con volumen, no
+          cuando la toca. Vende al stop, al objetivo, si la vela siguiente devuelve el nivel o si se
+          confirma la ruptura contraria. Es un seguimiento en papel: no manda ninguna orden.
         </p>
       </div>
 

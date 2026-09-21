@@ -34,6 +34,7 @@ const state = {
   lastEval: 0,
   alerts: {
     enabled: false,
+    operativa: 'contado',   // 'contado' (comprar/vender) | 'ambos' (además, cortos)
     primed: false,          // la primera evaluación no suena: sería una alerta de algo ya pasado
     seen: new Set(),
     history: [],
@@ -63,6 +64,7 @@ const el = {
   countdown: $('countdown'),
   alertToggle: $('alertToggle'),
   alertTest: $('alertTest'),
+  alertMode: $('alertMode'),
   alertHint: $('alertHint'),
   position: $('positionBox'),
   history: $('signalHistory'),
@@ -119,6 +121,7 @@ function loadPrefs() {
     if (!raw) return;
     const saved = JSON.parse(raw);
     state.alerts.enabled = Boolean(saved.enabled);
+    if (saved.operativa === 'ambos' || saved.operativa === 'contado') state.alerts.operativa = saved.operativa;
     state.alerts.positions = saved.positions && typeof saved.positions === 'object' ? saved.positions : {};
   } catch {
     /* sin persistencia se sigue funcionando, sólo se olvida entre recargas */
@@ -129,6 +132,7 @@ function savePrefs() {
   try {
     localStorage.setItem(PREFS_KEY, JSON.stringify({
       enabled: state.alerts.enabled,
+      operativa: state.alerts.operativa,
       positions: state.alerts.positions,
     }));
   } catch {
@@ -334,14 +338,16 @@ function setStreamState(label) {
 // Avisos de entrada y salida
 // ---------------------------------------------------------------------------
 
-// El sonido se sintetiza: dos notas ascendentes para entrar, dos descendentes
-// para salir, una sola para el aviso previo. Sin archivos que cargar y se
+// El sonido se sintetiza: dos notas ascendentes para comprar, dos descendentes
+// para vender, dos iguales para el aviso previo. Sin archivos que cargar, y se
 // distinguen sin mirar la pantalla, que es el sentido de que suene.
 const PATTERNS = {
-  entrada: [{ freq: 660, at: 0, dur: 0.12 }, { freq: 990, at: 0.13, dur: 0.22 }],
-  salida: [{ freq: 780, at: 0, dur: 0.12 }, { freq: 440, at: 0.13, dur: 0.28 }],
+  compra: [{ freq: 660, at: 0, dur: 0.12 }, { freq: 990, at: 0.13, dur: 0.22 }],
+  venta: [{ freq: 780, at: 0, dur: 0.12 }, { freq: 440, at: 0.13, dur: 0.28 }],
   aviso: [{ freq: 880, at: 0, dur: 0.09 }, { freq: 880, at: 0.16, dur: 0.09 }],
 };
+
+const ETIQUETA = { compra: 'COMPRAR', venta: 'VENDER', aviso: 'AVISO' };
 
 // El navegador no deja sonar sin un gesto previo del usuario. El contexto se
 // puede crear en cualquier momento, pero nace suspendido y hay que reanudarlo
@@ -407,11 +413,11 @@ function notify(signal) {
 }
 
 function showModal(signal) {
-  const clase = signal.type === 'entrada' ? (signal.side === 'larga' ? 'bull' : 'bear') : signal.type === 'salida' ? 'exit' : 'warn';
+  const clase = signal.type === 'compra' ? 'bull' : signal.type === 'venta' ? 'bear' : 'warn';
 
   el.modalCard.className = `alert-card ${clase}`;
   el.modalCard.innerHTML = `
-    <div class="alert-kind">${signal.type === 'entrada' ? 'ENTRADA' : signal.type === 'salida' ? 'SALIDA' : 'AVISO'}</div>
+    <div class="alert-kind">${ETIQUETA[signal.type] || 'AVISO'}</div>
     <h3>${signal.title}</h3>
     <p>${signal.message}</p>
     <p class="alert-detail">${signal.detail}</p>
@@ -466,6 +472,7 @@ function evaluateAlerts({ force = false } = {}) {
     symbol: state.symbol,
     interval: state.interval,
     now,
+    options: { operativa: state.alerts.operativa },
   });
 
   if (position) state.alerts.positions[key] = position;
@@ -522,28 +529,32 @@ function renderAlertHint() {
       ? ' El navegador espera un clic tuyo para poder sonar.'
       : '';
 
-  el.alertHint.textContent = `Encendidos para ${state.symbol} ${state.interval}. ${fuera}${sonido}`;
+  const modo = state.alerts.operativa === 'ambos' ? 'compra, venta y cortos' : 'compra y venta';
+  el.alertHint.textContent = `Encendidos para ${state.symbol} ${state.interval} (${modo}). ${fuera}${sonido}`;
 }
 
 function renderAlerts() {
   const position = state.alerts.positions[pairKey()];
 
   if (!position) {
-    el.position.innerHTML = '<p class="muted">Sin seguimiento abierto. Se abre solo cuando una vela confirma la ruptura.</p>';
+    el.position.innerHTML = '<p class="muted">Nada comprado ahora mismo. El seguimiento se abre solo cuando una vela confirma la señal de compra.</p>';
   } else {
+    const largo = position.side === 'larga';
     const price = state.live ? state.live.close : state.candles.length ? state.candles[state.candles.length - 1].close : position.entry;
-    const cambio = position.side === 'larga'
+    const cambio = largo
       ? (price - position.entry) / position.entry
       : (position.entry - price) / position.entry;
 
     el.position.innerHTML = `
-      <div class="position ${position.side === 'larga' ? 'bull' : 'bear'}">
+      <div class="position ${largo ? 'bull' : 'bear'}">
         <header>
-          <span>Seguimiento ${position.side} · ${position.symbol} ${position.interval}</span>
+          <span>${largo ? 'Comprado' : 'Vendido en corto'} · ${position.symbol} ${position.interval}</span>
           <strong class="${cambio >= 0 ? 'up' : 'down'}">${cambio >= 0 ? '+' : ''}${formatPercent(cambio, 2)}</strong>
         </header>
         <div class="detail">
-          Entrada ${formatPrice(position.entry)} · stop ${formatPrice(position.stop)} · objetivo ${formatPrice(position.target)}
+          ${largo ? 'Comprado a' : 'Abierto a'} ${formatPrice(position.entry)} ·
+          ${largo ? 'vender' : 'recomprar'} si ${largo ? 'baja de' : 'sube de'} ${formatPrice(position.stop)}
+          o al llegar a ${formatPrice(position.target)}
           ${position.rewardRisk ? ` · ratio ${num(position.rewardRisk)}:1` : ''}
         </div>
         <button class="ghost small" id="positionDrop">Descartar seguimiento</button>
@@ -575,15 +586,14 @@ function testAlert() {
   unlockAudio();
   const price = state.live ? state.live.close : 0;
   showModal({
-    type: 'entrada',
-    side: 'larga',
+    type: 'compra',
     at: Date.now(),
     price,
     title: `Prueba de aviso · ${state.symbol} ${state.interval}`,
     message: 'Si has oído dos notas ascendentes y ves esta ventana, los avisos funcionan.',
-    detail: 'Las entradas suenan ascendentes, las salidas descendentes y los avisos previos son dos notas iguales.',
+    detail: 'Las compras suenan ascendentes, las ventas descendentes y los avisos previos son dos notas iguales.',
   });
-  playSound('entrada');
+  playSound('compra');
   notify({ id: 'prueba', title: 'Prueba de aviso', message: 'Los avisos funcionan.', detail: '' });
 }
 
@@ -1132,6 +1142,12 @@ function init() {
   }
 
   el.alertToggle.addEventListener('change', () => setAlerts(el.alertToggle.checked));
+  el.alertMode.addEventListener('change', () => {
+    state.alerts.operativa = el.alertMode.value;
+    savePrefs();
+    renderAlertHint();
+    evaluateAlerts({ force: true });
+  });
   el.alertTest.addEventListener('click', testAlert);
   el.modal.addEventListener('click', (e) => {
     if (e.target === el.modal) hideModal();
@@ -1164,6 +1180,7 @@ function init() {
   }, 1000);
 
   el.alertToggle.checked = state.alerts.enabled;
+  el.alertMode.value = state.alerts.operativa;
   if (state.alerts.enabled) {
     unlockAudio();
     armarAudioConPrimerGesto();

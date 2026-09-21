@@ -54,22 +54,24 @@ test('sin velas suficientes no se inventa ninguna señal', () => {
   assert.strictEqual(out.position, null);
 });
 
-test('un cierre por encima de la resistencia con volumen es una entrada larga', () => {
+test('un cierre por encima de la resistencia con volumen dice COMPRAR', () => {
   const out = evaluateSignals({ candles: conRuptura(), ...contexto });
 
   assert.strictEqual(out.signals.length, 1);
   const s = out.signals[0];
-  assert.strictEqual(s.action, 'entrada_larga');
-  assert.strictEqual(s.type, 'entrada');
-  assert.strictEqual(s.sound, 'entrada');
+  assert.strictEqual(s.action, 'comprar');
+  assert.strictEqual(s.type, 'compra');
+  assert.strictEqual(s.sound, 'compra');
   assert.strictEqual(s.price, 115);
+  assert.match(s.title, /^Comprar BTCUSDT/);
   assert.ok(s.level > 110 && s.level < 111, `nivel roto ${s.level}`);
-  assert.match(s.message, /cierre, no toque/);
-  assert.match(s.detail, /Stop .* objetivo .* ratio/);
+  assert.match(s.message, /señal de compra/);
+  assert.match(s.message, /no sólo lo toca/);
+  assert.match(s.detail, /Comprar a .* vender si baja de .*\(objetivo/);
 
   assert.strictEqual(out.position.side, 'larga');
   assert.ok(out.position.stop < 110, 'el stop va bajo el mínimo de la vela que rompe');
-  assert.ok(out.position.target > 115, 'el objetivo está por delante de la entrada');
+  assert.ok(out.position.target > 115, 'el objetivo está por delante de la compra');
 });
 
 test('el objetivo no puede ser el máximo de la propia vela que rompe', () => {
@@ -79,48 +81,83 @@ test('el objetivo no puede ser el máximo de la propia vela que rompe', () => {
   assert.ok(position.rewardRisk >= 1.9 && position.rewardRisk <= 2.1);
 });
 
-test('sin volumen que lo respalde, la ruptura no es entrada', () => {
+test('sin volumen que lo respalde, la ruptura no es compra', () => {
   const out = evaluateSignals({ candles: conRuptura({ volume: 100 }), ...contexto });
   assert.deepStrictEqual(out.signals, []);
   assert.strictEqual(out.position, null);
 });
 
-test('un pico que toca el nivel pero cierra dentro no es entrada', () => {
+test('un pico que toca el nivel pero cierra dentro no es compra', () => {
   // Máximo en 115, cierre en 108: el rechazo clásico.
   const out = evaluateSignals({ candles: conRuptura({ close: 108, high: 115, volume: 400 }), ...contexto });
   assert.deepStrictEqual(out.signals, []);
 });
 
-test('un cierre por debajo del soporte con volumen es una entrada corta', () => {
+// Ruptura bajista: en contado no hay nada que vender si no se ha comprado.
+function conCaida() {
   const base = rango();
   const breaker = vela(base[base.length - 1], { open: 100, high: 100.2, low: 94.8, close: 95, volume: 300 });
   const forming = vela(breaker, { open: 95, high: 95.1, low: 94.9, close: 95, volume: 10, closed: false });
+  return [...base, breaker, forming];
+}
 
-  const out = evaluateSignals({ candles: [...base, breaker, forming], ...contexto });
-  assert.strictEqual(out.signals[0].action, 'entrada_corta');
+test('en contado, romper el soporte avisa de venta pero no abre seguimiento', () => {
+  const out = evaluateSignals({ candles: conCaida(), ...contexto });
+
+  assert.strictEqual(out.signals.length, 1);
+  const s = out.signals[0];
+  assert.strictEqual(s.action, 'senal_venta');
+  assert.strictEqual(s.type, 'venta');
+  assert.strictEqual(s.sound, 'venta');
+  assert.match(s.title, /^Señal de venta/);
+  assert.match(s.message, /Si tienes BTC, es la señal de venta/);
+  assert.match(s.detail, /no se puede vender lo que no se tiene/);
+  assert.strictEqual(out.position, null, 'en contado no se abre nada al caer');
+});
+
+test('con cortos activados, romper el soporte sí abre una venta en corto', () => {
+  const out = evaluateSignals({ candles: conCaida(), options: { operativa: 'ambos' }, ...contexto });
+
+  assert.strictEqual(out.signals[0].action, 'vender_corto');
+  assert.strictEqual(out.signals[0].type, 'venta');
+  assert.match(out.signals[0].title, /^Vender en corto BTCUSDT/);
   assert.strictEqual(out.position.side, 'corta');
   assert.ok(out.position.stop > 95, 'en corto el stop va por encima');
   assert.ok(out.position.target < 95);
 });
 
-test('con posición abierta, tocar el stop es una salida', () => {
+test('cerrar un corto se llama recomprar y suena a compra', () => {
+  const candles = conCaida();
+  const { position } = evaluateSignals({ candles, options: { operativa: 'ambos' }, ...contexto });
+
+  const out = evaluateSignals({ candles, position, price: position.target, options: { operativa: 'ambos' }, ...contexto });
+  assert.match(out.signals[0].title, /^Recomprar BTCUSDT/);
+  assert.strictEqual(out.signals[0].type, 'compra');
+  assert.strictEqual(out.signals[0].sound, 'compra');
+  assert.ok(out.signals[0].change > 0, 'un corto cerrado en el objetivo gana');
+});
+
+test('comprado y tocando el stop, dice VENDER', () => {
   const candles = conRuptura();
   const { position } = evaluateSignals({ candles, ...contexto });
 
   const out = evaluateSignals({ candles, position, price: position.stop - 0.01, ...contexto });
-  assert.strictEqual(out.signals[0].action, 'salida_stop');
-  assert.strictEqual(out.signals[0].sound, 'salida');
-  assert.strictEqual(out.position, null, 'la posición se cierra');
+  assert.strictEqual(out.signals[0].action, 'vender_stop');
+  assert.strictEqual(out.signals[0].type, 'venta');
+  assert.strictEqual(out.signals[0].sound, 'venta');
+  assert.match(out.signals[0].title, /^Vender BTCUSDT/);
+  assert.strictEqual(out.position, null, 'el seguimiento se cierra');
   assert.ok(out.signals[0].change < 0);
   assert.match(out.signals[0].message, /La ruptura no aguantó/);
+  assert.match(out.signals[0].detail, /Comprado a .* → vendido a/);
 });
 
-test('alcanzar el objetivo también es una salida, y con ganancia', () => {
+test('alcanzar el objetivo también manda vender, y con ganancia', () => {
   const candles = conRuptura();
   const { position } = evaluateSignals({ candles, ...contexto });
 
   const out = evaluateSignals({ candles, position, price: position.target, ...contexto });
-  assert.strictEqual(out.signals[0].action, 'salida_objetivo');
+  assert.strictEqual(out.signals[0].action, 'vender_objetivo');
   assert.ok(out.signals[0].change > 0);
   assert.strictEqual(out.position, null);
 });
@@ -135,7 +172,7 @@ test('si una vela posterior cierra de vuelta bajo el nivel, se avisa de la tramp
     vela(trampa, { open: 110, high: 110.1, low: 109.9, close: 110, volume: 5, closed: false })];
 
   const out = evaluateSignals({ candles: conTrampa, position, price: 110, ...contexto });
-  assert.strictEqual(out.signals[0].action, 'salida_trampa');
+  assert.strictEqual(out.signals[0].action, 'vender_trampa');
   assert.match(out.signals[0].message, /trampa clásica/);
   assert.strictEqual(out.position, null);
 });
@@ -158,7 +195,7 @@ test('con posición abierta no se emiten avisos de ruptura', () => {
   assert.deepStrictEqual(out.signals, [], 'lo urgente con posición abierta es la salida, no el ruido');
 });
 
-test('una probabilidad alta sin ruptura confirmada es aviso, no entrada', () => {
+test('una probabilidad alta sin ruptura confirmada es aviso, no compra', () => {
   const breakout = {
     ok: true,
     price: 108,
@@ -169,10 +206,11 @@ test('una probabilidad alta sin ruptura confirmada es aviso, no entrada', () => 
   const out = evaluateSignals({ candles: rango({ count: 160 }), breakout, ...contexto });
 
   assert.strictEqual(out.signals.length, 1);
-  assert.strictEqual(out.signals[0].action, 'aviso_alza');
+  assert.strictEqual(out.signals[0].action, 'aviso_compra');
   assert.strictEqual(out.signals[0].sound, 'aviso');
   assert.strictEqual(out.position, null, 'un aviso no abre seguimiento');
-  assert.match(out.signals[0].detail, /Todavía no es una entrada/);
+  assert.match(out.signals[0].title, /A punto de dar señal de compra/);
+  assert.match(out.signals[0].detail, /Todavía no es una compra/);
 });
 
 test('por debajo del umbral no se avisa', () => {
@@ -190,7 +228,7 @@ test('los identificadores son deterministas para no repetir la misma alerta', ()
   const a = evaluateSignals({ candles, ...contexto });
   const b = evaluateSignals({ candles, ...contexto });
   assert.strictEqual(a.signals[0].id, b.signals[0].id);
-  assert.match(a.signals[0].id, /^entrada-larga-\d+$/);
+  assert.match(a.signals[0].id, /^comprar-larga-\d+$/);
 });
 
 test('la función es pura: no toca las velas ni la posición que recibe', () => {
@@ -209,5 +247,5 @@ test('el umbral de volumen es configurable', () => {
   const candles = conRuptura({ volume: 110 }); // 1,1x la media
   assert.deepStrictEqual(evaluateSignals({ candles, ...contexto }).signals, []);
   const out = evaluateSignals({ candles, options: { volumeFactor: 1.05 }, ...contexto });
-  assert.strictEqual(out.signals[0].action, 'entrada_larga');
+  assert.strictEqual(out.signals[0].action, 'comprar');
 });

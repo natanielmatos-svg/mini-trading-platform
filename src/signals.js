@@ -5,13 +5,25 @@
 // global: sin esto, dos módulos que declaren `const API` se pisan y el segundo
 // no llega a definirse.
 (function () {
-// Motor de señales: cuándo entrar y cuándo salir.
+
+// Motor de señales: cuándo comprar y cuándo vender.
 //
-// Traduce el análisis de ruptura a tres cosas accionables —aviso, entrada y
-// salida— siguiendo al pie de la letra la regla que el propio análisis define:
-// **una ruptura sólo cuenta si la vela CIERRA al otro lado del nivel y con
-// volumen**. Un pico que toca el nivel y vuelve dentro es un rechazo, y actuar
-// sobre él es la forma más habitual de perder dinero con este tipo de sistema.
+// Traduce el análisis de ruptura a una instrucción concreta siguiendo al pie
+// de la letra la regla que el propio análisis define: **una ruptura sólo
+// cuenta si la vela CIERRA al otro lado del nivel y con volumen**. Un pico que
+// toca el nivel y vuelve dentro es un rechazo, y comprar ahí es la forma más
+// habitual de perder dinero con este tipo de sistema.
+//
+// Dos formas de operar, porque en contado no se puede vender lo que no se
+// tiene:
+//
+//   contado (por defecto)  Compra cuando rompe al alza y vende cuando toca
+//                          salir. Una ruptura bajista sin nada comprado no
+//                          abre nada: se avisa como señal de venta para quien
+//                          ya tenga la moneda, y de quedarse fuera para quien
+//                          no.
+//   ambos                  Además sigue las bajistas vendiendo en corto y
+//                          recomprando para cerrar.
 //
 // Cuatro decisiones de diseño:
 //
@@ -33,11 +45,32 @@ const I = typeof module !== 'undefined' && module.exports ? require('./indicator
 const F = typeof module !== 'undefined' && module.exports ? require('./format') : globalThis.Format;
 
 const DEFAULTS = {
-  volumeFactor: 1.3,     // volumen mínimo de la vela que rompe, sobre la media de 20
-  warnProbability: 0.7,  // a partir de aquí se avisa de que la ruptura es inminente
-  stopBufferAtr: 0.1,    // margen bajo el mínimo de la vela que rompe
-  minClosed: 40,         // velas cerradas mínimas para opinar
+  volumeFactor: 1.3,       // volumen mínimo de la vela que rompe, sobre la media de 20
+  warnProbability: 0.7,    // a partir de aquí se avisa de que la ruptura es inminente
+  stopBufferAtr: 0.1,      // margen bajo el mínimo de la vela que rompe
+  minClosed: 40,           // velas cerradas mínimas para opinar
+  operativa: 'contado',    // 'contado' | 'ambos'
 };
+
+// En largo se compra para abrir y se vende para cerrar; en corto es al revés.
+// El sonido va con el verbo, no con el sentido de la operación: así "suena a
+// venta" siempre que haya que vender, se esté abriendo o cerrando.
+// `presente` no es un capricho: las frases lo necesitan conjugado ("aquí se
+// vende"), y componerlas con el infinitivo en minúscula daba "aquí se vender".
+const VERBOS = {
+  larga: {
+    abrir: { verbo: 'Comprar', presente: 'compra', tipo: 'compra', sonido: 'compra' },
+    cerrar: { verbo: 'Vender', presente: 'vende', tipo: 'venta', sonido: 'venta' },
+  },
+  corta: {
+    abrir: { verbo: 'Vender en corto', presente: 'vende en corto', tipo: 'venta', sonido: 'venta' },
+    cerrar: { verbo: 'Recomprar', presente: 'recompra', tipo: 'compra', sonido: 'compra' },
+  },
+};
+
+function moneda(symbol) {
+  return String(symbol || '').replace(/(USDT|BUSD|USDC|FDUSD)$/, '') || symbol;
+}
 
 function pctChange(from, to) {
   return from > 0 ? (to - from) / from : 0;
@@ -64,16 +97,17 @@ function targetFor(side, levelsSource, entry, atr, stop) {
   return { price: side === 'larga' ? entry + 2 * risk : entry - 2 * risk, source: 'doble del riesgo' };
 }
 
-function buildEntry({ side, breaker, level, levelsSource, atr, symbol, interval, volumeRatio, now }) {
+function buildOpen({ side, breaker, level, levelsSource, atr, symbol, interval, volumeRatio, now }) {
   const entry = breaker.close;
-  const stop =
-    side === 'larga'
-      ? Math.min(breaker.low, level) - atr * DEFAULTS.stopBufferAtr
-      : Math.max(breaker.high, level) + atr * DEFAULTS.stopBufferAtr;
+  const largo = side === 'larga';
+  const v = VERBOS[side].abrir;
+
+  const stop = largo
+    ? Math.min(breaker.low, level) - atr * DEFAULTS.stopBufferAtr
+    : Math.max(breaker.high, level) + atr * DEFAULTS.stopBufferAtr;
 
   const target = targetFor(side, levelsSource, entry, atr, stop);
   const rr = ratio(entry, stop, target.price);
-  const largo = side === 'larga';
 
   const position = {
     side,
@@ -89,12 +123,14 @@ function buildEntry({ side, breaker, level, levelsSource, atr, symbol, interval,
     rewardRisk: rr,
   };
 
+  const cerrar = VERBOS[side].cerrar;
+
   const signal = {
-    id: `entrada-${side}-${breaker.openTime}`,
-    type: 'entrada',
-    action: `entrada_${side}`,
+    id: `${v.tipo === 'compra' ? 'comprar' : 'vender'}-${side}-${breaker.openTime}`,
+    type: v.tipo,
+    action: largo ? 'comprar' : 'vender_corto',
     side,
-    sound: 'entrada',
+    sound: v.sonido,
     symbol,
     interval,
     candleTime: breaker.openTime,
@@ -104,75 +140,99 @@ function buildEntry({ side, breaker, level, levelsSource, atr, symbol, interval,
     stop,
     target: target.price,
     rewardRisk: rr,
-    title: `Entrada ${largo ? 'larga' : 'corta'} · ${symbol} ${interval}`,
+    title: `${v.verbo} ${symbol} · ${interval}`,
     message:
       `La vela de ${interval} cerró en ${F.formatPrice(entry)}, ${largo ? 'por encima de la resistencia' : 'por debajo del soporte'} ` +
       `${F.formatPrice(level)}${volumeRatio ? `, con ${F.num(volumeRatio)}× el volumen medio` : ''}. ` +
-      'Es la confirmación que pedía el análisis: cierre, no toque.',
+      `Es la señal de ${largo ? 'compra' : 'venta'} del sistema: la vela cierra al otro lado del nivel, no sólo lo toca.`,
     detail:
-      `Stop ${F.formatPrice(stop)} (${F.formatPercent(Math.abs(pctChange(entry, stop)), 2)}) · ` +
-      `objetivo ${F.formatPrice(target.price)} (${F.formatPercent(Math.abs(pctChange(entry, target.price)), 2)}, ${target.source}) · ` +
+      `${v.verbo} a ${F.formatPrice(entry)} · ` +
+      `${cerrar.verbo.toLowerCase()} si ${largo ? 'baja de' : 'sube de'} ${F.formatPrice(stop)} (stop, ${F.formatPercent(Math.abs(pctChange(entry, stop)), 2)}) ` +
+      `o al llegar a ${F.formatPrice(target.price)} (objetivo, ${F.formatPercent(Math.abs(pctChange(entry, target.price)), 2)}, ${target.source}) · ` +
       `ratio ${rr ? `${F.num(rr)}:1` : '—'}`,
   };
 
   return { position, signal };
 }
 
-function buildExit({ position, reason, price, now, extra = '' }) {
+function buildClose({ position, reason, price, now, extra = '' }) {
   const largo = position.side === 'larga';
+  const v = VERBOS[position.side].cerrar;
   const cambio = largo ? pctChange(position.entry, price) : pctChange(price, position.entry);
 
   const textos = {
     stop: {
-      title: `Salida: stop · ${position.symbol} ${position.interval}`,
       message:
         `El precio volvió a ${F.formatPrice(price)}, ${largo ? 'por debajo del' : 'por encima del'} stop ` +
-        `${F.formatPrice(position.stop)}. La ruptura no aguantó.`,
+        `${F.formatPrice(position.stop)}. La ruptura no aguantó: aquí se ${v.presente} para no seguir perdiendo.`,
     },
     objetivo: {
-      title: `Salida: objetivo · ${position.symbol} ${position.interval}`,
-      message: `El precio alcanzó ${F.formatPrice(position.target)}, el objetivo fijado al entrar.`,
+      message: `El precio alcanzó ${F.formatPrice(position.target)}, el objetivo fijado al ${largo ? 'comprar' : 'abrir el corto'}.`,
     },
     trampa: {
-      title: `Salida: ruptura falsa · ${position.symbol} ${position.interval}`,
       message:
         `Una vela cerró de vuelta ${largo ? 'por debajo de' : 'por encima de'} ${F.formatPrice(position.level)}, ` +
-        'el nivel que se había roto. Es la trampa clásica: el nivel se recupera y el movimiento se deshace.',
+        'el nivel que se había roto. Es la trampa clásica: el nivel se recupera y el movimiento se deshace, así que se cierra sin esperar al stop.',
     },
     contraria: {
-      title: `Salida: señal contraria · ${position.symbol} ${position.interval}`,
       message: `Se confirmó una ruptura ${largo ? 'bajista' : 'alcista'} con la posición abierta. ${extra}`.trim(),
     },
   };
 
-  const t = textos[reason];
-
   return {
-    id: `salida-${reason}-${position.openedAt}`,
-    type: 'salida',
-    action: `salida_${reason}`,
+    id: `${v.tipo}-${reason}-${position.openedAt}`,
+    type: v.tipo,
+    action: `${largo ? 'vender' : 'recomprar'}_${reason}`,
     side: position.side,
-    sound: 'salida',
+    sound: v.sonido,
     symbol: position.symbol,
     interval: position.interval,
     at: now,
     price,
     entry: position.entry,
     change: cambio,
-    title: t.title,
-    message: t.message,
+    reason,
+    title: `${v.verbo} ${position.symbol} · ${position.interval}`,
+    message: textos[reason].message,
     detail:
-      `Entrada ${F.formatPrice(position.entry)} → salida ${F.formatPrice(price)} · ` +
+      `${largo ? 'Comprado' : 'Abierto'} a ${F.formatPrice(position.entry)} → ${largo ? 'vendido' : 'cerrado'} a ${F.formatPrice(price)} · ` +
       `${cambio >= 0 ? '+' : ''}${F.formatPercent(cambio, 2)} en el seguimiento`,
+  };
+}
+
+// Ruptura bajista operando sólo en contado y sin nada comprado. No abre
+// seguimiento —no se puede vender lo que no se tiene— pero callarse sería
+// peor: quien ya tenga la moneda de antes sí tiene aquí una señal de venta.
+function buildLooseSell({ breaker, level, symbol, interval, volumeRatio, now }) {
+  return {
+    id: `senal-venta-${breaker.openTime}`,
+    type: 'venta',
+    action: 'senal_venta',
+    side: 'corta',
+    sound: 'venta',
+    symbol,
+    interval,
+    candleTime: breaker.openTime,
+    at: now,
+    price: breaker.close,
+    level,
+    title: `Señal de venta · ${symbol} ${interval}`,
+    message:
+      `La vela de ${interval} cerró en ${F.formatPrice(breaker.close)}, por debajo del soporte ${F.formatPrice(level)}` +
+      `${volumeRatio ? `, con ${F.num(volumeRatio)}× el volumen medio` : ''}. ` +
+      `Si tienes ${moneda(symbol)}, es la señal de venta del sistema; si no, la de quedarse fuera.`,
+    detail:
+      'No se abre seguimiento: en contado no se puede vender lo que no se tiene. ' +
+      'Cambia a «contado y corto» si quieres que también siga las bajadas.',
   };
 }
 
 function buildWarning({ side, breakoutSide, breakout, symbol, interval, candleTime, now }) {
   const largo = side === 'larga';
   return {
-    id: `aviso-${side}-${candleTime}`,
+    id: `aviso-${largo ? 'compra' : 'venta'}-${candleTime}`,
     type: 'aviso',
-    action: `aviso_${largo ? 'alza' : 'baja'}`,
+    action: `aviso_${largo ? 'compra' : 'venta'}`,
     side,
     sound: 'aviso',
     symbol,
@@ -182,11 +242,11 @@ function buildWarning({ side, breakoutSide, breakout, symbol, interval, candleTi
     price: breakout.price,
     level: breakoutSide.level,
     probability: breakoutSide.probability,
-    title: `Aviso: ruptura ${largo ? 'al alza' : 'a la baja'} cerca · ${symbol} ${interval}`,
+    title: `A punto de dar señal de ${largo ? 'compra' : 'venta'} · ${symbol} ${interval}`,
     message:
       `${F.formatPercent(breakoutSide.probability, 0)} de probabilidad de alcanzar ${F.formatPrice(breakoutSide.level)} ` +
       `antes de que cierre la vela (quedan ${breakout.candle.remainingLabel}).`,
-    detail: 'Todavía no es una entrada: hace falta que la vela cierre al otro lado del nivel y con volumen.',
+    detail: `Todavía no es una ${largo ? 'compra' : 'venta'}: hace falta que la vela cierre al otro lado del nivel y con volumen.`,
   };
 }
 
@@ -210,6 +270,7 @@ function evaluateSignals({
   options = {},
 } = {}) {
   const cfg = { ...DEFAULTS, ...options };
+  const conCortos = cfg.operativa === 'ambos';
   const signals = [];
 
   if (!Array.isArray(candles) || candles.length < cfg.minClosed) return { signals, position };
@@ -238,22 +299,22 @@ function evaluateSignals({
   const rompeArriba = Boolean(resistance && breaker.close > resistance.price && volumeOk);
   const rompeAbajo = Boolean(support && breaker.close < support.price && volumeOk);
 
-  // --- Salidas primero: con una posición abierta, lo urgente es cerrarla -----
+  // --- Cerrar primero: con una posición abierta, lo urgente es salir --------
   if (position) {
     const largo = position.side === 'larga';
-    let exit = null;
+    let cierre = null;
 
     if (largo ? livePrice <= position.stop : livePrice >= position.stop) {
-      exit = buildExit({ position, reason: 'stop', price: livePrice, now });
+      cierre = buildClose({ position, reason: 'stop', price: livePrice, now });
     } else if (largo ? livePrice >= position.target : livePrice <= position.target) {
-      exit = buildExit({ position, reason: 'objetivo', price: livePrice, now });
+      cierre = buildClose({ position, reason: 'objetivo', price: livePrice, now });
     } else if (
       breaker.openTime > position.candleTime &&
       (largo ? breaker.close < position.level : breaker.close > position.level)
     ) {
-      exit = buildExit({ position, reason: 'trampa', price: breaker.close, now });
+      cierre = buildClose({ position, reason: 'trampa', price: breaker.close, now });
     } else if (largo ? rompeAbajo : rompeArriba) {
-      exit = buildExit({
+      cierre = buildClose({
         position,
         reason: 'contraria',
         price: breaker.close,
@@ -262,23 +323,26 @@ function evaluateSignals({
       });
     }
 
-    if (exit) return { signals: [exit], position: null };
+    if (cierre) return { signals: [cierre], position: null };
     return { signals, position };
   }
 
-  // --- Entradas -------------------------------------------------------------
+  // --- Abrir ----------------------------------------------------------------
   if (rompeArriba) {
-    const { position: nueva, signal } = buildEntry({
+    const { position: nueva, signal } = buildOpen({
       side: 'larga', breaker, level: resistance.price, levelsSource: history, atr, symbol, interval, volumeRatio, now,
     });
     return { signals: [signal], position: nueva };
   }
 
   if (rompeAbajo) {
-    const { position: nueva, signal } = buildEntry({
-      side: 'corta', breaker, level: support.price, levelsSource: history, atr, symbol, interval, volumeRatio, now,
-    });
-    return { signals: [signal], position: nueva };
+    if (conCortos) {
+      const { position: nueva, signal } = buildOpen({
+        side: 'corta', breaker, level: support.price, levelsSource: history, atr, symbol, interval, volumeRatio, now,
+      });
+      return { signals: [signal], position: nueva };
+    }
+    return { signals: [buildLooseSell({ breaker, level: support.price, symbol, interval, volumeRatio, now })], position: null };
   }
 
   // --- Aviso previo ---------------------------------------------------------
@@ -296,7 +360,7 @@ function evaluateSignals({
   return { signals, position };
 }
 
-const API = { evaluateSignals, DEFAULTS };
+const API = { evaluateSignals, DEFAULTS, VERBOS };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
 else globalThis.Signals = API;

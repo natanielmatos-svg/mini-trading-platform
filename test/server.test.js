@@ -140,7 +140,7 @@ test('el motor de señales que recibe el navegador es el mismo que usa Node', as
   const código = await (await fetch(`${base}/lib/signals.js`)).text();
   assert.match(código, /globalThis\.Signals/);
   assert.match(código, /function evaluateSignals/);
-  assert.match(código, /cierre, no toque/, 'la regla de confirmación viaja con el módulo');
+  assert.match(código, /CIERRA al otro lado del nivel y con volumen/, 'la regla de confirmación viaja con el módulo');
 });
 
 test('el HTML se revalida y lleva cabeceras de seguridad', async () => {
