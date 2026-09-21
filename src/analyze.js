@@ -197,21 +197,56 @@ function scoreConfidence({ totalWeight, platformsInvolved, meanAgreement }) {
 
 // Si se puede comprar "Sí" en todas las opciones de un evento excluyente por
 // menos de 1$ en total, una de ellas paga 1$ pase lo que pase.
+//
+// Con una condición que parece técnica y es la que decide si esto significa
+// algo: todas las patas han de ser de LA MISMA plataforma. Comprar cada pata
+// donde esté más barata entre varias parece más rentable y no es arbitraje:
+// son contratos distintos, con reglas de resolución que pueden discrepar en el
+// caso límite, y el "beneficio" es la diferencia entre dos mercados que no
+// tienen por qué liquidar igual. Sobre el catálogo real, la versión que mezclaba
+// plataformas marcaba 442 de 447 eventos: un detector que se dispara siempre no
+// está detectando nada.
 function findArbitrage(options, mutuallyExclusive) {
   if (!mutuallyExclusive || options.length < 2) return null;
-  if (!options.every((o) => o.bestPrice && Number.isFinite(o.bestPrice.ask))) return null;
 
-  const cost = options.reduce((acc, o) => acc + o.bestPrice.ask, 0);
-  if (cost >= 0.995) return null; // por debajo de eso, las comisiones se lo comen
+  // Por cada plataforma, ¿cotiza todas las patas y cuánto suman?
+  const porPlataforma = new Map();
+  for (const option of options) {
+    for (const quote of option.platforms || []) {
+      if (!Number.isFinite(quote.ask) || quote.ask <= 0 || quote.ask >= 1) continue;
+      let acc = porPlataforma.get(quote.platform);
+      if (!acc) porPlataforma.set(quote.platform, (acc = { label: quote.platformLabel, legs: [] }));
+      acc.legs.push({ label: option.label, ask: quote.ask });
+    }
+  }
+
+  let mejor = null;
+  for (const [platform, acc] of porPlataforma) {
+    // Le falta alguna pata: sin cubrir todos los desenlaces no hay arbitraje.
+    if (acc.legs.length !== options.length) continue;
+
+    const cost = acc.legs.reduce((sum, l) => sum + l.ask, 0);
+    // Margen exigido amplio: por debajo de eso se lo comen las comisiones y el
+    // hecho de que el precio publicado casi nunca tiene tamaño detrás.
+    if (cost >= 0.97) continue;
+
+    if (!mejor || cost < mejor.cost) {
+      mejor = { platform, platformLabel: acc.label, cost, legs: acc.legs };
+    }
+  }
+
+  if (!mejor) return null;
 
   return {
-    cost,
-    profit: 1 - cost,
-    returnPct: (1 - cost) / cost,
-    legs: options.map((o) => ({
-      label: o.label,
-      platform: o.bestPrice.platformLabel,
-      ask: o.bestPrice.ask,
+    platform: mejor.platform,
+    platformLabel: mejor.platformLabel,
+    cost: mejor.cost,
+    profit: 1 - mejor.cost,
+    returnPct: (1 - mejor.cost) / mejor.cost,
+    legs: mejor.legs.map((l) => ({
+      label: l.label,
+      platform: mejor.platformLabel,
+      ask: l.ask,
     })),
   };
 }
@@ -277,6 +312,20 @@ function buildFlags(analysis) {
       message:
         `"${analysis.catchAll.label}" (${(analysis.catchAll.probability * 100).toFixed(0)}%) supera al favorito: ` +
         'el mercado apunta a alguien fuera de las opciones listadas.',
+    });
+  }
+
+  // El emparejamiento entre plataformas es textual, y sobre datos reales no hay
+  // umbral que separe del todo: los pares legítimos puntúan entre 0,56 y 1,00 y
+  // los erróneos entre 0,59 y 0,75. En la zona de solape se avisa en vez de
+  // aparentar certeza, con los títulos de cada fuente a un clic para comprobar.
+  if (analysis.crossPlatform && analysis.matchScore < 0.78) {
+    flags.push({
+      level: 'warn',
+      code: 'weak_match',
+      message:
+        `Emparejamiento flojo (${analysis.matchScore.toFixed(2)}): comprueba en el detalle que ` +
+        'las plataformas hablan del mismo contrato antes de fiarte del consenso.',
     });
   }
 

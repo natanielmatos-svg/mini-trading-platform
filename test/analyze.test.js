@@ -124,22 +124,60 @@ test('un spread ancho reduce el peso de esa cotización', () => {
   assert.ok(wide.probability < tight.probability, 'el lado con spread ancho debe pesar menos');
 });
 
-test('findArbitrage detecta cuando comprar todas las opciones cuesta menos de 1', () => {
+// El arbitraje sólo cuenta dentro de una misma plataforma. Comprar cada pata
+// donde esté más barata entre varias parece más rentable y no lo es: son
+// contratos distintos que no tienen por qué liquidar igual.
+function opcion(label, cotizaciones) {
+  return {
+    label,
+    platforms: cotizaciones.map(([platform, ask]) => ({
+      platform,
+      platformLabel: platform,
+      ask,
+    })),
+  };
+}
+
+test('findArbitrage detecta comprar todas las patas por menos de 1 en una plataforma', () => {
   const options = [
-    { label: 'A', bestPrice: { ask: 0.45, platformLabel: 'X' } },
-    { label: 'B', bestPrice: { ask: 0.4, platformLabel: 'Y' } },
-    { label: 'C', bestPrice: { ask: 0.1, platformLabel: 'Z' } },
+    opcion('A', [['x', 0.45]]),
+    opcion('B', [['x', 0.4]]),
+    opcion('C', [['x', 0.1]]),
   ];
 
   const arb = findArbitrage(options, true);
   assert.ok(arb);
+  assert.equal(arb.platform, 'x');
   assert.ok(Math.abs(arb.cost - 0.95) < 1e-9);
   assert.ok(Math.abs(arb.profit - 0.05) < 1e-9);
   assert.equal(arb.legs.length, 3);
 
   // Sin margen suficiente, o si el evento no es excluyente, no hay arbitraje.
-  assert.equal(findArbitrage([{ label: 'A', bestPrice: { ask: 0.6 } }, { label: 'B', bestPrice: { ask: 0.45 } }], true), null);
+  assert.equal(findArbitrage([opcion('A', [['x', 0.6]]), opcion('B', [['x', 0.45]])], true), null);
   assert.equal(findArbitrage(options, false), null);
+});
+
+test('repartir las patas entre plataformas NO es arbitraje', () => {
+  // Cada pata más barata en un sitio distinto suma 0,95, pero no hay ninguna
+  // plataforma donde se puedan comprar todas: es la diferencia entre dos
+  // mercados que pueden resolver distinto, no un beneficio asegurado.
+  const options = [
+    opcion('A', [['x', 0.45], ['y', 0.52]]),
+    opcion('B', [['x', 0.47], ['y', 0.4]]),
+    opcion('C', [['y', 0.1]]),
+  ];
+
+  assert.equal(findArbitrage(options, true), null);
+});
+
+test('una plataforma a la que le falta una pata no cuenta', () => {
+  const options = [
+    opcion('A', [['x', 0.3]]),
+    opcion('B', [['x', 0.3]]),
+    opcion('C', [['y', 0.2]]), // x no cotiza esta opción
+  ];
+
+  assert.equal(findArbitrage(options, true), null, 'sin cubrir todos los desenlaces no hay arbitraje');
 });
 
 test('la búsqueda filtra por título y por nombre de opción', () => {
@@ -149,9 +187,13 @@ test('la búsqueda filtra por título y por nombre de opción', () => {
   assert.equal(matchesQuery(election, 'bitcoin'), false);
   assert.equal(matchesQuery(election, ''), true);
 
+  // Los tres mercados de la Fed del ejemplo son el mismo evento, pero el de
+  // Polymarket está redactado tan distinto ("decreases interest rates" frente a
+  // "cut rates") que no llega al umbral que exigimos a los binarios. Es el
+  // precio de rechazar los falsos positivos, que en esa franja puntuaban igual.
   const filtered = analyzeEvents(events, { query: 'fed' });
-  assert.equal(filtered.length, 1);
-  assert.ok(filtered[0].title.toLowerCase().includes('fed'));
+  assert.ok(filtered.length >= 1);
+  assert.ok(filtered.every((f) => f.title.toLowerCase().includes('fed')));
 });
 
 test('el veredicto describe la opción ganadora en texto', () => {

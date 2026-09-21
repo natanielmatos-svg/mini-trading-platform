@@ -46,8 +46,13 @@ function isGenericBinary(event) {
 // término puntúa 1,0 pase lo que pase, regalando 0,35 a cualquier pareja: con
 // eso, "Hantavirus pandemic in 2026?" y "US recession in 2026?" superaban el
 // umbral. Entre binarios decide el título y nada más.
+// Comparación suelta de dos eventos. Sin catálogo detrás no hay frecuencias,
+// así que se construye un corpus mínimo con los dos: basta para que una palabra
+// presente en ambos pese menos que una exclusiva de uno.
 function eventSimilarity(a, b) {
-  return similarityOf(prepareEvent(a), prepareEvent(b));
+  const pa = prepareEvent(a);
+  const pb = prepareEvent(b);
+  return similarityOf(pa, pb, buildIdf([pa, pb]));
 }
 
 // Tokenizar un título cuesta poco, pero hacerlo dentro de un bucle cuadrático
@@ -71,24 +76,66 @@ function yearsConflictSets(ya, yb) {
   return true;
 }
 
-// Misma lógica que eventSimilarity, sobre datos ya preparados.
+// Dice cuenta todas las palabras igual, y ahí estaba el fallo: en "FL-11 House
+// Election Winner" contra "NJ-11 House winner?" las únicas que deciden son "fl"
+// y "nj", y pesaban lo mismo que el relleno compartido. Sobre datos reales eso
+// emparejaba Florida con Nueva Jersey, Grecia con Turquía, Manchin con
+// Zuckerberg y el canal de Panamá con Canadá.
+//
+// La frecuencia en el catálogo las distingue: "election" sale en cientos de
+// contratos y no discrimina nada, "manchin" sale en uno y lo discrimina todo.
+function buildIdf(preparados) {
+  const df = new Map();
+  for (const p of preparados) {
+    for (const token of p.tokens) df.set(token, (df.get(token) || 0) + 1);
+    for (const token of p.optTokens) df.set(token, (df.get(token) || 0) + 1);
+  }
+
+  const total = preparados.length || 1;
+  const idf = new Map();
+  for (const [token, count] of df) idf.set(token, Math.log(1 + total / count));
+  return idf;
+}
+
+// Una palabra ausente del catálogo es, por definición, de las más raras.
+const IDF_DESCONOCIDA = Math.log(1 + 1000);
+
+function weightedDice(a, b, idf) {
+  if (!idf) return diceSimilarity(a, b);
+  if (a.size === 0 || b.size === 0) return 0;
+
+  let compartido = 0;
+  let totalA = 0;
+  let totalB = 0;
+
+  for (const token of a) {
+    const w = idf.get(token) ?? IDF_DESCONOCIDA;
+    totalA += w;
+    if (b.has(token)) compartido += w;
+  }
+  for (const token of b) totalB += idf.get(token) ?? IDF_DESCONOCIDA;
+
+  const denom = totalA + totalB;
+  return denom === 0 ? 0 : (2 * compartido) / denom;
+}
+
 function setsDiffer(a, b) {
   if (a.size !== b.size) return true;
   for (const v of a) if (!b.has(v)) return true;
   return false;
 }
 
-function similarityOf(a, b) {
+function similarityOf(a, b, idf) {
   // El año no es un matiz de la puntuación: es el contrato.
   if (yearsConflictSets(a.years, b.years)) return 0;
   // Y el resto de cifras suele ser el umbral que separa un contrato de su
   // vecino en una escalera de strikes.
   if (setsDiffer(a.numbers, b.numbers)) return 0;
 
-  const titleScore = diceSimilarity(a.tokens, b.tokens);
+  const titleScore = weightedDice(a.tokens, b.tokens, idf);
   if (a.binary && b.binary) return titleScore;
 
-  return 0.65 * titleScore + 0.35 * diceSimilarity(a.optTokens, b.optTokens);
+  return 0.65 * titleScore + 0.35 * weightedDice(a.optTokens, b.optTokens, idf);
 }
 
 function closeDatesCompatible(a, b, maxGapDays) {
@@ -114,8 +161,27 @@ const MAX_CANDIDATOS = 60;
 // —emparejar comicios de años distintos— ya lo ataja el descarte por año, que
 // es más fiable: la fecha de cierre de Manifold la fija quien crea el mercado
 // y va suelta. Con 30 días se perdían emparejamientos legítimos.
-function clusterEvents(events, { threshold = 0.5, maxCloseGapDays = 365 } = {}) {
+// Un multi-opción lleva corroboración incorporada: si dos plataformas listan
+// los mismos veinte candidatos, es que hablan del mismo evento. Un binario Sí/No
+// no tiene nada que corrobore el título, así que se le exige más.
+//
+// Sobre parejas reales etiquetadas a mano, los falsos positivos que más
+// puntuaban eran todos binarios —Manchin con Zuckerberg, Ucrania-OTAN con el
+// fin de la guerra, Grecia con Turquía, Panamá con Canadá— y ninguno llegaba a
+// 0,75. Los multi-opción falsos se quedaban por debajo de 0,66.
+const UMBRAL_BINARIO = 0.75;
+const UMBRAL_MULTIOPCION = 0.62;
+
+function umbralDe(a, b, base) {
+  const estricto = a.binary && b.binary;
+  const suelo = estricto ? UMBRAL_BINARIO : UMBRAL_MULTIOPCION;
+  // Si quien llama pide un umbral más alto, manda el suyo.
+  return Math.max(suelo, base);
+}
+
+function clusterEvents(events, { threshold = 0, maxCloseGapDays = 365 } = {}) {
   const preparados = events.map(prepareEvent).sort((a, b) => b.weight - a.weight);
+  const idf = buildIdf(preparados);
 
   const clusters = [];
   const porToken = new Map(); // palabra -> índices de los grupos que la contienen
@@ -152,15 +218,17 @@ function clusterEvents(events, { threshold = 0.5, maxCloseGapDays = 365 } = {}) 
       // El grupo entero debe parecerse, no sólo su ancla: basta un miembro por
       // debajo del umbral para descartarlo.
       let score = Infinity;
+      let exigido = 0;
       for (const miembro of cluster.miembros) {
         const s = closeDatesCompatible(miembro.event, p.event, maxCloseGapDays)
-          ? similarityOf(miembro, p)
+          ? similarityOf(miembro, p, idf)
           : 0;
         if (s < score) score = s;
-        if (score < threshold) break;
+        exigido = Math.max(exigido, umbralDe(miembro, p, threshold));
+        if (score < exigido) break;
       }
 
-      if (score >= threshold && score > bestScore) {
+      if (score >= exigido && score > bestScore) {
         best = cluster;
         bestScore = score;
       }

@@ -13,7 +13,7 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet
-npm test             # 64 tests, sin red
+npm test             # 66 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -91,10 +91,14 @@ Añadir una plataforma es escribir un módulo en `src/providers/` que exporte
 
 ### Límites conocidos
 
-- El emparejamiento por similitud de texto es heurístico: eventos parecidos pero
-  con reglas de resolución distintas ("cerrar por encima de X **el 31 de dic**"
-  vs "**en algún momento** de diciembre") pueden agruparse por error. Por eso
-  cada evento expone sus fuentes con enlace, para verificar la letra pequeña.
+- El emparejamiento es textual y **no hay umbral que separe del todo**. Medido
+  sobre parejas reales etiquetadas a mano, las legítimas puntúan entre 0,56 y
+  1,00 y las erróneas entre 0,59 y 0,75: se solapan. Se prefiere perder
+  emparejamientos antes que inventarlos, se exige más a los binarios Sí/No
+  (0,75) que a los multi-opción (0,62) porque estos últimos se corroboran con
+  su lista de candidatos, y en la franja dudosa salta el aviso "emparejamiento
+  flojo" con la puntuación a la vista. Cada evento enlaza sus fuentes para
+  verificar la letra pequeña.
 - El *edge* y el arbitraje se calculan sobre el mejor precio publicado, sin
   contar comisiones ni el tamaño disponible a ese precio.
 - Las opciones "Other" y equivalentes se muestran y cuentan para el reparto de
@@ -290,5 +294,5 @@ scripts/smoke.js         valida las APIs reales antes de desplegar
 scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 Dockerfile, docker-compose.yml
-test/                  64 tests, sin red
+test/                  66 tests, sin red
 ```
