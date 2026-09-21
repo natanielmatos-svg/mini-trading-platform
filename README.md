@@ -13,7 +13,7 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet (también el gráfico)
-npm test             # 159 tests, sin red
+npm test             # 161 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -126,7 +126,7 @@ sonido y permisos funcionan antes de fiarte de ellos.
 | **COMPRAR** | Una vela **cierra** por encima de la resistencia con al menos 1,3× el volumen medio | Dos notas ascendentes |
 | **VENDER** | Stop, objetivo, ruptura falsa o señal contraria sobre lo comprado | Dos notas descendentes |
 | **Señal de venta** | Una vela cierra por debajo del soporte sin que haya nada comprado | Dos notas descendentes |
-| **Aviso previo** | La probabilidad de romper pasa del 70% y la vela sigue abierta | Dos notas iguales |
+| **Aviso previo** | La probabilidad de romper pasa del 70% y la vela sigue abierta. **Apagado por defecto** | Dos notas iguales |
 
 La regla que lo gobierna todo es la misma que ya definía el análisis: **una
 ruptura sólo cuenta si la vela cierra al otro lado del nivel y con volumen**.
@@ -159,6 +159,13 @@ hacer con ella:
   de quedarse fuera para quien no.
 - **Contado y corto**. Además sigue las bajadas: *vender en corto* para abrir y
   *recomprar* para cerrar, con el mismo stop y objetivo que en el otro sentido.
+
+El aviso previo viene apagado a propósito. Medido sobre histórico real de
+BTCUSDT en velas de 1h, salta unas **2-3 veces al día**: útil si quieres
+vigilar la aproximación a un nivel, ruido si sólo quieres saber cuándo comprar
+y cuándo vender. Se enciende con su casilla. Un mismo nivel avisa una vez por
+aproximación y no una vez por vela — con el identificador atado a la vela eran
+144 avisos en 320 velas, un popup con sonido cada dos horas.
 
 Detalles que conviene saber:
 
@@ -549,5 +556,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  159 tests, sin red
+test/                  161 tests, sin red
 ```

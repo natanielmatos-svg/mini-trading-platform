@@ -50,7 +50,7 @@ async function comprobarMercado() {
     }
 
     console.log(`  OK    Ruptura: ${ruptura.explanation[1]}`);
-    repasarSenales(candles);
+    repasarSenales(candles, '1h');
     return true;
   } catch (err) {
     console.log(`  FALLO Binance: ${trunc(err.message)}`);
@@ -60,57 +60,87 @@ async function comprobarMercado() {
 
 // Pasa el motor de señales por todo el histórico real, vela a vela, como si se
 // hubiera vivido en directo. No es un backtest serio —no hay comisiones, ni
-// deslizamiento, ni se opera la vela de apertura— pero responde a la pregunta
-// que importa antes de fiarse de una alerta: sobre datos de verdad, ¿cuántas
-// veces habría avisado, y cómo acabó cada aviso?
-function repasarSenales(candles) {
+// deslizamiento, y los cruces de stop se miran al cierre y no dentro de la
+// vela— pero responde a la pregunta que importa antes de fiarse de una
+// alerta: sobre datos de verdad, ¿cuántas veces habría avisado, y cómo acabó
+// cada aviso?
+//
+// Cada vela se evalúa en dos momentos, como hace la interfaz con cada tick:
+// al abrir (con la vela entera por delante, que es cuando un aviso previo
+// tiene sentido) y al cerrar (que es cuando se confirman compras y ventas).
+// Las señales se deduplican por su identificador, igual que en el navegador.
+function repasarSenales(candles, interval = '1h') {
   const compras = [];
+  const vistas = new Set();
   let position = null;
   let avisos = 0;
 
   for (let i = 80; i < candles.length; i++) {
     const cerradas = candles.slice(0, i).map((c) => ({ ...c, closed: true }));
-    const enCurso = { ...candles[i], closed: false };
-    const { signals, position: siguiente } = evaluateSignals({
-      candles: [...cerradas, enCurso],
-      position,
-      price: candles[i].close,
-      symbol: 'BTCUSDT',
-      interval: '1h',
-      now: candles[i].openTime + 1,
-    });
+    const vela = candles[i];
+    const ventana = [...cerradas, { ...vela, closed: false }];
 
-    for (const s of signals) {
-      if (s.type === 'aviso') avisos++;
-      else if (s.action === 'comprar') compras.push({ entrada: s.price, abierta: true });
-      else if (s.action.startsWith('vender_') && compras.length) {
-        const ultima = compras[compras.length - 1];
-        ultima.abierta = false;
-        ultima.salida = s.price;
-        ultima.motivo = s.reason;
-        ultima.resultado = s.change;
+    // El análisis se calcula al abrir la vela: es el que vería quien la mira
+    // empezar, y sin él el motor no puede emitir avisos previos.
+    const analisis = analyzeBreakout(ventana, { interval, now: vela.openTime + 1, livePrice: vela.open });
+
+    const momentos = [
+      { price: vela.open, now: vela.openTime + 1, breakout: analisis },
+      { price: vela.close, now: vela.closeTime, breakout: null },
+    ];
+
+    for (const momento of momentos) {
+      const { signals, position: siguiente } = evaluateSignals({
+        candles: ventana,
+        position,
+        symbol: 'BTCUSDT',
+        interval,
+        ...momento,
+      });
+
+      for (const s of signals) {
+        if (vistas.has(s.id)) continue;
+        vistas.add(s.id);
+
+        if (s.type === 'aviso') avisos++;
+        else if (s.action === 'comprar') compras.push({ entrada: s.price, abierta: true });
+        else if (s.action.startsWith('vender_') && compras.length) {
+          const ultima = compras[compras.length - 1];
+          ultima.abierta = false;
+          ultima.salida = s.price;
+          ultima.motivo = s.reason;
+          ultima.resultado = s.change;
+        }
       }
+      position = siguiente;
     }
-    position = siguiente;
   }
 
-  const cerradas = compras.filter((c) => !c.abierta);
   if (!compras.length) {
-    console.log(`  INFO  Señales: ninguna compra en ${candles.length - 80} velas. Normal: el sistema exige cierre fuera del nivel y volumen.`);
+    console.log(`  INFO  Señales: ninguna compra en ${candles.length - 80} velas (${avisos} avisos previos). El sistema exige cierre fuera del nivel y volumen.`);
     return;
   }
 
+  const cerradas = compras.filter((c) => !c.abierta);
   const ganadoras = cerradas.filter((c) => c.resultado > 0).length;
   const media = cerradas.length ? cerradas.reduce((a, c) => a + c.resultado, 0) / cerradas.length : 0;
   const motivos = {};
   for (const c of cerradas) motivos[c.motivo] = (motivos[c.motivo] || 0) + 1;
 
+  // Las comisiones se restan a la vista: sin ellas, una media de dos décimas
+  // parece una ventaja y en un mercado al contado no lo es.
+  const COMISION_IDA_Y_VUELTA = 0.002;
+  const neta = media - COMISION_IDA_Y_VUELTA;
+
   console.log(
     `  INFO  Señales sobre el histórico real: ${compras.length} compras (${cerradas.length} cerradas, ` +
-      `${ganadoras} en positivo), media ${(media * 100).toFixed(2)}% por operación, ${avisos} avisos previos.`
+      `${ganadoras} en positivo), media ${(media * 100).toFixed(2)}% bruto por operación, ${avisos} avisos previos.`
   );
   console.log(`        Motivos de venta: ${Object.entries(motivos).map(([k, v]) => `${k} ${v}`).join(', ') || '—'}`);
-  console.log('        Sin comisiones ni deslizamiento: es una comprobación de comportamiento, no un backtest.');
+  console.log(
+    `        Con 0,2% de comisión ida y vuelta quedaría en ${(neta * 100).toFixed(2)}% por operación. ` +
+      `${cerradas.length} operaciones no bastan para concluir nada: es una comprobación de comportamiento, no un backtest.`
+  );
 }
 
 async function main() {

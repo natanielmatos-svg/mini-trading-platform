@@ -142,6 +142,8 @@
     /* Avisos */
     .alert-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .mode { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); margin-top: 8px; }
+    .switch.sub { margin-top: 8px; font-size: 11px; color: var(--muted); }
+    .switch.sub em { font-style: normal; opacity: 0.75; }
     .mode select { flex: 1; }
     .switch { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text); cursor: pointer; }
     .switch input { width: 16px; height: 16px; accent-color: var(--up); cursor: pointer; }
@@ -290,6 +292,10 @@
             <option value="contado">Contado: comprar y vender</option>
             <option value="ambos">Contado y corto</option>
           </select>
+        </label>
+        <label class="switch sub">
+          <input type="checkbox" id="avisoToggle" />
+          <span>Avisar también antes de romper <em>(unas 2-3 veces al día)</em></span>
         </label>
         <p class="note" id="alertHint">Apagados.</p>
         <div id="positionBox"></div>

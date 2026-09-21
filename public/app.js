@@ -35,6 +35,10 @@ const state = {
   alerts: {
     enabled: false,
     operativa: 'contado',   // 'contado' (comprar/vender) | 'ambos' (además, cortos)
+    // Apagado por defecto: medido sobre histórico, el aviso previo salta unas
+    // dos o tres veces al día. Quien quiera vigilar la aproximación lo
+    // enciende; quien sólo quiera saber cuándo comprar y vender, no.
+    avisosPrevios: false,
     primed: false,          // la primera evaluación no suena: sería una alerta de algo ya pasado
     seen: new Set(),
     history: [],
@@ -65,6 +69,7 @@ const el = {
   alertToggle: $('alertToggle'),
   alertTest: $('alertTest'),
   alertMode: $('alertMode'),
+  avisoToggle: $('avisoToggle'),
   alertHint: $('alertHint'),
   position: $('positionBox'),
   history: $('signalHistory'),
@@ -122,6 +127,7 @@ function loadPrefs() {
     const saved = JSON.parse(raw);
     state.alerts.enabled = Boolean(saved.enabled);
     if (saved.operativa === 'ambos' || saved.operativa === 'contado') state.alerts.operativa = saved.operativa;
+    state.alerts.avisosPrevios = Boolean(saved.avisosPrevios);
     state.alerts.positions = saved.positions && typeof saved.positions === 'object' ? saved.positions : {};
   } catch {
     /* sin persistencia se sigue funcionando, sólo se olvida entre recargas */
@@ -133,6 +139,7 @@ function savePrefs() {
     localStorage.setItem(PREFS_KEY, JSON.stringify({
       enabled: state.alerts.enabled,
       operativa: state.alerts.operativa,
+      avisosPrevios: state.alerts.avisosPrevios,
       positions: state.alerts.positions,
     }));
   } catch {
@@ -472,7 +479,7 @@ function evaluateAlerts({ force = false } = {}) {
     symbol: state.symbol,
     interval: state.interval,
     now,
-    options: { operativa: state.alerts.operativa },
+    options: { operativa: state.alerts.operativa, avisosPrevios: state.alerts.avisosPrevios },
   });
 
   if (position) state.alerts.positions[key] = position;
@@ -1148,6 +1155,12 @@ function init() {
     renderAlertHint();
     evaluateAlerts({ force: true });
   });
+
+  el.avisoToggle.addEventListener('change', () => {
+    state.alerts.avisosPrevios = el.avisoToggle.checked;
+    savePrefs();
+    evaluateAlerts({ force: true });
+  });
   el.alertTest.addEventListener('click', testAlert);
   el.modal.addEventListener('click', (e) => {
     if (e.target === el.modal) hideModal();
@@ -1181,6 +1194,7 @@ function init() {
 
   el.alertToggle.checked = state.alerts.enabled;
   el.alertMode.value = state.alerts.operativa;
+  el.avisoToggle.checked = state.alerts.avisosPrevios;
   if (state.alerts.enabled) {
     unlockAudio();
     armarAudioConPrimerGesto();

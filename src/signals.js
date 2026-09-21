@@ -50,6 +50,7 @@ const DEFAULTS = {
   stopBufferAtr: 0.1,      // margen bajo el mínimo de la vela que rompe
   minClosed: 40,           // velas cerradas mínimas para opinar
   operativa: 'contado',    // 'contado' | 'ambos'
+  avisosPrevios: true,     // el aviso de "está a punto de romper"
 };
 
 // En largo se compra para abrir y se vende para cerrar; en corto es al revés.
@@ -227,10 +228,23 @@ function buildLooseSell({ breaker, level, symbol, interval, volumeRatio, now }) 
   };
 }
 
-function buildWarning({ side, breakoutSide, breakout, symbol, interval, candleTime, now }) {
+function buildWarning({ side, breakoutSide, breakout, symbol, interval, candleTime, now, atr }) {
   const largo = side === 'larga';
+
+  // El identificador lleva la ZONA del nivel (medio ATR), no la vela. Con la
+  // vela, un precio que pasa diez horas rondando la misma resistencia daba
+  // diez avisos idénticos —medido sobre histórico real: 144 avisos en 320
+  // velas, un popup con sonido cada dos horas—. Por zona se avisa una vez por
+  // aproximación, que es lo que significa "está a punto de romper".
+  // La zona se calcula por cifras significativas y no dividiendo por el ATR:
+  // el ATR se mueve con el tiempo, así que un mismo nivel caía en zonas
+  // distintas según el día y el aviso volvía a saltar sin que nada hubiera
+  // cambiado. Esto sólo depende del nivel.
+  const paso = 10 ** (Math.floor(Math.log10(Math.abs(breakoutSide.level) || 1)) - 2);
+  const zona = Math.round(breakoutSide.level / paso);
+
   return {
-    id: `aviso-${largo ? 'compra' : 'venta'}-${candleTime}`,
+    id: `aviso-${largo ? 'compra' : 'venta'}-z${zona}`,
     type: 'aviso',
     action: `aviso_${largo ? 'compra' : 'venta'}`,
     side,
@@ -346,14 +360,14 @@ function evaluateSignals({
   }
 
   // --- Aviso previo ---------------------------------------------------------
-  if (breakout && breakout.ok) {
+  if (cfg.avisosPrevios && breakout && breakout.ok) {
     const arriba = breakout.up;
     const abajo = breakout.down;
 
     if (arriba && arriba.probability >= cfg.warnProbability) {
-      signals.push(buildWarning({ side: 'larga', breakoutSide: arriba, breakout, symbol, interval, candleTime: current.openTime, now }));
+      signals.push(buildWarning({ side: 'larga', breakoutSide: arriba, breakout, symbol, interval, candleTime: current.openTime, now, atr }));
     } else if (abajo && abajo.probability >= cfg.warnProbability) {
-      signals.push(buildWarning({ side: 'corta', breakoutSide: abajo, breakout, symbol, interval, candleTime: current.openTime, now }));
+      signals.push(buildWarning({ side: 'corta', breakoutSide: abajo, breakout, symbol, interval, candleTime: current.openTime, now, atr }));
     }
   }
 

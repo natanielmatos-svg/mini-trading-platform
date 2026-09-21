@@ -213,6 +213,43 @@ test('una probabilidad alta sin ruptura confirmada es aviso, no compra', () => {
   assert.match(out.signals[0].detail, /Todavía no es una compra/);
 });
 
+test('el mismo nivel no se avisa una vez por vela, sino una por aproximación', () => {
+  // El identificador lleva la zona del nivel: dos velas seguidas rondando la
+  // misma resistencia producen la misma señal, y quien deduplica por id avisa
+  // una sola vez.
+  const breakout = (precio) => ({
+    ok: true, price: precio,
+    up: { level: 110.6, probability: 0.9 },
+    down: { level: 99.4, probability: 0.05 },
+    candle: { remainingLabel: '20 min' },
+  });
+
+  const a = evaluateSignals({ candles: rango({ count: 160 }), breakout: breakout(108), ...contexto });
+  const b = evaluateSignals({ candles: rango({ count: 162 }), breakout: breakout(109), ...contexto });
+
+  assert.strictEqual(a.signals[0].id, b.signals[0].id, 'misma zona, mismo identificador');
+  assert.match(a.signals[0].id, /^aviso-compra-z\d+$/);
+});
+
+test('los avisos previos se pueden apagar sin tocar compras ni ventas', () => {
+  const breakout = {
+    ok: true, price: 108,
+    up: { level: 110.6, probability: 0.95 },
+    down: { level: 99.4, probability: 0.05 },
+    candle: { remainingLabel: '20 min' },
+  };
+
+  const con = evaluateSignals({ candles: rango({ count: 160 }), breakout, ...contexto });
+  assert.strictEqual(con.signals.length, 1);
+
+  const sin = evaluateSignals({ candles: rango({ count: 160 }), breakout, options: { avisosPrevios: false }, ...contexto });
+  assert.deepStrictEqual(sin.signals, []);
+
+  // Y la compra sigue saltando con los avisos apagados.
+  const compra = evaluateSignals({ candles: conRuptura(), options: { avisosPrevios: false }, ...contexto });
+  assert.strictEqual(compra.signals[0].action, 'comprar');
+});
+
 test('por debajo del umbral no se avisa', () => {
   const breakout = {
     ok: true, price: 108,
