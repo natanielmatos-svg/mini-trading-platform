@@ -1,6 +1,13 @@
 'use strict';
 
-const { midPrice, devig, canonicalLabelKey, toNumber } = require('../normalize');
+const {
+  midPrice,
+  devig,
+  canonicalLabelKey,
+  toNumber,
+  isNestedThresholds,
+  pricesLookExclusive,
+} = require('../normalize');
 
 // Forma canónica de un evento, sea cual sea la plataforma de origen:
 //
@@ -40,9 +47,23 @@ function buildEvent(raw) {
 
   if (options.length === 0) return null;
 
+  // La plataforma dice que sólo puede ganar una opción, pero a veces lo que
+  // tiene son umbrales acumulados ("Above 0.1%", "Above 0.2%"…) que se
+  // contienen unos a otros. Dos comprobaciones lo detectan: la forma de las
+  // etiquetas y, sobre todo, que los precios sumen lo que tendrían que sumar.
+  // Un creador de mercado se queda unos puntos, nunca un 50%.
+  const etiquetas = options.map((o) => o.label);
+  const precios = options.map((o) => o.price);
+  const anidadas =
+    Boolean(raw.mutuallyExclusive) &&
+    options.length > 1 &&
+    (isNestedThresholds(etiquetas) || !pricesLookExclusive(precios));
+
+  const mutuallyExclusive = Boolean(raw.mutuallyExclusive) && !anidadas;
+
   let overround = null;
-  if (raw.mutuallyExclusive && options.length > 1) {
-    const { probabilities, overround: over } = devig(options.map((o) => o.price));
+  if (mutuallyExclusive && options.length > 1) {
+    const { probabilities, overround: over } = devig(precios);
     probabilities.forEach((p, i) => {
       if (p !== null) options[i].impliedProb = p;
     });
@@ -59,7 +80,11 @@ function buildEvent(raw) {
     title: raw.title,
     url: raw.url || null,
     closesAt: raw.closesAt || null,
-    mutuallyExclusive: Boolean(raw.mutuallyExclusive),
+    mutuallyExclusive,
+    // Se conserva la discrepancia: la plataforma decía excluyente y los precios
+    // dicen que no. La interfaz lo avisa en vez de repartir probabilidad que no
+    // se puede repartir.
+    nestedThresholds: anidadas,
     category: raw.category || 'otros',
     volume: toNumber(raw.volume) ?? sum('volume'),
     liquidity: toNumber(raw.liquidity) ?? sum('liquidity'),

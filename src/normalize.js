@@ -176,6 +176,46 @@ function numbersConflict(a, b) {
   return false;
 }
 
+// Hay eventos cuyas opciones parecen alternativas y son umbrales acumulados:
+// "Above 0.0% · Above 0.1% · Above 0.2%" no son tres desenlaces posibles, son
+// el mismo desenlace medido en tres cortes, y el primero contiene a los demás.
+// Sumar sus precios no significa nada, así que ni se les puede quitar el vig ni
+// se les puede buscar arbitraje.
+//
+// Se distinguen de los tramos de verdad ("≤3.0% · 3.1% · 3.2%"), donde sólo la
+// primera etiqueta lleva comparador porque marca el extremo del rango.
+const COMPARADORES = /^(above|below|over|under|more than|less than|at least|at most|greater than|fewer than|mas de|más de|menos de|por encima de|por debajo de|[><≥≤])/i;
+
+function comparadorDe(label) {
+  const match = String(label || '').trim().match(COMPARADORES);
+  return match ? match[0].toLowerCase() : null;
+}
+
+function isNestedThresholds(labels) {
+  if (!Array.isArray(labels) || labels.length < 3) return false;
+
+  const comparadores = labels.map(comparadorDe);
+  const conComparador = comparadores.filter(Boolean);
+
+  // Han de llevarlo casi todas, y ha de ser el mismo: son cortes de una misma
+  // escala, no alternativas.
+  if (conComparador.length < labels.length - 1) return false;
+  return new Set(conComparador).size === 1;
+}
+
+// Segunda comprobación, esta empírica y más difícil de engañar: si los precios
+// suman mucho más de 1, las opciones no pueden ser excluyentes. El margen de un
+// creador de mercado son unos pocos puntos, nunca un 50%.
+const SUMA_MAXIMA_EXCLUYENTE = 1.35;
+const SUMA_MINIMA_EXCLUYENTE = 0.5;
+
+function pricesLookExclusive(prices) {
+  const valid = prices.filter((p) => Number.isFinite(p) && p > 0);
+  if (valid.length < 2) return true;
+  const total = valid.reduce((acc, p) => acc + p, 0);
+  return total <= SUMA_MAXIMA_EXCLUYENTE && total >= SUMA_MINIMA_EXCLUYENTE;
+}
+
 module.exports = {
   EPS,
   clampProb,
@@ -194,4 +234,6 @@ module.exports = {
   isCatchAll,
   extractNumbers,
   numbersConflict,
+  isNestedThresholds,
+  pricesLookExclusive,
 };

@@ -154,6 +154,7 @@ function analyzeCluster(cluster) {
     daysToClose,
     matchScore: cluster.matchScore,
     category: anchor.category || 'otros',
+    nestedThresholds: cluster.events.some((e) => e.nestedThresholds),
     mutuallyExclusive,
     crossPlatform: platformsInvolved > 1,
     consensusOverround,
@@ -312,6 +313,18 @@ function buildFlags(analysis) {
       message:
         `"${analysis.catchAll.label}" (${(analysis.catchAll.probability * 100).toFixed(0)}%) supera al favorito: ` +
         'el mercado apunta a alguien fuera de las opciones listadas.',
+    });
+  }
+
+  // Umbrales acumulados: las opciones no son alternativas, así que ni suman
+  // 100% ni tiene sentido preguntar cuál es la más probable de entre ellas.
+  if (analysis.nestedThresholds) {
+    flags.push({
+      level: 'info',
+      code: 'nested_thresholds',
+      message:
+        'Las opciones son umbrales acumulados, no alternativas: cada una incluye a ' +
+        'las siguientes, así que sus probabilidades no se reparten entre sí.',
     });
   }
 
