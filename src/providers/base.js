@@ -60,6 +60,7 @@ function buildEvent(raw) {
     url: raw.url || null,
     closesAt: raw.closesAt || null,
     mutuallyExclusive: Boolean(raw.mutuallyExclusive),
+    category: raw.category || 'otros',
     volume: toNumber(raw.volume) ?? sum('volume'),
     liquidity: toNumber(raw.liquidity) ?? sum('liquidity'),
     overround,
@@ -92,4 +93,72 @@ function parseMaybeJsonArray(value) {
   }
 }
 
-module.exports = { buildEvent, buildOption, toIso, parseMaybeJsonArray };
+// Las APIs devuelven dos estilos de paginación: por desplazamiento (offset) y
+// por cursor. Esta función recorre ambos hasta agotar el catálogo o llegar al
+// tope, con una pausa entre páginas para no chocar con los rate limits.
+async function paginate(fetchPage, { maxPages = 60, pageSize = 100, pauseMs = 120 } = {}) {
+  const items = [];
+  let cursor = null;
+
+  for (let page = 0; page < maxPages; page++) {
+    const { batch, nextCursor } = await fetchPage({
+      offset: page * pageSize,
+      cursor,
+      limit: pageSize,
+    });
+
+    if (!batch || batch.length === 0) break;
+    items.push(...batch);
+
+    // Con cursor, el final llega cuando deja de haber uno nuevo. Con offset,
+    // cuando la página viene incompleta.
+    if (nextCursor !== undefined) {
+      if (!nextCursor || nextCursor === cursor) break;
+      cursor = nextCursor;
+    } else if (batch.length < pageSize) {
+      break;
+    }
+
+    if (pauseMs) await new Promise((r) => setTimeout(r, pauseMs));
+  }
+
+  return items;
+}
+
+// Taxonomía propia, común a las tres plataformas. Cada una clasifica a su
+// manera —Kalshi tiene un campo category, Polymarket usa tags, Manifold grupos
+// creados por usuarios— así que se normaliza sobre el texto disponible.
+const CATEGORIES = [
+  ['deportes', /\b(nfl|nba|mlb|nhl|soccer|football|f[uú]tbol|basketball|baseball|hockey|tennis|tenis|golf|ufc|mma|boxing|boxeo|olympic|ol[ií]mpic|world cup|mundial|champions|premier league|la ?liga|super ?bowl|playoff|sport|deporte|race|f1|formula ?1|cricket|rugby)\b/i],
+  ['política', /\b(election|elecci[oó]n|electoral|president|presidente|senate|senado|congress|congreso|house|parliament|parlamento|governor|gobernador|primary|primaria|nominee|nominaci[oó]n|minister|ministro|chancellor|党|politic|pol[ií]tic|vote|voto|ballot|impeach|cabinet|gabinete|referendum|coup|golpe de estado)\b/i],
+  ['economía', /\b(fed|fomc|interest rate|tipos de inter[eé]s|inflation|inflaci[oó]n|cpi|gdp|pib|recession|recesi[oó]n|unemployment|desempleo|jobs report|earnings|ipo|s&p|nasdaq|dow|stock|bolsa|tariff|arancel|trade deal|bank|banco central|treasury|yield|oil|petr[oó]leo|gold|oro)\b/i],
+  ['cripto', /\b(bitcoin|btc|ethereum|eth|solana|crypto|cripto|stablecoin|defi|nft|blockchain|token|altcoin|binance|coinbase)\b/i],
+  ['tecnología', /\b(ai\b|artificial intelligence|inteligencia artificial|openai|anthropic|claude|gpt|llm|chatgpt|gemini|tesla|spacex|apple|google|microsoft|nvidia|semiconductor|chip|starship|rocket|launch|satellite)\b/i],
+  ['ciencia', /\b(nobel|vaccine|vacuna|pandemic|pandemia|virus|disease|enfermedad|fda|clinical trial|cancer|c[aá]ncer|fusion|quantum|cu[aá]ntic|mars|marte|moon|luna|asteroid|theorem|conjecture|prize problem|millennium prize)\b/i],
+  ['clima', /\b(temperature|temperatura|weather|clima|hurricane|hurac[aá]n|rain|lluvia|snow|nieve|storm|tormenta|wildfire|incendio|earthquake|terremoto|el ni[nñ]o|climate|co2|emissions)\b/i],
+  ['entretenimiento', /\b(oscar|grammy|emmy|golden globe|box office|taquilla|movie|pel[ií]cula|album|billboard|spotify|netflix|celebrity|famoso|rotten tomatoes|eurovision|award)\b/i],
+  ['geopolítica', /\b(war|guerra|invade|invasi[oó]n|ceasefire|alto el fuego|nato|otan|ukraine|ucrania|russia|rusia|china|taiwan|israel|gaza|iran|ir[aá]n|north korea|corea del norte|sanction|sanci[oó]n|treaty|tratado|nuclear|missile|misil)\b/i],
+];
+
+// Se evalúan en orden y gana la primera que encaje, así que las categorías más
+// específicas van antes que las generales.
+function classifyCategory(...texts) {
+  const haystack = texts.filter(Boolean).join(' ');
+  if (!haystack) return 'otros';
+  for (const [name, pattern] of CATEGORIES) {
+    if (pattern.test(haystack)) return name;
+  }
+  return 'otros';
+}
+
+const CATEGORY_NAMES = CATEGORIES.map(([name]) => name).concat('otros');
+
+module.exports = {
+  buildEvent,
+  buildOption,
+  toIso,
+  parseMaybeJsonArray,
+  paginate,
+  classifyCategory,
+  CATEGORY_NAMES,
+};

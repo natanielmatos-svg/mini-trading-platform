@@ -148,6 +148,34 @@ function isCatchAll(label) {
   return CATCH_ALL_LABELS.has(normalizeText(label));
 }
 
+// Los números que no son años suelen ser el umbral que distingue un contrato
+// de su vecino: "Bitcoin por encima de 100k" y "por encima de 110k" son la
+// misma frase salvo por la cifra que lo cambia todo. Lo mismo con las escaleras
+// de temperatura, de tipos de interés o de escaños.
+function extractNumbers(text) {
+  const numbers = new Set();
+  for (const match of String(text || '').matchAll(/\d+/g)) {
+    const value = match[0];
+    // Los años se tratan aparte, con su propia regla.
+    if (/^(19|20)\d{2}$/.test(value)) continue;
+    numbers.add(String(Number(value)));
+  }
+  return numbers;
+}
+
+// Aquí no basta con que compartan uno: han de coincidir todos. "S&P 500 por
+// encima de 7000" y "S&P 500 por encima de 7500" comparten el 500 y aun así son
+// contratos distintos. Ante la duda se prefiere no emparejar: una fusión falsa
+// inventa un consenso entre mercados que no hablan de lo mismo, mientras que un
+// emparejamiento perdido sólo resta un evento contrastado.
+function numbersConflict(a, b) {
+  const na = extractNumbers(a);
+  const nb = extractNumbers(b);
+  if (na.size !== nb.size) return true;
+  for (const n of na) if (!nb.has(n)) return true;
+  return false;
+}
+
 module.exports = {
   EPS,
   clampProb,
@@ -164,4 +192,6 @@ module.exports = {
   extractYears,
   yearsConflict,
   isCatchAll,
+  extractNumbers,
+  numbersConflict,
 };

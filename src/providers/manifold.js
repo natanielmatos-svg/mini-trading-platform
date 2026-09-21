@@ -1,7 +1,7 @@
 'use strict';
 
 const { fetchJson } = require('../http');
-const { buildEvent, toIso } = require('./base');
+const { buildEvent, toIso, paginate, classifyCategory } = require('./base');
 const { toNumber } = require('../normalize');
 
 const MANIFOLD_BASE = process.env.MANIFOLD_API || 'https://api.manifold.markets/v0';
@@ -56,6 +56,7 @@ function mapMarket(market) {
     mutuallyExclusive: isMultiChoice
       ? market.shouldAnswersSumToOne !== false
       : true,
+    category: classifyCategory(market.question, (market.groupSlugs || []).join(' ')),
     volume: toNumber(market.volume) || 0,
     liquidity: toNumber(market.totalLiquidity) || 0,
     options,
@@ -84,21 +85,31 @@ async function hydrateMultiChoice(markets, { timeoutMs, maxHydrations = 12 }) {
   return markets.map((m) => hydrated.get(m.id) || m);
 }
 
-async function fetchEvents({ limit = 40, query = '', timeoutMs = 10000 } = {}) {
-  const raw = await fetchJson(`${MANIFOLD_BASE}/search-markets`, {
-    timeoutMs,
-    searchParams: {
-      term: query || '',
-      limit: Math.min(limit, 100),
-      sort: 'liquidity',
-      filter: 'open',
-      contractType: 'ALL',
-    },
-  });
+async function fetchEvents({ limit = 40, query = '', timeoutMs = 10000, full = false } = {}) {
+  const pedir = async ({ offset, limit: pageSize }) => {
+    const page = await fetchJson(`${MANIFOLD_BASE}/search-markets`, {
+      timeoutMs,
+      searchParams: {
+        term: query || '',
+        limit: pageSize,
+        offset: offset || undefined,
+        sort: 'liquidity',
+        filter: 'open',
+        contractType: 'ALL',
+      },
+    });
+    return { batch: Array.isArray(page) ? page : page?.data || [] };
+  };
 
-  const markets = Array.isArray(raw) ? raw : raw?.data || [];
+  const markets = full
+    ? await paginate(pedir, {
+        maxPages: Number(process.env.MANIFOLD_MAX_PAGES || 25),
+        pageSize: 100,
+      })
+    : (await pedir({ offset: 0, limit: Math.min(limit, 100) })).batch;
+
   const usable = markets.filter((m) => m && !m.isResolved);
-  const complete = await hydrateMultiChoice(usable, { timeoutMs });
+  const complete = await hydrateMultiChoice(usable, { timeoutMs, maxHydrations: full ? 80 : 12 });
   return complete.map(mapMarket).filter(Boolean);
 }
 

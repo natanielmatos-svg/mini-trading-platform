@@ -11,6 +11,8 @@ const https = require('https');
 
 const { getPredictions, getBestAnswer } = require('./src/api');
 const { listProviders } = require('./src/providers');
+const catalog = require('./src/catalog');
+const { CATEGORY_NAMES } = require('./src/providers/base');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -146,6 +148,9 @@ function parseOptions(req) {
     fetchLimit: FETCH_LIMIT,
     minLiquidity: Math.max(Number(req.query.minLiquidity) || 0, 0),
     threshold: Number.isFinite(threshold) && threshold > 0 && threshold <= 1 ? threshold : 0.5,
+    category: String(req.query.category || '').trim().slice(0, 30) || null,
+    crossOnly: req.query.crossOnly === '1',
+    minConfidence: Math.min(Math.max(Number(req.query.minConfidence) || 0, 0), 1),
     demo: DEMO_ALWAYS || req.query.demo === '1',
   };
 }
@@ -164,6 +169,29 @@ function handleError(res, err) {
     details: err.message,
   });
 }
+
+// Estado del catálogo de fondo: cuántos contratos tiene, de cuándo son y si
+// está refrescando ahora mismo. Es lo que hay que vigilar en producción.
+app.get('/api/catalog', (req, res) => {
+  const snap = catalog.snapshot();
+  sendJson(res, {
+    ready: snap.ready,
+    generatedAt: snap.generatedAt,
+    ageSeconds: snap.ageSeconds,
+    refreshing: snap.refreshing,
+    refreshCount: snap.refreshCount,
+    durationMs: snap.durationMs,
+    lastError: snap.lastError,
+    refreshEveryMs: catalog.REFRESH_MS,
+    totals: {
+      rawEvents: snap.events.length,
+      analyzedEvents: snap.analyses.length,
+      crossPlatformEvents: snap.analyses.filter((a) => a.crossPlatform).length,
+    },
+    sources: snap.sources,
+    categories: CATEGORY_NAMES,
+  });
+});
 
 // Lista de plataformas soportadas y su credibilidad asignada.
 app.get('/api/predictions/sources', (req, res) => {
@@ -196,7 +224,14 @@ const server = app.listen(PORT, () => {
   console.log(`Servidor escuchando en http://localhost:${PORT}`);
   console.log('Trading:      /index.html');
   console.log('Predicciones: /predicciones.html');
-  if (DEMO_ALWAYS) console.log('MODO DEMO activo: datos de ejemplo, no precios reales.');
+  if (DEMO_ALWAYS) {
+    console.log('MODO DEMO activo: datos de ejemplo, no precios reales.');
+  } else {
+    // El catálogo completo tarda un par de minutos en formarse; hasta entonces
+    // las peticiones se sirven con una consulta rápida.
+    console.log('Catalogando las tres plataformas en segundo plano...');
+    catalog.start();
+  }
 });
 
 // systemd y Docker mandan SIGTERM al reiniciar: se deja terminar lo que hay en

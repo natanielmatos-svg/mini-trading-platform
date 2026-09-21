@@ -1,7 +1,7 @@
 'use strict';
 
 const { fetchJson } = require('../http');
-const { buildEvent, toIso, parseMaybeJsonArray } = require('./base');
+const { buildEvent, toIso, parseMaybeJsonArray, paginate, classifyCategory } = require('./base');
 const { canonicalLabelKey, toNumber } = require('../normalize');
 
 const GAMMA_BASE = process.env.POLYMARKET_API || 'https://gamma-api.polymarket.com';
@@ -87,13 +87,42 @@ function mapEvent(event) {
     url: event.slug ? `https://polymarket.com/event/${event.slug}` : meta.homepage,
     closesAt: toIso(event.endDate || markets[0]?.endDate),
     mutuallyExclusive,
+    category: classifyCategory(
+      event.title,
+      (event.tags || []).map((t) => t.label || t.slug || t).join(' '),
+      markets[0]?.question
+    ),
     volume: pickNumber(event.volume, event.volumeNum),
     liquidity: pickNumber(event.liquidity, event.liquidityNum),
     options,
   });
 }
 
-async function fetchEvents({ limit = 60, timeoutMs = 10000 } = {}) {
+async function fetchEvents({ limit = 60, timeoutMs = 10000, full = false } = {}) {
+  // Modo catálogo: se recorre la paginación por offset hasta agotar los eventos
+  // abiertos. Modo rápido: una sola página, los más negociados.
+  if (full) {
+    const raw = await paginate(
+      async ({ offset, limit: pageSize }) => {
+        const page = await fetchJson(`${GAMMA_BASE}/events`, {
+          timeoutMs,
+          searchParams: {
+            closed: 'false',
+            active: 'true',
+            archived: 'false',
+            limit: pageSize,
+            offset,
+            order: 'volume24hr',
+            ascending: 'false',
+          },
+        });
+        return { batch: Array.isArray(page) ? page : page?.data || [] };
+      },
+      { maxPages: Number(process.env.POLYMARKET_MAX_PAGES || 40), pageSize: 100 }
+    );
+    return raw.map(mapEvent).filter(Boolean);
+  }
+
   const raw = await fetchJson(`${GAMMA_BASE}/events`, {
     timeoutMs,
     searchParams: {

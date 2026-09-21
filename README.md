@@ -13,7 +13,7 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet
-npm test             # 51 tests, sin red
+npm test             # 56 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -259,7 +259,9 @@ públicos de mercado, y no acepta ninguna escritura.
 | `DEMO` | — | `DEMO=1` fuerza datos de ejemplo en todas las respuestas |
 | `PREDICTIONS_TTL_MS` | `30000` | Caché de los datos de mercado |
 | `POLYMARKET_API` / `KALSHI_API` / `MANIFOLD_API` | APIs públicas | Para apuntar a un mirror o a un mock |
-| `PREDICTIONS_FETCH_LIMIT` | `120` | Eventos pedidos a cada plataforma por ciclo |
+| `PREDICTIONS_FETCH_LIMIT` | `120` | Eventos pedidos por consulta directa (arranque en frío) |
+| `CATALOG_REFRESH_MS` | `300000` | Cada cuánto se recataloga todo en segundo plano |
+| `POLYMARKET_MAX_PAGES` / `KALSHI_MAX_PAGES` / `MANIFOLD_MAX_PAGES` | 40 / 40 / 25 | Tope de páginas por plataforma |
 | `RATE_MAX` / `RATE_WINDOW_MS` | `120` / `60000` | Límite de peticiones por IP a `/api` |
 | `TRUST_PROXY_HOPS` | `1` | Saltos de proxy de confianza para leer la IP real |
 
@@ -272,6 +274,7 @@ agrupan en una sola llamada, para no chocar con los rate limits.
 ```
 server.js              rutas HTTP
 src/
+  catalog.js           catálogo completo, refrescado en segundo plano
   api.js               orquestación: descarga + caché + análisis
   analyze.js           consenso, ranking, confianza, arbitraje
   match.js             agrupación de eventos y opciones equivalentes
@@ -287,5 +290,5 @@ scripts/smoke.js         valida las APIs reales antes de desplegar
 scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 Dockerfile, docker-compose.yml
-test/                  51 tests, sin red
+test/                  56 tests, sin red
 ```

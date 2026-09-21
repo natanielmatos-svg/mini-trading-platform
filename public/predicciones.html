@@ -150,6 +150,34 @@
     button:disabled { opacity: 0.55; cursor: progress; }
     :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+    /* ---- Barra de categorías -------------------------------------------- */
+    .cats {
+      display: flex;
+      gap: 0.3rem;
+      flex-wrap: wrap;
+      padding: 0.6rem 1.5rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--rule);
+    }
+    .cats button {
+      background: transparent;
+      border: 1px solid var(--rule);
+      color: var(--ink-soft);
+      font-weight: 500;
+      padding: 0.25rem 0.7rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      text-transform: capitalize;
+    }
+    .cats button:hover { border-color: var(--accent); color: var(--accent); background: transparent; }
+    .cats button[aria-pressed="true"] {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--surface);
+      font-weight: 600;
+    }
+    .cats button .n { opacity: 0.65; font-variant-numeric: tabular-nums; margin-left: 0.35rem; }
+
     /* ---- Tira de estado de las fuentes -------------------------------- */
     main { max-width: 68rem; margin: 0 auto; padding: 1.5rem; }
 
@@ -404,10 +432,13 @@
         <label><input type="checkbox" class="venue" value="polymarket" checked /> Polymarket</label>
         <label><input type="checkbox" class="venue" value="robinhood_kalshi" checked /> Robinhood/Kalshi</label>
         <label><input type="checkbox" class="venue" value="manifold" checked /> Manifold</label>
+        <label title="Sólo eventos que cotizan en más de una plataforma"><input type="checkbox" id="crossOnly" /> Sólo contrastados</label>
       </div>
       <button id="run">Analizar</button>
     </div>
   </div>
+
+  <nav class="cats" id="cats" aria-label="Categorías"></nav>
 
   <main>
     <div class="sources" id="sources"><span class="pill plain">Cargando…</span></div>
@@ -434,6 +465,9 @@
     const sourcesEl = document.getElementById('sources');
     const runBtn = document.getElementById('run');
     const qInput = document.getElementById('q');
+    const catsEl = document.getElementById('cats');
+    const crossOnlyInput = document.getElementById('crossOnly');
+    let categoriaActiva = 'todas';
 
     const pct = (v, d = 1) => (v === null || v === undefined ? '—' : (v * 100).toFixed(d) + '%');
     const cents = (v) => (v === null || v === undefined ? '—' : (v * 100).toFixed(1) + '¢');
@@ -459,6 +493,29 @@
       return 'cierra el ' + new Date(event.closesAt).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
     }
 
+    // Las categorías salen del propio catálogo, con su recuento: así se ve de
+    // un vistazo dónde hay mercado y dónde no.
+    function renderCats(data) {
+      const cats = data.categories || [];
+      const total = cats.reduce((acc, c) => acc + c.total, 0);
+      const botones = [{ name: 'todas', total }, ...cats];
+
+      catsEl.innerHTML = botones
+        .map((c) => {
+          const activo = c.name === categoriaActiva;
+          return `<button type="button" data-cat="${esc(c.name)}" aria-pressed="${activo}">`
+            + `${esc(c.name)}<span class="n">${c.total}</span></button>`;
+        })
+        .join('');
+
+      catsEl.querySelectorAll('button').forEach((b) =>
+        b.addEventListener('click', () => {
+          categoriaActiva = b.dataset.cat;
+          run();
+        })
+      );
+    }
+
     function renderSources(data) {
       const pills = [];
       if (data.demo) pills.push('<span class="pill sample">Datos de ejemplo</span>');
@@ -475,6 +532,15 @@
         `<span class="pill plain">${data.counts.analyzedEvents} eventos · ` +
         `${data.counts.crossPlatformEvents} contrastados entre plataformas</span>`
       );
+      if (data.source === 'catálogo') {
+        const edad = data.ageSeconds === null ? '?' : Math.round(data.ageSeconds / 60);
+        pills.push(
+          `<span class="pill plain">catálogo de hace ${edad} min` +
+          `${data.refreshing ? ' · refrescando' : ''}</span>`
+        );
+      } else if (!data.demo) {
+        pills.push('<span class="pill plain">consulta directa · el catálogo aún se está formando</span>');
+      }
       pills.push(`<span class="pill plain">${new Date(data.generatedAt).toLocaleTimeString('es-ES')}</span>`);
       sourcesEl.innerHTML = pills.join('');
     }
@@ -625,7 +691,9 @@
       const query = qInput.value.trim();
       if (EMBEDDED) return filterLocally(window.__ANALYSIS__, query);
 
-      const params = new URLSearchParams({ limit: '25' });
+      const params = new URLSearchParams({ limit: '40' });
+      if (categoriaActiva && categoriaActiva !== 'todas') params.set('category', categoriaActiva);
+      if (crossOnlyInput.checked) params.set('crossOnly', '1');
       if (query) params.set('q', query);
       const venues = [...document.querySelectorAll('.venue:checked')].map((el) => el.value);
       if (venues.length) params.set('platforms', venues.join(','));
@@ -641,6 +709,7 @@
       try {
         const data = await loadAnalysis();
         renderSources(data);
+        renderCats(data);
 
         if (!data.events.length) {
           const anyData = data.sources.some((s) => s.ok && s.events > 0);
@@ -668,9 +737,11 @@
     if (EMBEDDED) {
       // Sin servidor detrás, los filtros por plataforma no pueden reconsultar.
       document.getElementById('venues').remove();
+      catsEl.remove();
       qInput.addEventListener('input', run);
     } else {
       document.querySelectorAll('.venue').forEach((el) => el.addEventListener('change', run));
+      crossOnlyInput.addEventListener('change', run);
       setInterval(run, 60000);
     }
 

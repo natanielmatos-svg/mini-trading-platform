@@ -1,7 +1,7 @@
 'use strict';
 
 const { fetchJson } = require('../http');
-const { buildEvent, toIso } = require('./base');
+const { buildEvent, toIso, paginate, classifyCategory } = require('./base');
 const { toNumber } = require('../normalize');
 
 // Los "prediction markets" de Robinhood son contratos de evento listados en la
@@ -116,22 +116,36 @@ function mapEvent(event) {
     closesAt,
     // Kalshi expone explícitamente si el evento admite un solo ganador.
     mutuallyExclusive: markets.length === 1 || Boolean(event.mutually_exclusive),
+    category: classifyCategory(event.category, event.title, event.sub_title),
     options,
   });
 }
 
-async function fetchEvents({ limit = 100, timeoutMs = 10000 } = {}) {
-  const raw = await fetchJson(`${KALSHI_BASE}/events`, {
-    timeoutMs,
-    searchParams: {
-      status: 'open',
-      limit: Math.min(limit, 200),
-      with_nested_markets: 'true',
-    },
-  });
+async function fetchEvents({ limit = 100, timeoutMs = 10000, full = false } = {}) {
+  const pedir = async ({ cursor, limit: pageSize }) => {
+    const page = await fetchJson(`${KALSHI_BASE}/events`, {
+      timeoutMs,
+      searchParams: {
+        status: 'open',
+        limit: pageSize,
+        with_nested_markets: 'true',
+        cursor: cursor || undefined,
+      },
+    });
+    return { batch: Array.isArray(page?.events) ? page.events : [], nextCursor: page?.cursor || null };
+  };
 
-  const events = Array.isArray(raw?.events) ? raw.events : [];
-  return events.map(mapEvent).filter(Boolean);
+  if (full) {
+    // Kalshi pagina por cursor, no por offset.
+    const raw = await paginate(pedir, {
+      maxPages: Number(process.env.KALSHI_MAX_PAGES || 40),
+      pageSize: 200,
+    });
+    return raw.map(mapEvent).filter(Boolean);
+  }
+
+  const { batch } = await pedir({ cursor: null, limit: Math.min(limit, 200) });
+  return batch.map(mapEvent).filter(Boolean);
 }
 
 module.exports = {

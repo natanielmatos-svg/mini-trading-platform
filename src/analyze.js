@@ -153,6 +153,7 @@ function analyzeCluster(cluster) {
     closesAt,
     daysToClose,
     matchScore: cluster.matchScore,
+    category: anchor.category || 'otros',
     mutuallyExclusive,
     crossPlatform: platformsInvolved > 1,
     consensusOverround,

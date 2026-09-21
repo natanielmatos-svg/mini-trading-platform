@@ -15,7 +15,7 @@ function listProviders() {
 // Consulta todas las plataformas en paralelo. Que una caiga no puede tumbar el
 // análisis: cada fuente reporta su propio estado y el agregador sigue con las
 // que respondieron.
-async function fetchAll({ limit = 60, query = '', platforms = null, timeoutMs = 10000 } = {}) {
+async function fetchAll({ limit = 60, query = '', platforms = null, timeoutMs = 10000, full = false } = {}) {
   const selected = platforms && platforms.length
     ? PROVIDERS.filter((p) => platforms.includes(p.meta.platform))
     : PROVIDERS;
@@ -24,7 +24,7 @@ async function fetchAll({ limit = 60, query = '', platforms = null, timeoutMs = 
     selected.map(async (provider) => {
       const startedAt = Date.now();
       try {
-        const events = await provider.fetchEvents({ limit, query, timeoutMs });
+        const events = await provider.fetchEvents({ limit, query, timeoutMs, full });
         return {
           status: {
             platform: provider.meta.platform,

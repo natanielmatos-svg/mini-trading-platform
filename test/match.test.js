@@ -225,3 +225,62 @@ test('sobre el lote completo, sólo se agrupa lo que de verdad coincide', () => 
     assert.ok(esTaiwan || esEleccion, `grupo inesperado: ${titulos.join(' | ')}`);
   }
 });
+
+// Las escaleras de strike son el patrón más peligroso al catalogar todo: dos
+// contratos vecinos son la misma frase salvo por la cifra que lo cambia todo.
+test('dos umbrales distintos del mismo activo NO se emparejan', () => {
+  const a = binario('polymarket', 'Will Bitcoin trade above 100k in 2026?');
+  const b = binario('manifold', 'Will Bitcoin trade above 110k in 2026?');
+  assert.equal(eventSimilarity(a, b), 0, 'strikes distintos son contratos distintos');
+});
+
+test('escaleras de temperatura y de escaños tampoco se mezclan', () => {
+  assert.equal(
+    eventSimilarity(
+      binario('robinhood_kalshi', 'Will the high temp in NYC be 70-71 degrees?'),
+      binario('robinhood_kalshi', 'Will the high temp in NYC be 72-73 degrees?')
+    ),
+    0
+  );
+});
+
+test('una cifra compartida no basta si hay otra que difiere', () => {
+  // "S&P 500 por encima de 7000" y "de 7500" comparten el 500 del índice.
+  assert.equal(
+    eventSimilarity(
+      binario('polymarket', 'Will the S&P 500 close above 7000 in 2026?'),
+      binario('manifold', 'Will the S&P 500 close above 7500 in 2026?')
+    ),
+    0
+  );
+});
+
+test('sin cifras discriminantes, el emparejamiento sigue funcionando', () => {
+  const score = eventSimilarity(
+    binario('polymarket', 'Will China invade Taiwan by end of 2026?'),
+    binario('manifold', 'Will China attempt to invade Taiwan by the end of 2026?')
+  );
+  assert.ok(score >= UMBRAL, `debería emparejar, dio ${score.toFixed(3)}`);
+});
+
+test('el agrupamiento indexado escala a miles de eventos', () => {
+  const eventos = [];
+  for (let i = 0; i < 3000; i++) {
+    eventos.push(binario(
+      ['polymarket', 'manifold', 'robinhood_kalshi'][i % 3],
+      `Mercado ruidoso sobre el tema ${i} en 2030`
+    ));
+  }
+  // Un par legítimo escondido entre el ruido.
+  eventos.push(binario('polymarket', 'Will China invade Taiwan by end of 2026?'));
+  eventos.push(binario('manifold', 'Will China attempt to invade Taiwan by the end of 2026?'));
+
+  const t0 = Date.now();
+  const clusters = clusterEvents(eventos);
+  const elapsed = Date.now() - t0;
+
+  const cruzados = clusters.filter((c) => c.events.length > 1);
+  assert.equal(cruzados.length, 1, 'sólo el par legítimo, sin fusiones de ruido');
+  assert.ok(cruzados[0].events.every((e) => e.title.includes('Taiwan')));
+  assert.ok(elapsed < 15000, `tardó ${elapsed} ms: el índice no está funcionando`);
+});

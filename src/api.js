@@ -9,6 +9,8 @@ const polymarket = require('./providers/polymarket');
 const kalshi = require('./providers/kalshi');
 const manifold = require('./providers/manifold');
 const { analyzeEvents } = require('./analyze');
+const { normalizeText } = require('./normalize');
+const catalog = require('./catalog');
 
 // Los datos de mercado se refrescan cada 30s: suficiente para seguir el precio
 // sin castigar los rate limits de las APIs públicas.
@@ -52,36 +54,110 @@ async function loadEvents({ platforms, fetchLimit, timeoutMs, demo }) {
   );
 }
 
+// Filtra el análisis ya calculado del catálogo. Aquí no se vuelve a agrupar
+// nada: agrupar miles de eventos cuesta segundos y eso ya se hizo en el último
+// refresco de fondo.
+function filterAnalyses(analyses, { query, category, platforms, crossOnly, minConfidence }) {
+  const tokens = normalizeText(query || '').split(' ').filter(Boolean);
+
+  return analyses.filter((a) => {
+    if (category && category !== 'todas' && a.category !== category) return false;
+    if (crossOnly && !a.crossPlatform) return false;
+    if (minConfidence && a.confidence < minConfidence) return false;
+
+    if (platforms && platforms.length) {
+      if (!a.sources.some((s) => platforms.includes(s.platform))) return false;
+    }
+
+    if (tokens.length) {
+      const haystack = normalizeText(
+        [a.title, ...a.options.map((o) => o.label)].join(' ')
+      );
+      if (!tokens.every((t) => haystack.includes(t))) return false;
+    }
+
+    return true;
+  });
+}
+
 /**
  * Punto de entrada del analizador: descarga los mercados abiertos de todas las
  * plataformas, agrupa los que son el mismo evento y devuelve, para cada uno,
  * qué opción es la más probable según el consenso ponderado.
+ *
+ * Si el catálogo de fondo ya tiene una foto completa, se sirve de ahí. Si no
+ * —arranque en frío, o modo demo— se hace una consulta rápida en el momento.
  */
 async function getPredictions({
   query = '',
+  category = null,
   platforms = null,
   limit = 25,
   minLiquidity = 0,
   fetchLimit = 80,
   threshold = 0.5,
   timeoutMs = 10000,
+  crossOnly = false,
+  minConfidence = 0,
   demo = false,
 } = {}) {
+  const snap = catalog.snapshot();
+
+  if (!demo && snap.ready) {
+    const filtradas = filterAnalyses(snap.analyses, {
+      query, category, platforms, crossOnly, minConfidence,
+    });
+
+    return {
+      generatedAt: snap.generatedAt,
+      ageSeconds: snap.ageSeconds,
+      refreshing: snap.refreshing,
+      source: 'catálogo',
+      demo: false,
+      query,
+      category,
+      sources: snap.sources,
+      counts: {
+        rawEvents: snap.events.length,
+        analyzedEvents: snap.analyses.length,
+        crossPlatformEvents: snap.analyses.filter((a) => a.crossPlatform).length,
+        matching: filtradas.length,
+      },
+      categories: countByCategory(snap.analyses),
+      events: filtradas.slice(0, limit),
+    };
+  }
+
   const { events, sources } = await loadEvents({ platforms, fetchLimit, timeoutMs, demo });
-  const analyses = analyzeEvents(events, { query, limit, minLiquidity, threshold });
+  const analyses = analyzeEvents(events, { query, limit: 5000, minLiquidity, threshold });
+  const filtradas = filterAnalyses(analyses, { category, platforms: null, crossOnly, minConfidence });
 
   return {
     generatedAt: new Date().toISOString(),
+    ageSeconds: 0,
+    refreshing: snap.refreshing,
+    source: demo ? 'ejemplo' : 'consulta directa',
     demo: Boolean(demo),
     query,
+    category,
     sources,
     counts: {
       rawEvents: events.length,
       analyzedEvents: analyses.length,
       crossPlatformEvents: analyses.filter((a) => a.crossPlatform).length,
+      matching: filtradas.length,
     },
-    events: analyses,
+    categories: countByCategory(analyses),
+    events: filtradas.slice(0, limit),
   };
+}
+
+function countByCategory(analyses) {
+  const counts = {};
+  for (const a of analyses) counts[a.category] = (counts[a.category] || 0) + 1;
+  return Object.entries(counts)
+    .sort((x, y) => y[1] - x[1])
+    .map(([name, total]) => ({ name, total }));
 }
 
 // Versión "respuesta directa": la mejor opción del evento que mejor encaja con
@@ -116,4 +192,4 @@ async function getBestAnswer(options = {}) {
   };
 }
 
-module.exports = { getPredictions, getBestAnswer, cache, loadDemoEvents };
+module.exports = { getPredictions, getBestAnswer, cache, loadDemoEvents, filterAnalyses, catalog };
