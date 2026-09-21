@@ -1,0 +1,62 @@
+name: CI
+
+# Los 165 tests no usan red: corren igual en cualquier runner y tardan unos
+# cinco segundos. Hasta ahora sólo se ejecutaban si alguien se acordaba.
+#
+# `push` se limita a main: con `['**']` y `pull_request` a la vez, cada push a
+# una rama con PR abierto lanzaba la suite dos veces sobre el mismo commit.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Una vez al día se comprueban las APIs de verdad: Binance, Polymarket,
+    # Kalshi y Manifold son públicas y pueden cambiar un campo sin avisar.
+    # Mejor enterarse por un correo de Actions que por un usuario.
+    - cron: '17 6 * * *'
+
+# Un push nuevo deja obsoleta la ejecución anterior de la misma rama.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      # Sin esto, el primer Node que falla cancela los demás y no se ve si el
+      # fallo es de esa versión o de todas.
+      fail-fast: false
+      matrix:
+        node: ['20', '22', '24']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Arranque en modo demo
+        run: |
+          DEMO=1 PORT=3999 node server.js &
+          for i in $(seq 1 20); do
+            curl -sf http://127.0.0.1:3999/healthz > /dev/null && break
+            sleep 0.5
+          done
+          curl -sf http://127.0.0.1:3999/healthz
+          curl -sf "http://127.0.0.1:3999/api/breakout?interval=1h" > /dev/null
+          kill %1
+
+  apis-reales:
+    # Sólo en el cron: en cada push no aporta y gasta rate limit ajeno.
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run smoke -- --tolerante
