@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Consenso de Predicciones</title>
+  <style>
+    /* Paleta clara. Los tokens se redefinen en oscuro más abajo; ningún color
+       vive sólo dentro de un media query. */
+    :root {
+      --ground: #f8f7f5;
+      --surface: #ffffff;
+      --surface-sunk: #f2f0ec;
+      --rule: #e3e0d9;
+      --rule-strong: #cfcbc2;
+      --ink: #1a1a1e;
+      --ink-soft: #5c5a55;
+      --ink-faint: #8b8880;
+      --accent: #b96f10;
+      --accent-ink: #8a5209;
+      --accent-soft: rgba(185, 111, 16, 0.13);
+      --positive: #12675c;
+      --caution: #a83a32;
+      --track: #eceae5;
+      --track-fill: #b4afa5;
+      --shadow: 0 1px 2px rgba(26, 26, 30, 0.05);
+
+      --serif: ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif;
+      --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --ground: #131317;
+        --surface: #1a1a20;
+        --surface-sunk: #16161b;
+        --rule: #2c2c34;
+        --rule-strong: #3d3d47;
+        --ink: #edebe6;
+        --ink-soft: #a6a29a;
+        --ink-faint: #6f6c66;
+        --accent: #e8a33d;
+        --accent-ink: #f0bc72;
+        --accent-soft: rgba(232, 163, 61, 0.16);
+        --positive: #4fbfae;
+        --caution: #e4796f;
+        --track: #24242b;
+        --track-fill: #4a4a55;
+        --shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+      }
+    }
+
+    :root[data-theme="dark"] {
+      --ground: #131317;
+      --surface: #1a1a20;
+      --surface-sunk: #16161b;
+      --rule: #2c2c34;
+      --rule-strong: #3d3d47;
+      --ink: #edebe6;
+      --ink-soft: #a6a29a;
+      --ink-faint: #6f6c66;
+      --accent: #e8a33d;
+      --accent-ink: #f0bc72;
+      --accent-soft: rgba(232, 163, 61, 0.16);
+      --positive: #4fbfae;
+      --caution: #e4796f;
+      --track: #24242b;
+      --track-fill: #4a4a55;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--ground);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 15px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .eyebrow {
+      font-size: 0.6875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+      color: var(--ink-faint);
+      font-weight: 600;
+    }
+
+    .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+    /* ---- Barra superior ---------------------------------------------- */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: var(--surface);
+      border-bottom: 1px solid var(--rule);
+      padding: 0.75rem 1.5rem;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+    }
+    .brand { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; }
+    .brand h1 {
+      font-family: var(--serif);
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin: 0;
+      letter-spacing: -0.01em;
+    }
+    .brand a { color: var(--ink-faint); font-size: 0.75rem; text-decoration: none; }
+    .brand a:hover { color: var(--accent); }
+
+    .toolbar { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; font-size: 0.8125rem; }
+
+    input[type="search"] {
+      font: inherit;
+      font-size: 0.8125rem;
+      padding: 0.4rem 0.6rem;
+      width: 15rem;
+      background: var(--surface-sunk);
+      border: 1px solid var(--rule-strong);
+      border-radius: 3px;
+      color: var(--ink);
+    }
+    input[type="search"]::placeholder { color: var(--ink-faint); }
+
+    .venues { display: flex; gap: 0.75rem; flex-wrap: wrap; color: var(--ink-soft); }
+    .venues label { display: flex; align-items: center; gap: 0.3rem; cursor: pointer; }
+    input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
+
+    button {
+      font: inherit;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      padding: 0.4rem 0.9rem;
+      border-radius: 3px;
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: var(--surface);
+      cursor: pointer;
+    }
+    button:hover { background: var(--accent-ink); border-color: var(--accent-ink); }
+    button:disabled { opacity: 0.55; cursor: progress; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    /* ---- Tira de estado de las fuentes -------------------------------- */
+    main { max-width: 68rem; margin: 0 auto; padding: 1.5rem; }
+
+    .sources {
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 1.5rem;
+      font-size: 0.75rem;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.2rem 0.6rem;
+      border: 1px solid var(--rule);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--ink-soft);
+      white-space: nowrap;
+    }
+    .pill::before {
+      content: "";
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: var(--track-fill);
+    }
+    .pill.live::before { background: var(--positive); }
+    .pill.down::before { background: var(--caution); }
+    .pill.down { color: var(--caution); }
+    .pill.sample { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-soft); }
+    .pill.sample::before { background: var(--accent); }
+    .pill.plain::before { display: none; }
+
+    /* ---- Ficha de evento ---------------------------------------------- */
+    .entry {
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: 4px;
+      box-shadow: var(--shadow);
+      padding: 1.25rem 1.5rem 1.5rem;
+      margin-bottom: 1rem;
+    }
+    .entry.thin { background: var(--surface-sunk); }
+
+    .entry-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--rule);
+    }
+    .entry-head h2 {
+      font-family: var(--serif);
+      font-size: 1.3125rem;
+      font-weight: 600;
+      line-height: 1.25;
+      text-wrap: balance;
+      margin: 0 0 0.35rem;
+      letter-spacing: -0.01em;
+      max-width: 40ch;
+    }
+    .entry-head h2 a { color: inherit; text-decoration: none; }
+    .entry-head h2 a:hover { text-decoration: underline; text-underline-offset: 3px; }
+    .entry-meta { font-size: 0.75rem; color: var(--ink-faint); }
+    .entry-meta b { color: var(--ink-soft); font-weight: 600; }
+
+    /* La confianza es un juicio de tres estados, no una medida continua:
+       tres segmentos dicen la verdad mejor que una barra de porcentaje. */
+    .gauge { text-align: right; flex-shrink: 0; }
+    .gauge-track { display: flex; gap: 3px; justify-content: flex-end; margin-top: 0.3rem; }
+    .gauge-track i { width: 1.5rem; height: 4px; border-radius: 1px; background: var(--track); }
+    .gauge-track i.on { background: var(--accent); }
+    .gauge.low .gauge-track i.on { background: var(--caution); }
+
+    /* ---- Veredicto ----------------------------------------------------- */
+    .verdict {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      padding: 1rem 0 1.25rem;
+    }
+    .verdict-name {
+      font-family: var(--serif);
+      font-size: 1.75rem;
+      font-weight: 600;
+      line-height: 1.15;
+      margin: 0.15rem 0 0.3rem;
+      letter-spacing: -0.015em;
+    }
+    .verdict-note { font-size: 0.8125rem; color: var(--ink-soft); margin: 0; max-width: 68ch; }
+    .verdict-pct {
+      font-family: var(--mono);
+      font-variant-numeric: tabular-nums;
+      font-size: 2.75rem;
+      font-weight: 600;
+      line-height: 1;
+      color: var(--accent);
+      letter-spacing: -0.03em;
+    }
+
+    /* ---- Tablero de opciones ------------------------------------------ */
+    .board { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+    .board li {
+      display: grid;
+      grid-template-columns: minmax(8rem, 1.1fr) minmax(6rem, 2.4fr) 4.25rem;
+      align-items: center;
+      gap: 1rem;
+    }
+    .opt-name { font-size: 0.875rem; line-height: 1.3; overflow-wrap: anywhere; }
+    .opt-venues {
+      display: block;
+      font-family: var(--mono);
+      font-size: 0.6875rem;
+      color: var(--ink-faint);
+      margin-top: 0.15rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .bar { position: relative; height: 1.375rem; background: var(--track); border-radius: 2px; overflow: hidden; }
+    .bar > .fill {
+      display: block;
+      height: 100%;
+      background: var(--track-fill);
+      border-radius: 2px;
+      transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .board li.lead .fill { background: var(--accent); }
+    /* Corchete = rango entre la plataforma más barata y la más cara. Es la
+       señal propia de este análisis: dónde discrepan los mercados. */
+    .bar > .spread {
+      position: absolute;
+      top: 0;
+      height: 100%;
+      border-left: 1px solid var(--ink);
+      border-right: 1px solid var(--ink);
+      background: repeating-linear-gradient(
+        -45deg, transparent 0 3px, var(--accent-soft) 3px 6px
+      );
+      opacity: 0.55;
+    }
+    .opt-pct {
+      font-family: var(--mono);
+      font-variant-numeric: tabular-nums;
+      font-size: 0.875rem;
+      text-align: right;
+      color: var(--ink-soft);
+    }
+    .board li.lead .opt-pct { color: var(--ink); font-weight: 600; }
+
+    /* ---- Avisos --------------------------------------------------------- */
+    .notes { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 1.125rem; }
+    .note {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.6rem;
+      border-radius: 3px;
+      border: 1px solid var(--rule);
+      color: var(--ink-soft);
+      background: var(--surface-sunk);
+    }
+    .note.warn { border-color: var(--caution); color: var(--caution); background: transparent; }
+    .note.good { border-color: var(--positive); color: var(--positive); background: transparent; }
+
+    .arb {
+      margin-top: 1rem;
+      padding: 0.875rem 1rem;
+      border: 1px solid var(--positive);
+      border-radius: 3px;
+      font-size: 0.8125rem;
+    }
+    .arb strong { color: var(--positive); }
+    .arb p { margin: 0.3rem 0 0; color: var(--ink-soft); font-size: 0.75rem; }
+
+    /* ---- Detalle -------------------------------------------------------- */
+    details { margin-top: 1.125rem; border-top: 1px solid var(--rule); padding-top: 0.875rem; }
+    summary {
+      cursor: pointer;
+      font-size: 0.75rem;
+      color: var(--ink-faint);
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      font-weight: 600;
+    }
+    summary:hover { color: var(--accent); }
+    .scroll-x { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.875rem;
+      font-size: 0.8125rem;
+      font-variant-numeric: tabular-nums;
+    }
+    th, td { padding: 0.4rem 0.6rem; text-align: right; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+    th:first-child, td:first-child { text-align: left; white-space: normal; }
+    thead th {
+      font-size: 0.6875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--ink-faint);
+      border-bottom: 1px solid var(--rule-strong);
+    }
+    tbody td { font-family: var(--mono); }
+    tbody td:first-child { font-family: var(--sans); }
+    .venue-list { list-style: none; margin: 0.875rem 0 0; padding: 0; font-size: 0.75rem; color: var(--ink-faint); display: grid; gap: 0.3rem; }
+    .venue-list a { color: var(--accent); text-decoration: none; }
+    .venue-list a:hover { text-decoration: underline; }
+
+    .empty {
+      padding: 4rem 1.5rem;
+      text-align: center;
+      color: var(--ink-faint);
+      font-size: 0.875rem;
+      border: 1px dashed var(--rule-strong);
+      border-radius: 4px;
+    }
+
+    .colophon {
+      margin-top: 2.5rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid var(--rule);
+      font-size: 0.75rem;
+      line-height: 1.7;
+      color: var(--ink-faint);
+      max-width: 65ch;
+    }
+    .colophon strong { color: var(--ink-soft); }
+
+    @media (prefers-reduced-motion: reduce) {
+      .bar > .fill { transition: none; }
+    }
+    @media (max-width: 40rem) {
+      .board li { grid-template-columns: 1fr 3.5rem; }
+      .board li .bar { grid-column: 1 / -1; }
+      .verdict-pct { font-size: 2.25rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <h1>Consenso de Predicciones</h1>
+      <a href="/index.html">← Plataforma de trading</a>
+    </div>
+    <div class="toolbar">
+      <input type="search" id="q" placeholder="Filtrar: election, fed, bitcoin…" aria-label="Filtrar eventos" />
+      <div class="venues" id="venues">
+        <label><input type="checkbox" class="venue" value="polymarket" checked /> Polymarket</label>
+        <label><input type="checkbox" class="venue" value="robinhood_kalshi" checked /> Robinhood/Kalshi</label>
+        <label><input type="checkbox" class="venue" value="manifold" checked /> Manifold</label>
+      </div>
+      <button id="run">Analizar</button>
+    </div>
+  </div>
+
+  <main>
+    <div class="sources" id="sources"><span class="pill plain">Cargando…</span></div>
+    <div id="results"></div>
+
+    <div class="colophon">
+      <strong>Cómo se calcula.</strong> De cada plataforma se toma el punto medio del libro, no el último
+      operado. En los eventos donde sólo puede ganar una opción se elimina el margen del creador de mercado,
+      para que los porcentajes sumen 100. El consenso es una media en espacio logit ponderada por liquidez,
+      volumen, estrechez del spread y credibilidad de la fuente — Manifold usa dinero de juego y pesa 0,35
+      frente a 1,0. La trama diagonal sobre cada barra marca el rango entre la plataforma más barata y la más
+      cara: cuanto más ancha, menos acuerdo hay. Los precios de Robinhood provienen de Kalshi, la bolsa donde
+      se listan sus contratos de evento.
+      <br><br>Análisis de mercado, no una recomendación de inversión.
+    </div>
+  </main>
+
+  <script>
+    // En la app publicada como página estática los datos vienen incrustados;
+    // en el servidor real se piden a /api/predictions.
+    const EMBEDDED = typeof window.__ANALYSIS__ !== 'undefined';
+
+    const resultsEl = document.getElementById('results');
+    const sourcesEl = document.getElementById('sources');
+    const runBtn = document.getElementById('run');
+    const qInput = document.getElementById('q');
+
+    const pct = (v, d = 1) => (v === null || v === undefined ? '—' : (v * 100).toFixed(d) + '%');
+    const cents = (v) => (v === null || v === undefined ? '—' : (v * 100).toFixed(1) + '¢');
+    const pts = (v, d = 1) => (v === null || v === undefined ? '—' : (v * 100).toFixed(d) + ' pts');
+
+    const money = (v) => {
+      if (!v) return '—';
+      if (v >= 1e6) return '$' + (v / 1e6).toFixed(1) + ' M';
+      if (v >= 1e3) return '$' + (v / 1e3).toFixed(0) + ' k';
+      return '$' + v.toFixed(0);
+    };
+
+    const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+
+    function closesLabel(event) {
+      if (!event.closesAt || event.daysToClose === null) return 'sin fecha de cierre';
+      const d = event.daysToClose;
+      if (d < 0) return 'cerrado';
+      if (d < 1) return 'cierra hoy';
+      if (d < 60) return `cierra en ${Math.round(d)} días`;
+      return 'cierra el ' + new Date(event.closesAt).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
+    }
+
+    function renderSources(data) {
+      const pills = [];
+      if (data.demo) pills.push('<span class="pill sample">Datos de ejemplo</span>');
+
+      for (const s of data.sources) {
+        pills.push(
+          `<span class="pill ${s.ok ? 'live' : 'down'}">${esc(s.platformLabel)}: ` +
+          (s.ok ? `${s.events} eventos` : esc((s.error || 'sin respuesta').slice(0, 70))) +
+          '</span>'
+        );
+      }
+
+      pills.push(
+        `<span class="pill plain">${data.counts.analyzedEvents} eventos · ` +
+        `${data.counts.crossPlatformEvents} contrastados entre plataformas</span>`
+      );
+      pills.push(`<span class="pill plain">${new Date(data.generatedAt).toLocaleTimeString('es-ES')}</span>`);
+      sourcesEl.innerHTML = pills.join('');
+    }
+
+    function renderGauge(event) {
+      const level = event.verdict.confidenceLabel;
+      const filled = level === 'alta' ? 3 : level === 'media' ? 2 : 1;
+      const segments = [0, 1, 2].map((i) => `<i class="${i < filled ? 'on' : ''}"></i>`).join('');
+      return `
+        <div class="gauge ${filled === 1 ? 'low' : ''}">
+          <span class="eyebrow">Confianza ${esc(level)}</span>
+          <div class="gauge-track" role="img" aria-label="Confianza ${esc(level)}">${segments}</div>
+        </div>`;
+    }
+
+    function renderOption(option, isLead) {
+      const venues = option.platforms
+        .map((p) => `${esc(p.platformLabel.replace(' / ', '/'))} ${pct(p.impliedProb, 0)}`)
+        .join('   ');
+
+      let spread = '';
+      if (option.range && option.platformCount > 1) {
+        const left = option.range.min * 100;
+        const width = Math.max(0.6, (option.range.max - option.range.min) * 100);
+        spread = `<span class="spread" style="left:${left}%;width:${width}%"></span>`;
+      }
+
+      return `
+        <li class="${isLead ? 'lead' : ''}">
+          <div class="opt-name">${esc(option.label)}<span class="opt-venues">${venues || 'sin cotización'}</span></div>
+          <div class="bar"><span class="fill" style="width:${(option.probability * 100).toFixed(2)}%"></span>${spread}</div>
+          <div class="opt-pct">${pct(option.probability)}</div>
+        </li>`;
+    }
+
+    function renderDetail(event) {
+      const venues = [...new Set(event.options.flatMap((o) => o.platforms.map((p) => p.platformLabel)))];
+
+      const rows = event.options.map((o) => {
+        const cells = venues.map((label) => {
+          const q = o.platforms.find((p) => p.platformLabel === label);
+          return `<td>${q ? cents(q.impliedProb) : '—'}</td>`;
+        }).join('');
+        const best = o.bestPrice ? `${esc(o.bestPrice.platformLabel)} · ${cents(o.bestPrice.ask)}` : '—';
+        return `<tr>
+          <td>${esc(o.label)}</td>${cells}
+          <td>${pct(o.probability)}</td>
+          <td>${o.divergence === null ? '—' : pts(o.divergence)}</td>
+          <td>${best}</td>
+        </tr>`;
+      }).join('');
+
+      const list = event.sources.map((s) => `
+        <li>
+          <a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.platformLabel)}</a> ·
+          ${esc(s.title)} · ${s.optionCount} opciones${
+            s.overround === null || s.overround === undefined ? '' : ` · margen del mercado ${pts(s.overround)}`
+          }
+        </li>`).join('');
+
+      return `
+        <details>
+          <summary>Detalle por plataforma</summary>
+          <div class="scroll-x">
+            <table>
+              <thead><tr><th>Opción</th>${venues.map((v) => `<th>${esc(v)}</th>`).join('')}<th>Consenso</th><th>Divergencia</th><th>Mejor compra</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+          <ul class="venue-list">${list}</ul>
+        </details>`;
+    }
+
+    function renderEvent(event) {
+      const top = event.mostLikely;
+
+      const detail = [];
+      if (top.margin !== null) detail.push(`${pts(top.margin)} sobre «${esc(top.runnerUp.label)}»`);
+      if (top.bestPrice) {
+        detail.push(
+          `mejor compra en ${esc(top.bestPrice.platformLabel)} a ${cents(top.bestPrice.ask)}` +
+          (top.bestPrice.edge !== null
+            ? ` (${top.bestPrice.edge >= 0 ? '+' : '−'}${Math.abs(top.bestPrice.edge * 100).toFixed(1)} pts vs consenso)`
+            : '')
+        );
+      }
+
+      const notes = event.flags
+        .map((f) => `<span class="note ${f.level}">${esc(f.message)}</span>`)
+        .join('');
+
+      let arb = '';
+      if (event.arbitrage) {
+        arb = `
+          <div class="arb">
+            <strong>Arbitraje:</strong> comprar todas las opciones cuesta ${cents(event.arbitrage.cost)}
+            y una de ellas paga 100,0¢ → ${(event.arbitrage.returnPct * 100).toFixed(1)}% de retorno.
+            <p>${event.arbitrage.legs.map((l) => `${esc(l.label)} en ${esc(l.platform)} a ${cents(l.ask)}`).join(' + ')}</p>
+            <p>Resta comisiones y comprueba que hay tamaño real a esos precios.</p>
+          </div>`;
+      }
+
+      return `
+        <article class="entry ${event.crossPlatform ? '' : 'thin'}">
+          <div class="entry-head">
+            <div>
+              <h2><a href="${esc(event.url)}" target="_blank" rel="noopener">${esc(event.title)}</a></h2>
+              <div class="entry-meta">
+                <b>${event.sources.map((s) => esc(s.platformLabel)).join(' · ')}</b> ·
+                ${closesLabel(event)} · liquidez ${money(event.totalLiquidity)} · volumen ${money(event.totalVolume)}
+              </div>
+            </div>
+            ${renderGauge(event)}
+          </div>
+
+          <div class="verdict">
+            <div>
+              <span class="eyebrow">Más probable</span>
+              <p class="verdict-name">${esc(top.label)}</p>
+              <p class="verdict-note">${detail.join(' · ') || 'única opción cotizada'}</p>
+            </div>
+            <div class="verdict-pct">${pct(top.probability)}</div>
+          </div>
+
+          <ol class="board">${event.options.map((o, i) => renderOption(o, i === 0)).join('')}</ol>
+          ${notes ? `<div class="notes">${notes}</div>` : ''}
+          ${arb}
+          ${renderDetail(event)}
+        </article>`;
+    }
+
+    // Filtro local sobre datos ya analizados (sólo en la versión incrustada).
+    function filterLocally(data, query) {
+      const tokens = query.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\s+/).filter(Boolean);
+      if (!tokens.length) return data;
+
+      const events = data.events.filter((e) => {
+        const hay = [e.title, ...e.options.map((o) => o.label)]
+          .join(' ').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        return tokens.every((t) => hay.includes(t));
+      });
+
+      return { ...data, events, counts: { ...data.counts, analyzedEvents: events.length,
+        crossPlatformEvents: events.filter((e) => e.crossPlatform).length } };
+    }
+
+    async function loadAnalysis() {
+      const query = qInput.value.trim();
+      if (EMBEDDED) return filterLocally(window.__ANALYSIS__, query);
+
+      const params = new URLSearchParams({ limit: '25' });
+      if (query) params.set('q', query);
+      const venues = [...document.querySelectorAll('.venue:checked')].map((el) => el.value);
+      if (venues.length) params.set('platforms', venues.join(','));
+
+      const res = await fetch('/api/predictions?' + params);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.details || data.error || 'HTTP ' + res.status);
+      return data;
+    }
+
+    async function run() {
+      runBtn.disabled = true;
+      try {
+        const data = await loadAnalysis();
+        renderSources(data);
+
+        if (!data.events.length) {
+          const anyData = data.sources.some((s) => s.ok && s.events > 0);
+          resultsEl.innerHTML = `<div class="empty">${
+            anyData
+              ? 'Ningún evento coincide con el filtro. Prueba otro término o vacía el buscador.'
+              : 'Ninguna plataforma respondió. Revisa la conexión del servidor o arranca con <code>npm run demo</code>.'
+          }</div>`;
+          return;
+        }
+
+        resultsEl.innerHTML = data.events.map(renderEvent).join('');
+      } catch (err) {
+        console.error(err);
+        sourcesEl.innerHTML = `<span class="pill down">${esc(err.message)}</span>`;
+        resultsEl.innerHTML = '<div class="empty">No se pudo cargar el análisis.</div>';
+      } finally {
+        runBtn.disabled = false;
+      }
+    }
+
+    runBtn.addEventListener('click', run);
+    qInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
+
+    if (EMBEDDED) {
+      // Sin servidor detrás, los filtros por plataforma no pueden reconsultar.
+      document.getElementById('venues').remove();
+      qInput.addEventListener('input', run);
+    } else {
+      document.querySelectorAll('.venue').forEach((el) => el.addEventListener('change', run));
+      setInterval(run, 60000);
+    }
+
+    run();
+  </script>
+</body>
+</html>

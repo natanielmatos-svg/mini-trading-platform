@@ -1,0 +1,20 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    # Sólo escucha en loopback: quien expone al mundo es Nginx, con TLS.
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      # Ventana de caché de los datos de mercado. Subirla alivia los rate
+      # limits ajenos a cambio de precios algo más viejos.
+      PREDICTIONS_TTL_MS: "30000"
+      # Saltos de proxy de confianza para leer la IP real del cliente.
+      TRUST_PROXY_HOPS: "1"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

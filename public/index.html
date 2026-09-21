@@ -156,6 +156,7 @@
         </select>
       </label>
       <button id="loadBtn">Cargar datos</button>
+      <a href="/predicciones.html" style="color:#38bdf8;text-decoration:none;">Analizador de predicciones →</a>
     </div>
   </header>
 
@@ -433,8 +434,7 @@
       } catch (err) {
         console.error(err);
         statusText.textContent =
-          "Estado: error cargando datos.
-" +
+          "Estado: error cargando datos.\n" +
           "Mensaje: " + err.message + "\n" +
           "Verifica que el servidor en la nube esté funcionando.";
       }

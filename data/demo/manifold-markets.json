@@ -1,0 +1,31 @@
+[
+  {
+    "id": "mkt_2028pres",
+    "slug": "who-will-win-the-2028-us-presidenti",
+    "question": "Who will win the 2028 US presidential election?",
+    "url": "https://manifold.markets/example/who-will-win-the-2028-us-presidenti",
+    "outcomeType": "MULTIPLE_CHOICE",
+    "shouldAnswersSumToOne": true,
+    "closeTime": 1856131200000,
+    "isResolved": false,
+    "volume": 480000,
+    "totalLiquidity": 62000,
+    "answers": [
+      { "id": "a1", "text": "Gavin Newsom", "probability": 0.46 },
+      { "id": "a2", "text": "JD Vance", "probability": 0.36 },
+      { "id": "a3", "text": "Josh Shapiro", "probability": 0.18 }
+    ]
+  },
+  {
+    "id": "mkt_feddec26",
+    "slug": "will-the-fed-cut-rates-in-december",
+    "question": "Will the Fed cut rates in December 2026?",
+    "url": "https://manifold.markets/example/will-the-fed-cut-rates-in-december",
+    "outcomeType": "BINARY",
+    "closeTime": 1797267600000,
+    "isResolved": false,
+    "probability": 0.58,
+    "volume": 91000,
+    "totalLiquidity": 8400
+  }
+]
