@@ -215,14 +215,19 @@ function findLevels(candles, price, tolerance, lookback = 60) {
   const supports = clusterLevels(lows, tolerance).filter((l) => l.price < price);
   if (rangeLow < price) supports.push({ price: rangeLow, touches: 1, lastTouch: null, fallback: true });
 
-  const resistance = resistances.length
-    ? resistances.reduce((best, l) => (l.price < best.price ? l : best))
-    : null;
-  const support = supports.length
-    ? supports.reduce((best, l) => (l.price > best.price ? l : best))
-    : null;
+  // Ordenados por cercanía al precio: quien busque un objetivo que pague el
+  // riesgo necesita la lista, no sólo el primero.
+  resistances.sort((a, b) => a.price - b.price);
+  supports.sort((a, b) => b.price - a.price);
 
-  return { resistance, support, rangeHigh, rangeLow };
+  return {
+    resistance: resistances[0] || null,
+    support: supports[0] || null,
+    resistances,
+    supports,
+    rangeHigh,
+    rangeLow,
+  };
 }
 
 // Cuánto recorrido hay que exigirle a lo que queda de vela para alcanzar un

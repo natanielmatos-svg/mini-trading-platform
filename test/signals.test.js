@@ -81,6 +81,57 @@ test('el objetivo no puede ser el máximo de la propia vela que rompe', () => {
   assert.ok(position.rewardRisk >= 1.9 && position.rewardRisk <= 2.1);
 });
 
+// Rango + un pivote máximo en `precioNivel` + la vela que rompe.
+function conNivelArriba(precioNivel) {
+  const base = rango();
+  const visita = [];
+  let previa = base[base.length - 1];
+
+  // Siete velas con una que sube a tocar el nivel y vuelve: eso deja un pivote.
+  for (let k = 0; k < 7; k++) {
+    const c = vela(previa, {
+      open: 105, high: k === 3 ? precioNivel : 106, low: 104, close: 105, volume: 100,
+    });
+    visita.push(c);
+    previa = c;
+  }
+
+  const breaker = vela(previa, { open: 110, high: 115.2, low: 109.8, close: 115, volume: 300 });
+  const forming = vela(breaker, { open: 115, high: 115.1, low: 114.9, close: 115, volume: 10, closed: false });
+  return [...base, ...visita, breaker, forming];
+}
+
+test('un nivel demasiado cerca para pagar el riesgo no sirve de objetivo', () => {
+  // Compra en 115 con el stop en ~109,7: el riesgo es de unos 5,3 puntos. Un
+  // objetivo en 117 daría un ratio de 0,4 —arriesgar cinco para ganar dos—,
+  // así que se descarta y se usa el doble del riesgo.
+  const { position, signals } = evaluateSignals({ candles: conNivelArriba(117), ...contexto });
+
+  assert.strictEqual(signals[0].action, 'comprar');
+  assert.ok(position.target > 117, `objetivo ${position.target}: no puede ser el nivel de 117`);
+  assert.strictEqual(position.targetSource, 'doble del riesgo');
+  assert.ok(position.rewardRisk >= 1.9);
+});
+
+test('un nivel lo bastante lejos sí sirve de objetivo', () => {
+  const { position } = evaluateSignals({ candles: conNivelArriba(130), ...contexto });
+
+  assert.ok(Math.abs(position.target - 130) < 0.5, `objetivo ${position.target}`);
+  assert.strictEqual(position.targetSource, 'nivel');
+  assert.ok(position.rewardRisk > 2.5);
+});
+
+test('el mínimo de beneficio sobre riesgo es configurable', () => {
+  // Bajándolo, ese mismo nivel de 117 vuelve a valer.
+  const { position } = evaluateSignals({
+    candles: conNivelArriba(117),
+    options: { minRewardRisk: 0.3 },
+    ...contexto,
+  });
+  assert.ok(Math.abs(position.target - 117) < 0.5);
+  assert.strictEqual(position.targetSource, 'nivel');
+});
+
 test('sin volumen que lo respalde, la ruptura no es compra', () => {
   const out = evaluateSignals({ candles: conRuptura({ volume: 100 }), ...contexto });
   assert.deepStrictEqual(out.signals, []);

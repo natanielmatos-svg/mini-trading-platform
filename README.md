@@ -13,7 +13,7 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet (también el gráfico)
-npm test             # 161 tests, sin red
+npm test             # 164 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -137,8 +137,12 @@ todavía no lo es.
 
 Al confirmarse una compra se abre un **seguimiento en papel** con el precio de
 compra, el stop —bajo el mínimo de la vela que rompió, más un margen de 0,1
-ATR— y el objetivo —el siguiente nivel por delante, o el doble del riesgo si no
-hay ninguno—. Ambos se dibujan en el gráfico, y el aviso dice literalmente
+ATR— y el objetivo: **el primer nivel por delante que esté al menos a 1,5 veces
+el riesgo**, o el doble del riesgo si ninguno llega. Ese mínimo no es un
+adorno: coger el nivel más cercano sin más daba, medido sobre histórico, un
+89% de compras con ratio por debajo de 1:1 y una mediana de 0,52 —alguna de
+0,02, que es arriesgar cincuenta para ganar uno—. Con eso se acierta dos de
+cada tres veces y se pierde dinero igual, que es exactamente lo que salía. Ambos se dibujan en el gráfico, y el aviso dice literalmente
 cuándo vender: *«vender si baja de 109,68 o al llegar a 125,65»*. El
 seguimiento se cierra solo cuando llega ese momento:
 
@@ -556,5 +560,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  161 tests, sin red
+test/                  164 tests, sin red
 ```

@@ -48,6 +48,7 @@ const DEFAULTS = {
   volumeFactor: 1.3,       // volumen mínimo de la vela que rompe, sobre la media de 20
   warnProbability: 0.7,    // a partir de aquí se avisa de que la ruptura es inminente
   stopBufferAtr: 0.1,      // margen bajo el mínimo de la vela que rompe
+  minRewardRisk: 1.5,      // un objetivo más cerca que esto no paga el riesgo
   minClosed: 40,           // velas cerradas mínimas para opinar
   operativa: 'contado',    // 'contado' | 'ambos'
   avisosPrevios: true,     // el aviso de "está a punto de romper"
@@ -83,22 +84,35 @@ function ratio(entry, stop, target) {
   return risk > 0 ? reward / risk : null;
 }
 
-// Nivel más cercano por delante para fijar el objetivo. Se busca sobre el
-// histórico SIN la vela que rompe: su propio máximo no es un nivel, es donde
-// acabamos de llegar, y tomarlo como objetivo daría un recorrido de cero.
-function targetFor(side, levelsSource, entry, atr, stop) {
-  const { resistance, support } = I.findLevels(levelsSource, entry, atr * 0.35);
-  const natural = side === 'larga' ? resistance : support;
-  const valid = natural && (side === 'larga' ? natural.price > entry : natural.price < entry);
-
-  // Sin nivel por delante (subida libre), el objetivo es dos veces el riesgo:
-  // una convención, y se dice que lo es.
-  if (valid) return { price: natural.price, source: 'nivel' };
+// Objetivo: el primer nivel por delante que esté lo bastante lejos como para
+// pagar el riesgo. Se busca sobre el histórico SIN la vela que rompe —su
+// propio máximo no es un nivel, es donde acabamos de llegar—.
+//
+// El "lo bastante lejos" no es un adorno. Coger el nivel más cercano sin más
+// producía, medido sobre histórico, un 89% de compras con ratio por debajo de
+// 1:1 y una mediana de 0,52: arriesgar el doble de lo que se puede ganar, y
+// alguna de 0,02, que es arriesgar cincuenta para ganar uno. Con eso se puede
+// acertar dos de cada tres veces y perder dinero igual, que es exactamente lo
+// que salía.
+function targetFor(side, levelsSource, entry, atr, stop, minRewardRisk) {
+  const niveles = I.findLevels(levelsSource, entry, atr * 0.35);
+  const candidatos = side === 'larga' ? niveles.resistances : niveles.supports;
   const risk = Math.abs(entry - stop);
+  const minimo = risk * minRewardRisk;
+
+  for (const nivel of candidatos || []) {
+    const delante = side === 'larga' ? nivel.price > entry : nivel.price < entry;
+    if (delante && Math.abs(nivel.price - entry) >= minimo) {
+      return { price: nivel.price, source: 'nivel' };
+    }
+  }
+
+  // Ningún nivel por delante que pague el riesgo: el objetivo es dos veces el
+  // riesgo. Es una convención, y se dice que lo es.
   return { price: side === 'larga' ? entry + 2 * risk : entry - 2 * risk, source: 'doble del riesgo' };
 }
 
-function buildOpen({ side, breaker, level, levelsSource, atr, symbol, interval, volumeRatio, now }) {
+function buildOpen({ side, breaker, level, levelsSource, atr, symbol, interval, volumeRatio, now, minRewardRisk = DEFAULTS.minRewardRisk }) {
   const entry = breaker.close;
   const largo = side === 'larga';
   const v = VERBOS[side].abrir;
@@ -107,7 +121,7 @@ function buildOpen({ side, breaker, level, levelsSource, atr, symbol, interval, 
     ? Math.min(breaker.low, level) - atr * DEFAULTS.stopBufferAtr
     : Math.max(breaker.high, level) + atr * DEFAULTS.stopBufferAtr;
 
-  const target = targetFor(side, levelsSource, entry, atr, stop);
+  const target = targetFor(side, levelsSource, entry, atr, stop, minRewardRisk);
   const rr = ratio(entry, stop, target.price);
 
   const position = {
@@ -344,7 +358,7 @@ function evaluateSignals({
   // --- Abrir ----------------------------------------------------------------
   if (rompeArriba) {
     const { position: nueva, signal } = buildOpen({
-      side: 'larga', breaker, level: resistance.price, levelsSource: history, atr, symbol, interval, volumeRatio, now,
+      side: 'larga', breaker, level: resistance.price, levelsSource: history, atr, symbol, interval, volumeRatio, now, minRewardRisk: cfg.minRewardRisk,
     });
     return { signals: [signal], position: nueva };
   }
@@ -352,7 +366,7 @@ function evaluateSignals({
   if (rompeAbajo) {
     if (conCortos) {
       const { position: nueva, signal } = buildOpen({
-        side: 'corta', breaker, level: support.price, levelsSource: history, atr, symbol, interval, volumeRatio, now,
+        side: 'corta', breaker, level: support.price, levelsSource: history, atr, symbol, interval, volumeRatio, now, minRewardRisk: cfg.minRewardRisk,
       });
       return { signals: [signal], position: nueva };
     }
