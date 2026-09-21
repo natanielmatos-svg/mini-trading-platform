@@ -18,6 +18,9 @@ npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
 
+Ningún script usa sintaxis de shell, así que funcionan igual en Linux, macOS y
+Windows (PowerShell incluido). Hace falta Node 20 o superior: `node -v`.
+
 ### Cómo se prueba
 
 ```bash
