@@ -23,11 +23,26 @@ function optionLabelTokens(event) {
   return tokens;
 }
 
+// Un mercado Sí/No no dice nada por sus opciones: todos tienen las mismas.
+function isGenericBinary(event) {
+  return (
+    event.options.length <= 2 &&
+    event.options.every((o) => o.key === 'yes' || o.key === 'no')
+  );
+}
+
 // Dos plataformas casi nunca escriben la pregunta igual ("Will X win the 2028
 // election?" vs "2028 Presidential Election Winner"), así que el título por sí
 // solo no basta: el conjunto de opciones aporta la otra mitad de la señal.
+//
+// Salvo entre binarios. Ahí las opciones son {Sí, No} en ambos lados y ese
+// término puntúa 1,0 pase lo que pase, regalando 0,35 a cualquier pareja: con
+// eso, "Hantavirus pandemic in 2026?" y "US recession in 2026?" superaban el
+// umbral. Entre binarios decide el título y nada más.
 function eventSimilarity(a, b) {
   const titleScore = textSimilarity(a.title, b.title);
+  if (isGenericBinary(a) && isGenericBinary(b)) return titleScore;
+
   const optionScore = diceSimilarity(optionLabelTokens(a), optionLabelTokens(b));
   return 0.65 * titleScore + 0.35 * optionScore;
 }
@@ -145,6 +160,7 @@ function canonicalizeOptions(cluster) {
 
 module.exports = {
   eventWeight,
+  isGenericBinary,
   eventSimilarity,
   clusterEvents,
   canonicalizeOptions,

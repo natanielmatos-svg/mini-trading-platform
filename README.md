@@ -13,7 +13,7 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet
-npm test             # 32 tests, sin red
+npm test             # 43 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -45,8 +45,9 @@ Añadir una plataforma es escribir un módulo en `src/providers/` que exporte
 ### El método, paso a paso
 
 1. **Precio → probabilidad.** Se usa el punto medio del libro `(bid+ask)/2`, no
-   el último operado, que puede llevar horas parado. Kalshi cotiza en centavos y
-   Polymarket en dólares por contrato: todo se lleva a 0..1. Si una plataforma
+   el último operado, que puede llevar horas parado. Kalshi cotiza en dólares por
+   contrato (y antes en centavos: se aceptan ambos formatos) y Polymarket en
+   dólares: todo se lleva a 0..1. Si una plataforma
    sólo publica la pata "Sí", la pata "No" se deriva por complemento.
 
 2. **Quitar el vig.** Los precios "Sí" de un evento donde sólo puede ganar una
@@ -58,7 +59,9 @@ Añadir una plataforma es escribir un módulo en `src/providers/` que exporte
    igual ("Presidential Election Winner 2028" vs "Who will win the 2028
    presidential election?"). Se comparan títulos y conjuntos de opciones con
    coeficiente de Dice sobre tokens normalizados (sin acentos, sin stopwords) y
-   se exige que las fechas de cierre sean compatibles. Cada plataforma aporta
+   se exige que las fechas de cierre sean compatibles. Entre dos mercados Sí/No
+   decide sólo el título: sus opciones son idénticas por construcción y esa
+   señal no distingue nada. Cada plataforma aporta
    como mucho un mercado por grupo.
 
 4. **Consenso ponderado en espacio logit.** La media se calcula sobre
@@ -244,7 +247,7 @@ públicos de mercado, y no acepta ninguna escritura.
 | `DEMO` | — | `DEMO=1` fuerza datos de ejemplo en todas las respuestas |
 | `PREDICTIONS_TTL_MS` | `30000` | Caché de los datos de mercado |
 | `POLYMARKET_API` / `KALSHI_API` / `MANIFOLD_API` | APIs públicas | Para apuntar a un mirror o a un mock |
-| `PREDICTIONS_FETCH_LIMIT` | `80` | Eventos pedidos a cada plataforma por ciclo |
+| `PREDICTIONS_FETCH_LIMIT` | `120` | Eventos pedidos a cada plataforma por ciclo |
 | `RATE_MAX` / `RATE_WINDOW_MS` | `120` / `60000` | Límite de peticiones por IP a `/api` |
 | `TRUST_PROXY_HOPS` | `1` | Saltos de proxy de confianza para leer la IP real |
 
@@ -272,5 +275,5 @@ scripts/smoke.js         valida las APIs reales antes de desplegar
 scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 Dockerfile, docker-compose.yml
-test/                  32 tests, sin red
+test/                  43 tests, sin red
 ```

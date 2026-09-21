@@ -71,17 +71,38 @@ async function diagnoseKalshi() {
         } else {
           console.log(`  markets anidados: ${markets.length}`);
           if (markets[0]) {
-            console.log(`  claves de un market: ${keys(markets[0])}`);
             const m = markets[0];
-            console.log(`  status="${m.status}" yes_bid=${m.yes_bid} yes_ask=${m.yes_ask} last_price=${m.last_price}`);
-            console.log(`  yes_sub_title="${trunc(m.yes_sub_title, 40)}" close_time=${m.close_time}`);
+            console.log(`  claves de un market: ${keys(m)}`);
+            console.log(`  status="${m.status}" yes_sub_title="${trunc(m.yes_sub_title, 40)}" close_time=${m.close_time}`);
+
+            // Valores crudos de los campos de los que depende el parser, con su
+            // tipo: "fp" es punto fijo y podría venir escalado, lo que desviaría
+            // el peso de esta plataforma en el consenso.
+            console.log('  valores crudos:');
+            for (const campo of [
+              'yes_bid_dollars', 'yes_ask_dollars', 'no_bid_dollars', 'no_ask_dollars',
+              'last_price_dollars', 'liquidity_dollars', 'volume_fp', 'volume_24h_fp',
+              'open_interest_fp', 'yes_bid', 'yes_ask', 'volume', 'liquidity',
+            ]) {
+              if (m[campo] !== undefined) {
+                console.log(`    ${campo} = ${JSON.stringify(m[campo])}  (${typeof m[campo]})`);
+              }
+            }
           }
           // El parser descarta todo lo que no esté en active/open: si los
           // valores reales son otros, ahí se pierden los eventos.
           const estados = new Set();
           for (const e of list) for (const m of e.markets || []) estados.add(m.status);
           console.log(`  >> valores de status vistos: ${[...estados].join(', ') || 'ninguno'}`);
-          console.log('     (el parser sólo acepta "active" u "open")');
+
+          // Y lo que importa: cuántos sobreviven al parser actual.
+          const kalshi = require('../src/providers/kalshi');
+          const parseados = list.map(kalshi.mapEvent).filter(Boolean);
+          console.log(`  >> eventos que sobreviven al parser: ${parseados.length} de ${list.length}`);
+          if (parseados[0]) {
+            const o = parseados[0].options[0];
+            console.log(`     ejemplo: "${trunc(parseados[0].title, 45)}" → "${trunc(o.label, 25)}" a ${(o.price * 100).toFixed(1)}¢`);
+          }
         }
       }
     }
