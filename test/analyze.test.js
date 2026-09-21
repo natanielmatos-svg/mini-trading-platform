@@ -39,7 +39,7 @@ test('un evento que sólo cotiza una plataforma no se mezcla con otros', () => {
 test('las opciones equivalentes se unifican entre plataformas', () => {
   const clusters = clusterEvents(events);
   const election = clusters.find((c) => c.events.length === 3);
-  const groups = canonicalizeOptions(election);
+  const { options: groups } = canonicalizeOptions(election);
 
   assert.equal(groups.length, 3, 'tres candidatos, no nueve opciones sueltas');
   for (const group of groups) {

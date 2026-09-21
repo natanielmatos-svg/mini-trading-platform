@@ -70,7 +70,12 @@ function closeDatesCompatible(a, b, maxGapDays) {
 // Agrupación voraz: los eventos se ordenan por relevancia y cada uno se une al
 // primer grupo compatible. Es O(n·grupos) y suficiente para unos cientos de
 // eventos; un clustering jerárquico no cambiaría el resultado en la práctica.
-function clusterEvents(events, { threshold = 0.5, maxCloseGapDays = 30 } = {}) {
+// El margen entre fechas de cierre es amplio a propósito. El error grave —
+// emparejar comicios de años distintos— ya lo ataja yearsConflict, que es una
+// señal más fiable: la fecha de cierre de Manifold la fija quien crea el
+// mercado y suele ir suelta. Con 30 días de margen se perdían emparejamientos
+// legítimos, como las primarias demócratas de 2028 entre dos plataformas.
+function clusterEvents(events, { threshold = 0.5, maxCloseGapDays = 365 } = {}) {
   const sorted = [...events].sort((a, b) => eventWeight(b) - eventWeight(a));
   const clusters = [];
 
@@ -114,11 +119,19 @@ function clusterEvents(events, { threshold = 0.5, maxCloseGapDays = 30 } = {}) {
 
 const OPTION_MATCH_THRESHOLD = 0.6;
 
-// Une las opciones equivalentes de todas las plataformas del grupo. El ancla
-// define las opciones canónicas; lo que no encaje en ninguna se añade como
-// opción propia (hay plataformas que listan candidatos que otras no).
+// Une las opciones equivalentes de todas las plataformas del grupo.
+//
+// El ancla —la fuente más profunda y creíble— define el universo: su lista de
+// opciones ya reparte el 100% entre ellas. Las demás plataformas sólo afinan el
+// precio de opciones que ya existen; las suyas propias se descartan.
+//
+// Sin esa regla, unir 52 candidatos de una plataforma con 45 de otra daba 65
+// opciones de las que 35 sólo cotizaba una, contando esa masa dos veces: la
+// suma llegaba a 1,30 y al renormalizar hundía todos los porcentajes un 30%.
 function canonicalizeOptions(cluster) {
+  const anchor = cluster.anchor || cluster.events[0];
   const groups = [];
+  let descartadas = 0;
 
   const findGroup = (option) => {
     let best = null;
@@ -135,41 +148,57 @@ function canonicalizeOptions(cluster) {
     return best;
   };
 
-  for (const event of cluster.events) {
-    for (const option of event.options) {
-      const existing = findGroup(option);
-      const key = option.key || canonicalLabelKey(option.label);
-      const target = existing || {
-        // Una opción binaria se muestra siempre igual, venga de la plataforma
-        // que venga ("Yes", "Sí" y "True" son la misma respuesta).
-        label: key === 'yes' ? 'Sí' : key === 'no' ? 'No' : option.label,
-        key,
-        quotes: [],
-      };
-      if (!existing) groups.push(target);
+  const addQuote = (group, option, event) => {
+    const already = group.quotes.find((q) => q.platform === event.platform);
+    if (already) {
+      // Misma plataforma cotizando dos veces la misma opción: nos quedamos con
+      // la más líquida en lugar de contarla dos veces.
+      if ((option.liquidity || 0) > (already.option.liquidity || 0)) {
+        already.option = option;
+        already.event = event;
+      }
+      return;
+    }
+    group.quotes.push({
+      platform: event.platform,
+      platformLabel: event.platformLabel,
+      credibility: event.credibility,
+      option,
+      event,
+    });
+  };
 
-      const already = target.quotes.find((q) => q.platform === event.platform);
-      if (already) {
-        // Misma plataforma cotizando dos veces la misma opción: nos quedamos
-        // con la más líquida en lugar de contarla dos veces.
-        if ((option.liquidity || 0) > (already.option.liquidity || 0)) {
-          already.option = option;
-          already.event = event;
-        }
+  for (const option of anchor.options) {
+    const key = option.key || canonicalLabelKey(option.label);
+    const existing = findGroup(option);
+    if (existing) {
+      addQuote(existing, option, anchor);
+      continue;
+    }
+    const group = {
+      // Una opción binaria se muestra siempre igual, venga de la plataforma que
+      // venga ("Yes", "Sí" y "True" son la misma respuesta).
+      label: key === 'yes' ? 'Sí' : key === 'no' ? 'No' : option.label,
+      key,
+      quotes: [],
+    };
+    groups.push(group);
+    addQuote(group, option, anchor);
+  }
+
+  for (const event of cluster.events) {
+    if (event === anchor) continue;
+    for (const option of event.options) {
+      const group = findGroup(option);
+      if (!group) {
+        descartadas++;
         continue;
       }
-
-      target.quotes.push({
-        platform: event.platform,
-        platformLabel: event.platformLabel,
-        credibility: event.credibility,
-        option,
-        event,
-      });
+      addQuote(group, option, event);
     }
   }
 
-  return groups;
+  return { options: groups, descartadas };
 }
 
 module.exports = {

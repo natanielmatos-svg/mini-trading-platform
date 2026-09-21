@@ -79,7 +79,7 @@ function bestExecution(quotes, consensusProb) {
 }
 
 function analyzeCluster(cluster) {
-  const groups = canonicalizeOptions(cluster);
+  const { options: groups, descartadas } = canonicalizeOptions(cluster);
   const anchor = cluster.anchor;
 
   let options = groups

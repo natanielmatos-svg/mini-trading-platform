@@ -7,7 +7,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { eventSimilarity, isGenericBinary, clusterEvents } = require('../src/match');
+const { eventSimilarity, isGenericBinary, clusterEvents, canonicalizeOptions } = require('../src/match');
+const { analyzeCluster } = require('../src/analyze');
 const { canonicalLabelKey } = require('../src/normalize');
 
 const UMBRAL = 0.5;
@@ -143,6 +144,60 @@ test('si sólo un título cita un año, decide la similitud normal', () => {
     multiple('robinhood_kalshi', 'Who will succeed Netanyahu as Prime Minister of Israel in 2027?', ['Naftali Bennett', 'Yair Lapid'])
   );
   assert.ok(score > 0, 'sin año en un lado no se aplica el descarte');
+});
+
+// Cada plataforma enumera su propio conjunto de candidatos: Polymarket llegó a
+// listar 52 y Manifold 45 para las mismas presidenciales. Si la unión define el
+// universo, la masa de probabilidad que sólo cotiza una se cuenta dos veces.
+test('la plataforma ancla define el universo de opciones', () => {
+  const ancla = multiple('polymarket', 'Presidential Election Winner 2028', [
+    'JD Vance', 'Gavin Newsom', 'Josh Shapiro', 'Marco Rubio',
+  ]);
+  ancla.liquidity = 60285335;
+  ancla.volume = 707304548;
+
+  const secundaria = multiple('manifold', '2028 US Presidential Election winner?', [
+    'JD Vance', 'Gavin Newsom', 'Other', 'Michelle Obama',
+  ]);
+  secundaria.liquidity = 159050;
+  secundaria.volume = 1324708;
+
+  const cluster = { events: [ancla, secundaria], anchor: ancla, matchScore: 0.8 };
+  const { options, descartadas } = canonicalizeOptions(cluster);
+
+  assert.equal(options.length, 4, 'el universo es el del ancla, no la unión');
+  assert.equal(descartadas, 2, '"Other" y "Michelle Obama" no están en el ancla');
+
+  const vance = options.find((o) => o.label === 'JD Vance');
+  assert.equal(vance.quotes.length, 2, 'las opciones compartidas sí reciben ambas cotizaciones');
+
+  const rubio = options.find((o) => o.label === 'Marco Rubio');
+  assert.equal(rubio.quotes.length, 1, 'las que sólo tiene el ancla conservan su precio');
+});
+
+test('el consenso no se hunde al unir listas de distinto tamaño', () => {
+  const ancla = multiple('polymarket', 'Presidential Election Winner 2028', [
+    'JD Vance', 'Gavin Newsom', 'Josh Shapiro', 'Marco Rubio',
+  ]);
+  ancla.liquidity = 60285335;
+  ancla.volume = 707304548;
+
+  const secundaria = multiple('manifold', '2028 US Presidential Election winner?', [
+    'JD Vance', 'Gavin Newsom', 'Other', 'Michelle Obama',
+  ]);
+
+  const solo = analyzeCluster({ events: [ancla], anchor: ancla, matchScore: 1 });
+  const conAmbas = analyzeCluster({ events: [ancla, secundaria], anchor: ancla, matchScore: 0.8 });
+
+  const pSolo = solo.options.find((o) => o.label === 'JD Vance').probability;
+  const pAmbas = conAmbas.options.find((o) => o.label === 'JD Vance').probability;
+
+  // Sumar una segunda fuente que opina parecido no puede desplomar el número:
+  // antes bajaba un 30% sólo por contar dos veces la cola de cada lista.
+  assert.ok(
+    Math.abs(pSolo - pAmbas) < 0.05,
+    `añadir una fuente movió el favorito de ${(pSolo * 100).toFixed(1)}% a ${(pAmbas * 100).toFixed(1)}%`
+  );
 });
 
 test('sobre el lote completo, sólo se agrupa lo que de verdad coincide', () => {

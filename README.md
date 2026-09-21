@@ -13,7 +13,7 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet
-npm test             # 48 tests, sin red
+npm test             # 50 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -101,10 +101,12 @@ Añadir una plataforma es escribir un módulo en `src/providers/` que exporte
   probabilidad, pero nunca encabezan el veredicto: responder "lo más probable es
   Otro" no contesta la pregunta. Si ese cajón supera al favorito se avisa, porque
   entonces el mercado está apuntando a alguien fuera de la lista.
-- Cada plataforma enumera candidatos distintos: donde una lista treinta nombres,
-  otra lista cinco y un "Other". Las probabilidades del consenso se renormalizan
-  sobre la unión de ambas listas, así que en eventos con muchos candidatos los
-  porcentajes absolutos son aproximados; el orden es más fiable que la cifra.
+- Cada plataforma enumera candidatos distintos: donde una lista cincuenta
+  nombres, otra lista cuarenta y un "Other". El universo de opciones lo fija la
+  fuente más profunda del grupo, y las demás sólo afinan el precio de las que ya
+  están; lo que sólo cotiza una plataforma secundaria se descarta. Sin esa regla
+  la masa de probabilidad de cada cola se contaba dos veces y todos los
+  porcentajes bajaban alrededor de un 30%.
 - Manifold usa dinero de juego: informa, pero no debe mover una decisión.
 - Es análisis de mercado, no una recomendación de inversión.
 
@@ -285,5 +287,5 @@ scripts/smoke.js         valida las APIs reales antes de desplegar
 scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 Dockerfile, docker-compose.yml
-test/                  48 tests, sin red
+test/                  50 tests, sin red
 ```

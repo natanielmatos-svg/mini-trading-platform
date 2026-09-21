@@ -166,7 +166,7 @@ async function diagnoseMatching() {
           const fechasOk =
             !ea.closesAt || !eb.closesAt
               ? true
-              : Math.abs(new Date(ea.closesAt) - new Date(eb.closesAt)) <= 30 * 24 * 3600 * 1000;
+              : Math.abs(new Date(ea.closesAt) - new Date(eb.closesAt)) <= 365 * 24 * 3600 * 1000;
           pares.push({ score: eventSimilarity(ea, eb), fechasOk, ea, eb });
         }
       }
@@ -235,9 +235,9 @@ async function diagnosePonderacion() {
       console.log(`          liquidez=${(e.liquidity || 0).toFixed(0)} volumen=${(e.volume || 0).toFixed(0)} opciones=${e.options.length}`);
     }
 
-    const grupos = canonicalizeOptions(cluster);
+    const { options: grupos, descartadas } = canonicalizeOptions(cluster);
     const conVarias = grupos.filter((g) => g.quotes.length > 1);
-    console.log(`  opciones canónicas: ${grupos.length} (cotizadas por más de una plataforma: ${conVarias.length})`);
+    console.log(`  opciones canónicas: ${grupos.length} (cotizadas por más de una plataforma: ${conVarias.length}, descartadas por no estar en el ancla: ${descartadas})`);
 
     const top = [...grupos]
       .sort((a, b) => {
