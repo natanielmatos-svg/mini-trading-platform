@@ -9,7 +9,8 @@
     "test": "node --test \"test/*.test.js\"",
     "static": "node scripts/build-static.js",
     "smoke": "node scripts/smoke.js",
-    "diagnose": "node scripts/diagnose.js"
+    "diagnose": "node scripts/diagnose.js",
+    "matches": "node scripts/matches.js"
   },
   "engines": {
     "node": ">=18"

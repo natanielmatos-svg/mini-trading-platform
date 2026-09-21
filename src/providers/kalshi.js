@@ -138,7 +138,7 @@ async function fetchEvents({ limit = 100, timeoutMs = 10000, full = false } = {}
   if (full) {
     // Kalshi pagina por cursor, no por offset.
     const raw = await paginate(pedir, {
-      maxPages: Number(process.env.KALSHI_MAX_PAGES || 40),
+      maxPages: Number(process.env.KALSHI_MAX_PAGES || 100),
       pageSize: 200,
     });
     const mapped = raw.map(mapEvent).filter(Boolean);
