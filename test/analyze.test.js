@@ -162,6 +162,51 @@ test('el veredicto describe la opción ganadora en texto', () => {
   assert.ok(['alta', 'media', 'baja'].includes(election.verdict.confidenceLabel));
 });
 
+// Confianza y margen responden a preguntas distintas. Con 1,2 pts de ventaja no
+// hay favorito, por muy fiables que sean los datos, y el veredicto debe decirlo
+// en vez de dejar que "confianza alta" se lea como "hay ganador".
+test('un margen mínimo se presenta como empate, no como favorito', () => {
+  const { analyzeCluster } = require('../src/analyze');
+
+  const construir = (probabilidades) => {
+    const evento = {
+      platform: 'polymarket',
+      platformLabel: 'Polymarket',
+      credibility: 1,
+      title: 'Nominación demócrata 2028',
+      url: '',
+      closesAt: null,
+      mutuallyExclusive: true,
+      liquidity: 5e6,
+      volume: 5e7,
+      options: probabilidades.map(([label, p]) => ({
+        label,
+        key: label.toLowerCase(),
+        price: p,
+        impliedProb: p,
+        bid: p - 0.005,
+        ask: p + 0.005,
+        spread: 0.01,
+        priceSource: 'book',
+        liquidity: 5e5,
+        volume: 5e6,
+        url: '',
+      })),
+    };
+    return analyzeCluster({ events: [evento], anchor: evento, matchScore: 1 });
+  };
+
+  const empate = construir([['AOC', 0.35], ['Jon Ossoff', 0.34], ['Otro nombre', 0.31]]);
+  assert.equal(empate.verdict.decisive, false);
+  assert.match(empate.verdict.text, /Empate técnico/);
+  assert.match(empate.verdict.text, /Jon Ossoff/, 'debe nombrar a los dos empatados');
+  assert.ok(empate.flags.some((f) => f.code === 'too_close'));
+
+  const claro = construir([['AOC', 0.6], ['Jon Ossoff', 0.25], ['Otro nombre', 0.15]]);
+  assert.equal(claro.verdict.decisive, true);
+  assert.match(claro.verdict.text, /es la opción más probable/);
+});
+
 test('el ranking prioriza los eventos contrastados entre plataformas', () => {
   const analyses = analyzeEvents(events);
   assert.ok(analyses.length >= 3);

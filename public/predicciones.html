@@ -592,7 +592,7 @@
 
           <div class="verdict">
             <div>
-              <span class="eyebrow">Más probable</span>
+              <span class="eyebrow">${event.verdict.decisive ? 'Más probable' : 'Empate técnico · va por delante'}</span>
               <p class="verdict-name">${esc(top.label)}</p>
               <p class="verdict-note">${detail.join(' · ') || 'única opción cotizada'}</p>
             </div>

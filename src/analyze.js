@@ -296,17 +296,31 @@ function buildVerdict(analysis) {
   const { label, probability, margin, runnerUp } = analysis.mostLikely;
   const pct = (probability * 100).toFixed(1);
   const platforms = analysis.sources.map((s) => s.platformLabel).join(', ');
+  const decisive = margin === null ? false : margin >= 0.05;
 
-  let text = `"${label}" es la opción más probable con ${pct}% según ${platforms}`;
-  if (runnerUp && margin !== null) {
-    text += `, ${(margin * 100).toFixed(1)} pts por encima de "${runnerUp.label}"`;
+  // Confianza y margen responden a preguntas distintas: cuánto me fío del
+  // análisis, y si hay ganador. Decir "17,4%, 1,2 pts por delante, confianza
+  // alta" se lee como si hubiera respuesta cuando lo que hay es un empate.
+  let text;
+  if (!decisive && runnerUp) {
+    text =
+      `Empate técnico entre "${label}" (${pct}%) y "${runnerUp.label}" ` +
+      `(${(runnerUp.probability * 100).toFixed(1)}%): ${(margin * 100).toFixed(1)} pts los separan ` +
+      `según ${platforms}, demasiado poco para dar un favorito.`;
+  } else {
+    text = `"${label}" es la opción más probable con ${pct}% según ${platforms}`;
+    if (runnerUp && margin !== null) {
+      text += `, ${(margin * 100).toFixed(1)} pts por encima de "${runnerUp.label}"`;
+    }
+    text += '.';
   }
-  text += `. Confianza ${confidenceLabel(analysis.confidence)}.`;
+
+  text += ` Confianza ${confidenceLabel(analysis.confidence)} en los datos.`;
 
   return {
     text,
     confidenceLabel: confidenceLabel(analysis.confidence),
-    decisive: margin === null ? false : margin >= 0.1,
+    decisive,
   };
 }
 
