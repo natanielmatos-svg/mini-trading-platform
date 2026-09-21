@@ -9,7 +9,7 @@
 
 (function () {
 const { emaSeries, ema, shareAtLeast, requiredExcursion } = globalThis.Indicators;
-const { formatPrice, num, formatPercent, formatClock } = globalThis.Format;
+const { formatPrice, num, formatPercent, formatClock, candleWindow } = globalThis.Format;
 const { evaluateSignals } = globalThis.Signals;
 
 const MTF = ['1h', '4h', '1d', '1w'];
@@ -23,7 +23,9 @@ const state = {
   candles: [],
   mtf: {},
   breakout: null,
-  live: null,
+  live: null,        // última vela recibida
+  livePrice: null,   // último precio operado, que llega mucho más a menudo
+  ultimoPintado: null,
   source: null,
   fetchedAt: null,
   loading: false,
@@ -59,13 +61,17 @@ const el = {
   emaSlow: $('emaSlow'),
   emaWarning: $('emaWarning'),
   status: $('statusText'),
-  price: $('livePrice'),
-  priceChange: $('priceChange'),
+  price: $('bigPrice'),
+  priceChange: $('bigChange'),
+  clockPair: $('clockPair'),
+  countdownBig: $('bigCountdown'),
+  clockBar: $('clockBar'),
+  clockOpen: $('clockOpen'),
+  clockClose: $('clockClose'),
   streamDot: $('streamDot'),
   streamLabel: $('streamLabel'),
   tooltip: $('tooltip'),
   breakout: $('breakoutPanel'),
-  countdown: $('countdown'),
   alertToggle: $('alertToggle'),
   alertTest: $('alertTest'),
   alertMode: $('alertMode'),
@@ -81,6 +87,20 @@ const ctx = el.canvas.getContext('2d');
 
 const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
 const pairKey = () => `${state.symbol}|${state.interval}`;
+
+// El precio de referencia en toda la interfaz: la última operación si la hay,
+// y si no el cierre de la vela en curso.
+function precioActual() {
+  if (state.livePrice && state.livePrice.price > 0) return state.livePrice.price;
+  const ultima = state.candles[state.candles.length - 1];
+  return ultima ? ultima.close : null;
+}
+
+// Ventana de la vela en curso, anclada a la apertura que dio Binance.
+function ventanaActual(now = Date.now()) {
+  const ultima = state.candles[state.candles.length - 1];
+  return candleWindow(now, intervalToMs(state.interval), ultima ? ultima.openTime : null);
+}
 
 function fmtTimeAxis(ms, interval) {
   const d = new Date(ms);
@@ -225,7 +245,7 @@ async function loadAll({ silent = false } = {}) {
 
     await loadBreakout();
     evaluateAlerts();
-    render();
+    render({ force: true });
     setStatus('');
   } catch (err) {
     state.failures += 1;
@@ -278,6 +298,20 @@ function connectStream() {
       onTick(JSON.parse(event.data));
     } catch {
       /* mensaje ilegible: se ignora, el siguiente llegará bien */
+    }
+  });
+
+  sse.addEventListener('price', (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.symbol !== state.symbol || !(data.price > 0)) return;
+      state.livePrice = data;
+      renderClock();
+      // La probabilidad de ruptura se mueve con el precio, así que el panel
+      // se repinta también; es sólo texto, no toca el gráfico.
+      renderBreakout();
+    } catch {
+      /* un mensaje ilegible no debe romper el flujo */
     }
   });
 
@@ -619,15 +653,15 @@ function requestRender() {
   });
 }
 
-function render() {
+function render({ force = false } = {}) {
   const { warning } = emaLengths();
   el.emaWarning.textContent = warning;
   el.emaWarning.style.display = warning ? 'block' : 'none';
 
   drawChart();
   renderTable();
-  renderPrice();
-  renderBreakout();
+  renderClock();
+  renderBreakout({ force });
   renderAlerts();
 }
 
@@ -642,16 +676,52 @@ function setStatus(text, isError = false) {
   el.status.classList.toggle('error', isError);
 }
 
-function renderPrice() {
-  const candles = state.candles;
-  if (!candles.length) return;
-  const last = candles[candles.length - 1];
-  const reference = candles.length > 1 ? candles[candles.length - 2].close : last.open;
-  const change = (last.close - reference) / reference;
+// El bloque de tiempo: precio en vivo y cuánto le queda a la vela, con la
+// barra vaciándose. Se repinta cuatro veces por segundo —el cronómetro sólo
+// cambia cada segundo, pero la barra se mueve suave y el precio llega cuando
+// llega— y no toca el canvas, así que es barato.
+function renderClock() {
+  const precio = precioActual();
+  const ventana = ventanaActual();
+  if (!ventana) return;
 
-  el.price.textContent = formatPrice(last.close);
-  el.priceChange.textContent = `${change >= 0 ? '+' : ''}${formatPercent(change, 2)}`;
-  el.priceChange.className = `change ${change >= 0 ? 'up' : 'down'}`;
+  el.clockPair.textContent = `${state.symbol} · ${state.interval}`;
+
+  if (precio !== null) {
+    el.price.textContent = formatPrice(precio);
+
+    // Destello al cambiar: el número parece vivo aunque el cambio sea de un
+    // céntimo, que es justo lo que se pide a un precio en tiempo real.
+    if (state.ultimoPintado !== null && precio !== state.ultimoPintado) {
+      el.price.classList.remove('sube', 'baja');
+      void el.price.offsetWidth; // reinicia la animación
+      el.price.classList.add(precio > state.ultimoPintado ? 'sube' : 'baja');
+    }
+    state.ultimoPintado = precio;
+
+    // El cambio se mide desde que abrió ESTA vela: es de lo que va el bloque.
+    const abierta = state.candles[state.candles.length - 1];
+    const apertura = abierta && abierta.openTime === ventana.open ? abierta.open : null;
+    if (apertura > 0) {
+      const cambio = (precio - apertura) / apertura;
+      el.priceChange.textContent = `${cambio >= 0 ? '+' : ''}${formatPercent(cambio, 2)} en esta vela`;
+      el.priceChange.className = `change ${cambio >= 0 ? 'up' : 'down'}`;
+    } else {
+      el.priceChange.textContent = '';
+    }
+  }
+
+  el.countdownBig.textContent = formatClock(ventana.remainingMs);
+
+  // Urgencia en el último cuarto, y roja en el último 10%.
+  const restante = 1 - ventana.elapsed;
+  el.countdownBig.className = `time ${restante < 0.1 ? 'urgente' : restante < 0.25 ? 'cerca' : ''}`;
+  el.clockBar.style.width = `${clamp(restante * 100, 0, 100)}%`;
+  el.clockBar.className = restante < 0.1 ? 'urgente' : restante < 0.25 ? 'cerca' : '';
+
+  const hora = (ms) => new Date(ms).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  el.clockOpen.textContent = `abrió ${hora(ventana.open)}`;
+  el.clockClose.textContent = `cierra ${hora(ventana.close + 1)}`;
 }
 
 // --- Gráfico ---------------------------------------------------------------
@@ -1003,46 +1073,72 @@ function liveSide(side, sample, price, atr, remaining) {
   };
 }
 
-function renderBreakout() {
+// El panel se reconstruye entero en cada repintado, y eso cerraba de golpe el
+// desplegable que el usuario acabara de abrir: con el precio en vivo llegando
+// varias veces por segundo, «Contexto» era imposible de leer. Se apunta qué
+// estaba abierto y se restaura.
+function seccionesAbiertas() {
+  const previos = el.breakout.querySelectorAll('details[data-k]');
+  return {
+    primera: previos.length === 0,
+    claves: new Set([...previos].filter((d) => d.open).map((d) => d.dataset.k)),
+  };
+}
+
+function restaurarSecciones({ primera, claves }) {
+  if (primera) return; // la primera vez mandan los `open` del marcado
+  for (const d of el.breakout.querySelectorAll('details[data-k]')) d.open = claves.has(d.dataset.k);
+}
+
+let ultimoBreakout = 0;
+
+function renderBreakout({ force = false } = {}) {
   const b = state.breakout;
+
+  // Reconstruir este panel es caro y llegan hasta diez precios por segundo;
+  // tres repintados por segundo ya se ven fluidos.
+  const ahora = Date.now();
+  if (!force && b && b.ok && ahora - ultimoBreakout < 330) return;
+  ultimoBreakout = ahora;
 
   if (!b || !b.ok) {
     el.breakout.innerHTML = `<p class="muted">${b ? b.reason : 'Calculando…'}</p>`;
-    el.countdown.textContent = '';
     return;
   }
 
-  const price = state.live ? state.live.close : b.price;
+  const price = precioActual() || b.price;
   const now = Date.now();
-  const total = b.candle.closeTime - b.candle.openTime + 1;
-  const remaining = clamp((b.candle.closeTime - now) / total, 0.01, 1);
+  // El reloj manda sobre el payload, que puede tener uno o dos minutos.
+  const ventana = ventanaActual(now);
+  const remaining = ventana ? clamp(ventana.remainingMs / intervalToMs(state.interval), 0.01, 1) : 0.01;
 
   const up = liveSide(b.up, b.sample.up, price, b.atr, remaining);
   const down = liveSide(b.down, b.sample.down, price, b.atr, remaining);
 
-  el.countdown.textContent = `cierra en ${formatClock(b.candle.closeTime - now)}`;
-
   const bias = verdictFor(up, down, remaining);
+  const abiertas = seccionesAbiertas();
 
   el.breakout.innerHTML = `
     <div class="verdict ${bias.cls}">${bias.text}</div>
     ${sideHtml(up, 'Ruptura al alza', 'up')}
     ${sideHtml(down, 'Ruptura a la baja', 'down')}
-    <details class="method" open>
+    <details class="method" data-k="porque" open>
       <summary>Por qué</summary>
       ${b.explanation.map((line) => `<p>${line}</p>`).join('')}
     </details>
-    <details class="method">
+    <details class="method" data-k="contexto">
       <summary>Contexto (${b.context.length} señales)</summary>
       <ul class="factors">
         ${b.context.map((f) => `<li class="lean-${f.lean}"><strong>${f.label}:</strong> ${f.text}</li>`).join('')}
       </ul>
     </details>
-    <details class="method">
+    <details class="method" data-k="confirmar">
       <summary>Cómo confirmar la ruptura</summary>
       ${[b.trigger.up, b.trigger.down].filter(Boolean).map((t) => `<p>${t.text}<br><em>${t.invalidation}</em></p>`).join('')}
     </details>
     <p class="disclaimer">${b.disclaimer}</p>`;
+
+  restaurarSecciones(abiertas);
 }
 
 // El veredicto tiene que distinguir dos cosas que se parecen en el número y no
@@ -1115,6 +1211,8 @@ function applyControls({ symbol = null } = {}) {
   if (changed) {
     state.candles = [];
     state.live = null;
+    state.livePrice = null;
+    state.ultimoPintado = null;
     state.breakout = null;
     state.alerts.primed = false; // par nuevo: no se grita por lo que ya había pasado
     connectStream();
@@ -1187,10 +1285,14 @@ function init() {
     loadAll({ silent: true });
   });
 
-  // El reloj de la vela corre aunque no lleguen ticks.
+  // El cronómetro corre del reloj del navegador, así que sigue bajando aunque
+  // no llegue un solo tick. Cuatro veces por segundo para que la barra no dé
+  // saltos.
   setInterval(() => {
-    if (!document.hidden && state.breakout && state.breakout.ok) renderBreakout();
-  }, 1000);
+    if (document.hidden) return;
+    renderClock();
+    if (state.breakout && state.breakout.ok) renderBreakout();
+  }, 250);
 
   el.alertToggle.checked = state.alerts.enabled;
   el.alertMode.value = state.alerts.operativa;
