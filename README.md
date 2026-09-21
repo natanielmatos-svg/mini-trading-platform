@@ -4,7 +4,7 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 
 | Ruta | Qué es |
 |---|---|
-| `/index.html` | Plataforma de trading: velas de Binance y tendencia multi-timeframe con EMAs |
+| `/index.html` | **Plataforma de trading**: velas de Binance en vivo, tendencia multi-timeframe con EMAs y análisis de ruptura de la vela en curso |
 | `/predicciones.html` | **Analizador de predicciones**: agrega Polymarket, Robinhood/Kalshi y Manifold y dice qué opción es la más probable de cada evento |
 
 ## Arranque
@@ -12,11 +12,94 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 ```bash
 npm install
 npm start            # http://localhost:3000
-npm run demo         # datos de ejemplo, sin salida a Internet
-npm test             # 51 tests, sin red
+npm run demo         # datos de ejemplo, sin salida a Internet (también el gráfico)
+npm test             # 113 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
+
+## La plataforma de trading
+
+Velas de Binance, EMAs sobre el gráfico, tendencia en cuatro timeframes y un
+panel que responde a una sola pregunta: **¿esta vela va a romper, y hacia
+dónde?**
+
+### Precio en vivo
+
+El navegador no habla con Binance. Abre una conexión SSE a `/api/stream` y el
+servidor mantiene **un solo WebSocket por símbolo y timeframe**, compartido
+entre todos los clientes: cien pestañas abiertas siguen siendo una conexión
+saliente. Si el WebSocket no levanta —Node antiguo, red que lo bloquea— tras
+tres intentos se degrada a sondeo periódico sobre la caché y se avisa en la
+interfaz; cinco minutos después se vuelve a intentar el WebSocket.
+
+Las velas históricas vienen de `/api/klines`, que las cachea entre 5 y 60
+segundos según el timeframe y agrupa las peticiones simultáneas en una sola
+llamada saliente.
+
+### ¿Rompe esta vela? El método
+
+La respuesta honesta a "¿va a romper?" no es un oráculo, es **una frecuencia
+observada**. Tres pasos, todos comprobables a mano:
+
+1. **Localizar el nivel.** No cualquier precio: los pivotes donde el mercado ya
+   se dio la vuelta (una vela cuyo máximo supera al de las tres de cada lado),
+   agrupados cuando están tan juntos que son el mismo nivel tocado varias veces.
+   El número de toques es la fuerza del nivel. Si no hay pivote por delante
+   —un activo en subida libre— se usa el extremo de las últimas 60 velas y se
+   marca como tal.
+
+2. **Medir la distancia en ATR, no en dólares.** "Faltan 300 $" no dice nada;
+   "falta 0,4 ATR" dice que es un recorrido corriente para este activo y este
+   timeframe.
+
+3. **Contar cuántas velas anteriores hicieron ese recorrido.** De las ~385
+   velas cargadas, ¿cuántas se movieron desde su apertura al menos lo que ahora
+   falta? Ese porcentaje es la probabilidad que se muestra. No hay modelo
+   escondido detrás: es una cuenta sobre el histórico que tienes delante.
+
+**El ajuste por tiempo.** A una vela a la que le queda el 30% de su vida no se
+le puede exigir el recorrido de una vela entera. Como la volatilidad de un
+recorrido escala con la raíz del tiempo, la distancia pendiente se compara
+contra la muestra dividida por `sqrt(fracción restante)`: a media vela el listón
+sube un 41%, y en el último minuto se dispara. Por eso cuando queda poco se
+muestra también **cuánto sería con una vela entera por delante**, que es la
+pregunta útil en ese momento.
+
+El navegador recalcula ese número con cada tick usando exactamente las mismas
+dos funciones que el servidor (`requiredExcursion` y `shareAtLeast`) sobre la
+muestra que vino en la respuesta, así que lo que se ve en vivo es lo que
+devolvería `/api/breakout` si se le preguntara en ese instante.
+
+### Lo que la probabilidad no incluye
+
+El contexto va aparte, y a propósito: son las señales que explican si una
+ruptura tendría continuidad, pero meterlas en el número sería inventarse una
+ponderación.
+
+| Señal | Qué dice |
+|---|---|
+| Compresión del ATR frente a su media de 50 | Los rangos estrechos preceden a los movimientos amplios |
+| Posición dentro del rango de 50 velas | Pegado al techo es donde nacen las rupturas y las trampas |
+| Volumen proyectado de la vela en curso | Sin volumen, una ruptura se recupera |
+| EMA rápida contra lenta | Contra qué corriente iría la ruptura |
+| RSI(14) | Agotamiento, no señal por sí solo |
+| Forma de la vela (cuerpo y mechas) | Una mecha superior larga es alguien vendiendo cada intento |
+
+Y la confirmación se separa del pronóstico: **un cierre** por encima del nivel
+con volumen por encima de 1,3× la media. Un pico que toca el nivel y vuelve
+dentro antes del cierre es un rechazo, no una ruptura.
+
+### Límites del método
+
+- La muestra es **incondicional**: no sabe si la vela ya gastó su empuje. Una
+  vela que lleva media hora subiendo y otra que lleva media hora parada reciben
+  el mismo tratamiento.
+- El ATR con el que se normaliza cada vela histórica es **el previo a esa vela**,
+  nunca el posterior; si no, el cálculo miraría el futuro y saldrían números
+  preciosos e inútiles.
+- Frecuencia histórica no es probabilidad futura. Es análisis de mercado, no una
+  recomendación de inversión.
 
 ## Qué hace el analizador
 
@@ -151,7 +234,58 @@ Plataformas soportadas y su credibilidad asignada.
 
 ### `GET /api/klines`
 
-Proxy a Binance para el gráfico de trading (sin cambios).
+Velas OHLCV cacheadas. Parámetros: `symbol`, `interval` (lista blanca de 15
+timeframes), `limit` (tope: `KLINES_FETCH_LIMIT`), `format=raw` para el array
+posicional de Binance de la versión anterior.
+
+```jsonc
+{
+  "symbol": "BTCUSDT", "interval": "1h", "source": "binance",
+  "fetchedAt": 1790000000000, "count": 300,
+  "candles": [{ "openTime": 1789999200000, "open": 64010.1, "high": 64320.0,
+                "low": 63980.2, "close": 64180.5, "volume": 812.4,
+                "closeTime": 1790002799999, "closed": true }]
+}
+```
+
+Ya no es un proxy transparente: cuántas velas se piden a Binance es una
+constante del servidor, no el `limit` del cliente. Si el cliente fijara el
+tamaño, cada valor sería una clave de caché distinta y bastaría recorrerlos para
+multiplicar las llamadas salientes — el mismo razonamiento que en el analizador.
+
+### `GET /api/breakout`
+
+Análisis de ruptura de la vela en curso. Parámetros: `symbol`, `interval`,
+`price` (precio en vivo del cliente, opcional).
+
+```jsonc
+{
+  "ok": true, "price": 64180.5, "atr": 310.2, "atrPct": 0.483,
+  "candle": { "openTime": 1790000000000, "closeTime": 1790003599999,
+              "elapsed": 0.42, "remainingMs": 2088000, "remainingLabel": "34 min" },
+  "up":   { "level": 64320, "touches": 3, "distancePct": 0.217, "distanceAtr": 0.45,
+            "requiredAtr": 0.59, "probability": 0.283, "probabilityFullCandle": 0.372,
+            "sampleSize": 385 },
+  "down": { "level": 63900, "touches": 5, "probability": 0.41, "…": "…" },
+  "bias": "baja",
+  "context": [{ "key": "compresion", "label": "Volatilidad", "lean": "neutral", "text": "…" }],
+  "explanation": ["Vela de 1h en curso: abrió en …", "Para romper al alza faltan …"],
+  "trigger": { "up": { "text": "Ruptura alcista válida: cierre de 1h por encima de …" } },
+  "sample": { "up": [0.4, 1.2, …], "down": […], "remainingFraction": 0.58 },
+  "disclaimer": "Frecuencia histórica de recorridos, no una predicción …"
+}
+```
+
+### `GET /api/stream`
+
+Precio en vivo por SSE. Parámetros: `symbol`, `interval`. Emite eventos `kline`
+(cada actualización de la vela en curso) y `status` (estado del upstream), más
+un comentario de latido cada 20 s para que ningún proxy corte la conexión.
+
+```
+event: kline
+data: {"symbol":"BTCUSDT","interval":"1h","source":"ws","close":64180.5,"closed":false,…}
+```
 
 ## Despliegue en un VPS
 
@@ -166,8 +300,8 @@ npm ci
 npm run smoke
 ```
 
-Llama a las APIs reales de las tres plataformas y verifica que sus respuestas se
-siguen pudiendo parsear y analizar. Sale con código 1 si alguna falla, así que
+Llama a las APIs reales —Binance y las tres plataformas de predicción— y
+verifica que sus respuestas se siguen pudiendo parsear y analizar. Sale con código 1 si alguna falla, así que
 sirve como puerta en un script de despliegue. **Córrelo antes del primer
 arranque y después de cada actualización**: las tres son APIs públicas sin
 contrato de estabilidad y pueden cambiar un campo sin avisar.
@@ -203,6 +337,10 @@ La unidad corre como usuario sin privilegios, con el directorio en sólo lectura
 y `ProtectSystem=strict`. La app no escribe nada en disco, así que no le hace
 falta más.
 
+La configuración de Nginx incluye un bloque específico para `/api/stream` con
+el búfer desactivado: SSE es una respuesta que no termina nunca y un stream
+bufferizado no llega jamás al navegador.
+
 ### 3. Nginx y TLS
 
 ```bash
@@ -234,6 +372,9 @@ vuelo antes de salir, hasta 10 segundos.
   dejó de responder o cambió de formato, sin tumbar el resto del análisis. Es la
   señal que conviene alertar, no el healthcheck.
 - **Logs** — `journalctl -u mini-trading-platform -f` o `docker compose logs -f`.
+- **`streams` en `/healthz`** — cuántas salas de precio en vivo hay abiertas y
+  con qué fuente. Un `source: "poll"` permanente significa que el WebSocket de
+  Binance no levanta desde este servidor.
 
 ### Exposición pública
 
@@ -260,6 +401,9 @@ públicos de mercado, y no acepta ninguna escritura.
 | `PREDICTIONS_TTL_MS` | `30000` | Caché de los datos de mercado |
 | `POLYMARKET_API` / `KALSHI_API` / `MANIFOLD_API` | APIs públicas | Para apuntar a un mirror o a un mock |
 | `PREDICTIONS_FETCH_LIMIT` | `120` | Eventos pedidos a cada plataforma por ciclo |
+| `KLINES_FETCH_LIMIT` | `500` | Velas pedidas a Binance por ciclo (y tope del `limit` del cliente) |
+| `MAX_STREAMS_PER_IP` | `6` | Conexiones de precio en vivo simultáneas por IP |
+| `BINANCE_API` / `BINANCE_WS` | APIs públicas | Para apuntar a un mirror o a un mock |
 | `RATE_MAX` / `RATE_WINDOW_MS` | `120` / `60000` | Límite de peticiones por IP a `/api` |
 | `TRUST_PROXY_HOPS` | `1` | Saltos de proxy de confianza para leer la IP real |
 
@@ -272,20 +416,26 @@ agrupan en una sola llamada, para no chocar con los rate limits.
 ```
 server.js              rutas HTTP
 src/
+  indicators.js        EMA, ATR, RSI, pivotes — lo usan el servidor Y el navegador
+  klines.js            velas: validación, caché por timeframe y modo demo
+  breakout.js          niveles, distancia en ATR y frecuencia histórica
+  stream.js            WebSocket compartido hacia Binance → SSE a los clientes
   api.js               orquestación: descarga + caché + análisis
   analyze.js           consenso, ranking, confianza, arbitraje
   match.js             agrupación de eventos y opciones equivalentes
   normalize.js         precios, probabilidades, devig, similitud de texto
-  cache.js             caché TTL con single-flight
+  cache.js             caché TTL con single-flight y stale opcional
   http.js              fetch con timeout y reintentos
   providers/           un módulo por plataforma
 public/
-  index.html           plataforma de trading
+  index.html           plataforma de trading (maquetación)
+  app.js               gráfico, tabla multi-timeframe y panel de ruptura
   predicciones.html    analizador de predicciones
 data/demo/             datos de ejemplo (también usados por los tests)
 scripts/smoke.js         valida las APIs reales antes de desplegar
 scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
+.github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  51 tests, sin red
+test/                  113 tests, sin red
 ```

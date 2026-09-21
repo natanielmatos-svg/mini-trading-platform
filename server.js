@@ -1,16 +1,21 @@
 // server.js
 // Backend en Node + Express que:
 // - Sirve el frontend desde ./public
-// - Expone /api/klines como proxy hacia Binance (market data) para evitar CORS
+// - Expone /api/klines   velas OHLCV cacheadas (proxy a Binance, evita CORS)
+// - Expone /api/stream   precio en vivo por SSE, alimentado por un WebSocket
+//                        compartido hacia Binance
+// - Expone /api/breakout análisis de ruptura de la vela en curso
 // - Expone /api/predictions*: analizador de mercados de predicción que agrega
 //   Polymarket, Robinhood/Kalshi y Manifold y dice qué opción es más probable
 
 const express = require('express');
 const path = require('path');
-const https = require('https');
 
 const { getPredictions, getBestAnswer } = require('./src/api');
 const { listProviders } = require('./src/providers');
+const { getKlines, parseSymbol, parseInterval, parseLimit, INTERVALS } = require('./src/klines');
+const { analyzeBreakout } = require('./src/breakout');
+const { MarketStream, sseClient } = require('./src/stream');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -22,9 +27,35 @@ const DEMO_ALWAYS = process.env.DEMO === '1';
 app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
 app.disable('x-powered-by');
 
-// Carpeta pública
+// Cabeceras de seguridad en la propia app y no sólo en Nginx: así valen también
+// cuando alguien arranca el proceso a pelo para probar.
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+
+// Los indicadores los comparten servidor y navegador: el mismo archivo que usa
+// el análisis de ruptura se sirve al gráfico. Va por una ruta explícita y no
+// exponiendo src/ entero, que además del código tiene los proveedores.
+app.get('/lib/indicators.js', (req, res) => {
+  res.type('application/javascript');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.sendFile(path.join(__dirname, 'src', 'indicators.js'));
+});
+
+// Carpeta pública. El HTML se revalida siempre —si no, un despliegue no se ve
+// hasta que el usuario fuerza la recarga— y el resto se cachea un rato.
 const publicDir = path.join(__dirname, 'public');
-app.use(express.static(publicDir));
+app.use(
+  express.static(publicDir, {
+    maxAge: '1h',
+    setHeaders(res, filePath) {
+      if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
+    },
+  })
+);
 
 // ---------------------------------------------------------------------------
 // Límite de peticiones
@@ -35,7 +66,12 @@ app.use(express.static(publicDir));
 // del navegador de alguien acabe agotando los rate limits de las APIs ajenas.
 const RATE_WINDOW_MS = Number(process.env.RATE_WINDOW_MS || 60000);
 const RATE_MAX = Number(process.env.RATE_MAX || 120);
+// Las conexiones SSE son largas y escasas: se limitan por número simultáneo,
+// no por frecuencia, que es lo que de verdad consume recursos del servidor.
+const MAX_STREAMS_PER_IP = Number(process.env.MAX_STREAMS_PER_IP || 6);
+
 const hits = new Map();
+const streamsByIp = new Map();
 
 setInterval(() => {
   const cutoff = Date.now() - RATE_WINDOW_MS;
@@ -70,6 +106,8 @@ app.use('/api', rateLimit);
 // Salud
 // ---------------------------------------------------------------------------
 
+const stream = new MarketStream({ demo: DEMO_ALWAYS });
+
 // Comprobación de vida: no llama a ninguna API externa a propósito, para que
 // una caída de Polymarket no haga que el supervisor reinicie el servicio.
 app.get('/healthz', (req, res) => {
@@ -78,41 +116,100 @@ app.get('/healthz', (req, res) => {
     uptimeSeconds: Math.round((Date.now() - STARTED_AT) / 1000),
     version: require('./package.json').version,
     demo: DEMO_ALWAYS,
+    streams: stream.stats(),
   });
 });
 
-// Proxy hacia Binance Market Data
-app.get('/api/klines', (req, res) => {
-  const symbol = (req.query.symbol || 'BTCUSDT').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  const allowedIntervals = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M'];
-  const interval = allowedIntervals.includes(req.query.interval) ? req.query.interval : '1h';
-  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 300, 1), 1000);
+// ---------------------------------------------------------------------------
+// Mercado: velas, ruptura y precio en vivo
+// ---------------------------------------------------------------------------
 
-  const binanceUrl = `https://data-api.binance.vision/api/v3/klines?symbol=${encodeURIComponent(
-    symbol
-  )}&interval=${encodeURIComponent(interval)}&limit=${limit}`;
+function marketParams(req) {
+  return {
+    symbol: parseSymbol(req.query.symbol),
+    interval: parseInterval(req.query.interval),
+    demo: DEMO_ALWAYS || req.query.demo === '1',
+  };
+}
 
-  https
-    .get(binanceUrl, (binRes) => {
-      let data = '';
+function sendJson(res, payload) {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(payload);
+}
 
-      binRes.on('data', (chunk) => {
-        data += chunk;
-      });
+function marketError(res, err, what) {
+  console.error(`Error en ${what}:`, err.message);
+  res.status(502).json({ error: `No se pudieron obtener los datos de mercado (${what})`, details: err.message });
+}
 
-      binRes.on('end', () => {
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Content-Type', 'application/json');
-        res.status(binRes.statusCode || 200).send(data);
-      });
-    })
-    .on('error', (err) => {
-      console.error('Error al llamar a Binance:', err.message);
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res
-        .status(502)
-        .json({ error: 'Error al obtener datos de Binance', details: err.message });
+// Velas OHLCV. A diferencia de la versión anterior esto ya no es un proxy
+// transparente: la respuesta viene cacheada y normalizada. `format=raw`
+// devuelve el array posicional de Binance para lo que aún espere aquel formato.
+app.get('/api/klines', async (req, res) => {
+  const { symbol, interval, demo } = marketParams(req);
+  const limit = parseLimit(req.query.limit);
+
+  try {
+    const data = await getKlines({ symbol, interval, limit, demo });
+
+    if (req.query.format === 'raw') {
+      return sendJson(
+        res,
+        data.candles.map((c) => [c.openTime, String(c.open), String(c.high), String(c.low), String(c.close), String(c.volume), c.closeTime])
+      );
+    }
+
+    sendJson(res, { ...data, count: data.candles.length, intervals: INTERVALS });
+  } catch (err) {
+    marketError(res, err, '/api/klines');
+  }
+});
+
+// Análisis de ruptura de la vela en curso: niveles, distancia en ATR y la
+// frecuencia histórica de recorridos equivalentes. El método está explicado en
+// la cabecera de src/breakout.js y en el README.
+app.get('/api/breakout', async (req, res) => {
+  const { symbol, interval, demo } = marketParams(req);
+  const livePrice = Number(req.query.price);
+
+  try {
+    const { candles, source, fetchedAt } = await getKlines({ symbol, interval, limit: 400, demo });
+    const analysis = analyzeBreakout(candles, {
+      interval,
+      livePrice: Number.isFinite(livePrice) && livePrice > 0 ? livePrice : null,
     });
+    sendJson(res, { symbol, interval, source, fetchedAt, ...analysis });
+  } catch (err) {
+    marketError(res, err, '/api/breakout');
+  }
+});
+
+// Precio en vivo por SSE. El servidor mantiene una sola conexión con Binance
+// por símbolo+timeframe y la reparte; ver src/stream.js.
+app.get('/api/stream', (req, res) => {
+  const { symbol, interval } = marketParams(req);
+  const ip = req.ip || 'desconocida';
+  const open = streamsByIp.get(ip) || 0;
+
+  if (open >= MAX_STREAMS_PER_IP) {
+    return res.status(429).json({
+      error: 'Demasiadas conexiones en vivo',
+      details: `Máximo ${MAX_STREAMS_PER_IP} simultáneas por IP. Cierra alguna pestaña.`,
+    });
+  }
+
+  streamsByIp.set(ip, open + 1);
+  const client = sseClient(res);
+  const unsubscribe = stream.subscribe(symbol, interval, client);
+
+  client.send('status', { symbol, interval, state: 'conectado', message: `Suscrito a ${symbol} ${interval}` });
+
+  client.onGone(() => {
+    unsubscribe();
+    const left = (streamsByIp.get(ip) || 1) - 1;
+    if (left > 0) streamsByIp.set(ip, left);
+    else streamsByIp.delete(ip);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -150,7 +247,7 @@ function parseOptions(req) {
   };
 }
 
-function sendJson(res, payload) {
+function sendPredictionJson(res, payload) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 'no-store');
   res.json(payload);
@@ -167,13 +264,13 @@ function handleError(res, err) {
 
 // Lista de plataformas soportadas y su credibilidad asignada.
 app.get('/api/predictions/sources', (req, res) => {
-  sendJson(res, { providers: listProviders(), demo: DEMO_ALWAYS });
+  sendPredictionJson(res, { providers: listProviders(), demo: DEMO_ALWAYS });
 });
 
 // Respuesta directa: la opción más probable del evento que mejor casa con ?q=
 app.get('/api/predictions/best', async (req, res) => {
   try {
-    sendJson(res, await getBestAnswer(parseOptions(req)));
+    sendPredictionJson(res, await getBestAnswer(parseOptions(req)));
   } catch (err) {
     handleError(res, err);
   }
@@ -182,7 +279,7 @@ app.get('/api/predictions/best', async (req, res) => {
 // Análisis completo: eventos agrupados entre plataformas con ranking de opciones.
 app.get('/api/predictions', async (req, res) => {
   try {
-    sendJson(res, await getPredictions(parseOptions(req)));
+    sendPredictionJson(res, await getPredictions(parseOptions(req)));
   } catch (err) {
     handleError(res, err);
   }
@@ -192,28 +289,43 @@ app.get('/api/predictions', async (req, res) => {
 // Arranque y parada
 // ---------------------------------------------------------------------------
 
-const server = app.listen(PORT, () => {
-  console.log(`Servidor escuchando en http://localhost:${PORT}`);
-  console.log('Trading:      /index.html');
-  console.log('Predicciones: /predicciones.html');
-  if (DEMO_ALWAYS) console.log('MODO DEMO activo: datos de ejemplo, no precios reales.');
-});
-
-// systemd y Docker mandan SIGTERM al reiniciar: se deja terminar lo que hay en
-// vuelo en vez de cortar respuestas a medias.
-function shutdown(signal) {
-  console.log(`${signal} recibido, cerrando...`);
-  server.close(() => {
-    console.log('Servidor cerrado.');
-    process.exit(0);
+// Sólo se escucha cuando el archivo se ejecuta directamente. Al requerirlo
+// —los tests lo hacen— se obtiene la app sin puerto ni manejadores de señal,
+// que es lo que permite levantarla en un puerto efímero y cerrarla.
+function start(port = PORT) {
+  const server = app.listen(port, () => {
+    const address = server.address();
+    console.log(`Servidor escuchando en http://localhost:${address.port}`);
+    console.log('Trading:      /index.html');
+    console.log('Predicciones: /predicciones.html');
+    if (DEMO_ALWAYS) console.log('MODO DEMO activo: datos de ejemplo, no precios reales.');
   });
-  setTimeout(() => {
-    console.error('Cierre forzado tras 10 s de espera.');
-    process.exit(1);
-  }, 10000).unref();
+
+  // systemd y Docker mandan SIGTERM al reiniciar: se deja terminar lo que hay
+  // en vuelo en vez de cortar respuestas a medias. Las conexiones SSE son
+  // eternas por definición, así que ésas se cierran a mano o el proceso no
+  // saldría nunca.
+  function shutdown(signal) {
+    console.log(`${signal} recibido, cerrando...`);
+    stream.closeAll();
+    server.close(() => {
+      console.log('Servidor cerrado.');
+      process.exit(0);
+    });
+    setTimeout(() => {
+      console.error('Cierre forzado tras 10 s de espera.');
+      process.exit(1);
+    }, 10000).unref();
+  }
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+
+  return server;
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+if (require.main === module) start();
 
 module.exports = app;
+module.exports.start = start;
+module.exports.stream = stream;

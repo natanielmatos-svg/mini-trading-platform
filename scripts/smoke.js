@@ -13,6 +13,8 @@
 
 const providers = require('../src/providers');
 const { analyzeEvents } = require('../src/analyze');
+const { getKlines, BINANCE_API } = require('../src/klines');
+const { analyzeBreakout } = require('../src/breakout');
 
 const TOLERANTE = process.argv.includes('--tolerante');
 
@@ -21,7 +23,42 @@ function trunc(text, max = 90) {
   return clean.length > max ? clean.slice(0, max) + '…' : clean;
 }
 
+// El gráfico depende de Binance igual que el analizador de las tres
+// plataformas de predicción, y hasta ahora el smoke test no lo miraba: se podía
+// desplegar con /api/klines roto y enterarse por un usuario.
+async function comprobarMercado() {
+  console.log(`Consultando Binance (${BINANCE_API})...\n`);
+
+  try {
+    const inicio = Date.now();
+    const { candles } = await getKlines({ symbol: 'BTCUSDT', interval: '1h', limit: 400 });
+    const elapsed = Date.now() - inicio;
+
+    if (candles.length < 60) {
+      console.log(`  FALLO Binance: sólo ${candles.length} velas utilizables; el análisis necesita 60.`);
+      return false;
+    }
+
+    const ultima = candles[candles.length - 1];
+    console.log(`  OK    Binance: ${candles.length} velas de 1h en ${elapsed} ms (BTCUSDT a ${ultima.close})`);
+
+    const ruptura = analyzeBreakout(candles, { interval: '1h' });
+    if (!ruptura.ok) {
+      console.log(`  FALLO Análisis de ruptura: ${ruptura.reason}`);
+      return false;
+    }
+
+    console.log(`  OK    Ruptura: ${ruptura.explanation[1]}`);
+    return true;
+  } catch (err) {
+    console.log(`  FALLO Binance: ${trunc(err.message)}`);
+    return false;
+  }
+}
+
 async function main() {
+  const mercadoOk = await comprobarMercado();
+  console.log('');
   console.log('Consultando Polymarket, Robinhood/Kalshi y Manifold...\n');
 
   const { events, sources } = await providers.fetchAll({ limit: 100, timeoutMs: 20000 });
@@ -68,6 +105,17 @@ async function main() {
   if (falloTotal) {
     console.error(`\n${caidas} de ${sources.length} fuentes no están utilizables.`);
     process.exit(1);
+  }
+
+  // Binance alimenta la mitad de la aplicación: si falla, el despliegue está
+  // roto aunque las predicciones vayan bien. En modo tolerante sólo se avisa.
+  if (!mercadoOk) {
+    if (TOLERANTE) {
+      console.log('\nAviso: Binance no responde; el gráfico y el análisis de ruptura no funcionarán.');
+    } else {
+      console.error('\nBinance no está utilizable: el gráfico y el análisis de ruptura no funcionarán.');
+      process.exit(1);
+    }
   }
 
   console.log('\nTodo correcto.');

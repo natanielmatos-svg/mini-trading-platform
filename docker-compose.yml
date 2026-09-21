@@ -13,6 +13,11 @@ services:
       PREDICTIONS_TTL_MS: "30000"
       # Saltos de proxy de confianza para leer la IP real del cliente.
       TRUST_PROXY_HOPS: "1"
+      # Velas que se piden a Binance por ciclo. Es el tope del `limit` que puede
+      # pedir un cliente, así que no puede usarse para inflar el tráfico saliente.
+      KLINES_FETCH_LIMIT: "500"
+      # Conexiones de precio en vivo simultáneas por IP.
+      MAX_STREAMS_PER_IP: "6"
     logging:
       driver: json-file
       options:
