@@ -13,10 +13,30 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet (también el gráfico)
-npm test             # 139 tests, sin red
+npm test             # 159 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
+
+### Cómo se prueba
+
+```bash
+npm test          # 159 tests, sin red, en unos cinco segundos
+npm run smoke     # llama a las APIs de verdad — la única prueba que las valida
+```
+
+Los tests cubren tres capas, y conviene saber qué prueba cada una:
+
+| Qué | Cómo | Qué garantiza |
+|---|---|---|
+| Indicadores, ruptura, señales | Series sintéticas con pivotes controlados | Que las reglas hacen lo que dicen |
+| Rutas HTTP, caché, límites | El servidor en un puerto efímero, modo demo | Que la API se comporta |
+| **Protocolo de Binance** | Un servidor local que imita su REST y su WebSocket (`test/binance.test.js`, `test/stream-binance.test.js`) | Que si Binance responde lo que documenta, se entiende; y que sus errores —400, 429, 503, formato cambiado, socket caído— no tumban nada |
+
+Lo que ningún test puede garantizar es que Binance **siga** respondiendo lo que
+documenta: son APIs públicas sin contrato de estabilidad. Para eso está
+`npm run smoke`, que llama a las de verdad y sale con código 1 si alguna falla.
+Córrelo antes del primer arranque y después de cada actualización.
 
 ## La plataforma de trading
 
@@ -526,5 +546,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  139 tests, sin red
+test/                  159 tests, sin red
 ```

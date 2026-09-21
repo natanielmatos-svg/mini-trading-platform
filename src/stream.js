@@ -27,6 +27,7 @@ const DEMO_TICK_MS = 2_000;
 const POLL_MIN_MS = 5_000;
 const MAX_BACKOFF_MS = 30_000;
 const WS_RETRY_AFTER_MS = 5 * 60_000; // tras degradar a poll, reintentar el WS
+const WS_STABLE_MS = 60_000;          // a partir de aquí, una conexión se considera sana
 
 function tickFromKline(k) {
   return {
@@ -193,11 +194,18 @@ class MarketStream {
     room.ws = ws;
 
     ws.onopen = () => {
-      room.failures = 0;
+      room.connectedAt = Date.now();
       this.notifyStatus(room, 'live', 'WebSocket de Binance conectado');
     };
 
     ws.onmessage = (event) => {
+      // Recibir un mensaje es la única prueba de que el stream sirve. Abrir el
+      // socket no lo es: un upstream que acepta la conexión y la cuelga acto
+      // seguido dispara `open` en cada reintento, y si el contador de fallos
+      // se reiniciara ahí nunca llegaría a tres — se reconectaría cada segundo
+      // para siempre en vez de degradar a sondeo.
+      room.failures = 0;
+
       try {
         const msg = JSON.parse(typeof event.data === 'string' ? event.data : String(event.data));
         if (msg && msg.k) this.broadcast(room, tickFromKline(msg.k));
@@ -214,6 +222,12 @@ class MarketStream {
       if (room.ws !== ws) return; // cierre provocado por stopUpstream
       room.ws = null;
       if (!room.clients.size) return;
+
+      // Una conexión que aguantó un buen rato y se cayó es un incidente nuevo,
+      // no la continuación de una racha: se le devuelven sus tres intentos.
+      if (room.connectedAt && Date.now() - room.connectedAt > WS_STABLE_MS) room.failures = 0;
+      room.connectedAt = null;
+
       this.onWsFailure(room, 'WebSocket cerrado por el otro extremo');
     };
   }
