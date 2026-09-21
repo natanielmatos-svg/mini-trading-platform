@@ -189,10 +189,82 @@ async function diagnoseMatching() {
   }
 }
 
+async function diagnosePonderacion() {
+  line('=');
+  console.log('PONDERACIÓN — de dónde sale cada número del consenso');
+  line('=');
+
+  const { clusterEvents, canonicalizeOptions } = require('../src/match');
+  const { quoteWeight } = require('../src/analyze');
+
+  const { events } = await providers.fetchAll({ limit: 100, timeoutMs: 20000 });
+
+  // Primero: ¿está leyendo cada proveedor la liquidez y el volumen? Si salen a
+  // cero, el peso de esa plataforma colapsa al mínimo y el dinero de juego
+  // acaba mandando sobre el dinero real sin que nada falle a la vista.
+  const porPlataforma = new Map();
+  for (const e of events) {
+    if (!porPlataforma.has(e.platform)) porPlataforma.set(e.platform, []);
+    porPlataforma.get(e.platform).push(e);
+  }
+
+  console.log('\nProfundidad declarada por plataforma (mediana entre sus eventos):');
+  for (const [plataforma, lista] of porPlataforma) {
+    const mediana = (campo) => {
+      const vals = lista.map((e) => e[campo] || 0).sort((a, b) => a - b);
+      return vals[Math.floor(vals.length / 2)] || 0;
+    };
+    const ceros = lista.filter((e) => !e.liquidity && !e.volume).length;
+    console.log(
+      `  ${plataforma}: liquidez ${mediana('liquidity').toFixed(0)}, ` +
+      `volumen ${mediana('volume').toFixed(0)}, ` +
+      `eventos sin ninguna de las dos: ${ceros}/${lista.length}`
+    );
+  }
+
+  // Segundo: para los eventos que sí se contrastan, el desglose completo del
+  // consenso, cotización a cotización y con el peso que recibe cada una.
+  const cruzados = clusterEvents(events).filter((c) => c.events.length > 1);
+  console.log(`\nEventos contrastados entre plataformas: ${cruzados.length}`);
+
+  for (const cluster of cruzados.slice(0, 3)) {
+    line();
+    console.log(`${trunc(cluster.anchor.title, 64)}`);
+    for (const e of cluster.events) {
+      console.log(`  fuente: ${e.platformLabel} — "${trunc(e.title, 48)}"`);
+      console.log(`          liquidez=${(e.liquidity || 0).toFixed(0)} volumen=${(e.volume || 0).toFixed(0)} opciones=${e.options.length}`);
+    }
+
+    const grupos = canonicalizeOptions(cluster);
+    const conVarias = grupos.filter((g) => g.quotes.length > 1);
+    console.log(`  opciones canónicas: ${grupos.length} (cotizadas por más de una plataforma: ${conVarias.length})`);
+
+    const top = [...grupos]
+      .sort((a, b) => {
+        const p = (g) => Math.max(...g.quotes.map((q) => q.option.impliedProb || 0));
+        return p(b) - p(a);
+      })
+      .slice(0, 4);
+
+    for (const g of top) {
+      console.log(`  · "${trunc(g.label, 34)}"`);
+      for (const q of g.quotes) {
+        const w = quoteWeight(q);
+        console.log(
+          `      ${q.platformLabel.padEnd(20)} ${((q.option.impliedProb || 0) * 100).toFixed(1).padStart(5)}%` +
+          `  peso=${w.toFixed(2)}  (liq=${(q.option.liquidity || 0).toFixed(0)} vol=${(q.option.volume || 0).toFixed(0)} spread=${q.option.spread === null ? 'n/d' : q.option.spread.toFixed(3)})`
+        );
+      }
+    }
+  }
+}
+
 async function main() {
   await diagnoseKalshi();
   console.log();
   await diagnoseMatching();
+  console.log();
+  await diagnosePonderacion();
   console.log('\nPega esta salida entera en la conversación.');
 }
 

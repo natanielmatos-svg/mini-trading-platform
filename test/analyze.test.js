@@ -167,3 +167,48 @@ test('el ranking prioriza los eventos contrastados entre plataformas', () => {
   assert.ok(analyses.length >= 3);
   assert.equal(analyses[0].crossPlatform, true);
 });
+
+// "Other" agrupa a todos los demás: es información útil, pero responder "lo más
+// probable es Otro" no contesta la pregunta que hace la app.
+test('un cajón de sastre nunca encabeza el veredicto', () => {
+  const { analyzeCluster } = require('../src/analyze');
+
+  const evento = {
+    platform: 'manifold',
+    platformLabel: 'Manifold',
+    credibility: 1,
+    title: '¿Quién gana en 2028?',
+    url: '',
+    closesAt: null,
+    mutuallyExclusive: true,
+    liquidity: 1e6,
+    volume: 1e6,
+    options: [
+      ['Other', 0.5],
+      ['JD Vance', 0.3],
+      ['Alexandria Ocasio-Cortez', 0.2],
+    ].map(([label, p]) => ({
+      label,
+      key: label.toLowerCase(),
+      price: p,
+      impliedProb: p,
+      bid: p - 0.01,
+      ask: p + 0.01,
+      spread: 0.02,
+      priceSource: 'book',
+      liquidity: 1e5,
+      volume: 1e5,
+      url: '',
+    })),
+  };
+
+  const analysis = analyzeCluster({ events: [evento], anchor: evento, matchScore: 1 });
+
+  assert.equal(analysis.mostLikely.label, 'JD Vance', 'debe ganar la opción real, no el cajón');
+  assert.equal(analysis.catchAll.label, 'Other', 'pero el cajón se sigue reportando');
+  assert.ok(analysis.catchAll.probability > analysis.mostLikely.probability);
+  // Y se avisa de que el mercado apunta fuera de la lista.
+  assert.ok(analysis.flags.some((f) => f.code === 'wide_field'));
+  // Sigue apareciendo en la lista de opciones: no se oculta información.
+  assert.ok(analysis.options.some((o) => o.label === 'Other' && o.catchAll === true));
+});

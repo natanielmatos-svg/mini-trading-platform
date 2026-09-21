@@ -599,7 +599,7 @@
             <div class="verdict-pct">${pct(top.probability)}</div>
           </div>
 
-          <ol class="board">${event.options.map((o, i) => renderOption(o, i === 0)).join('')}</ol>
+          <ol class="board">${event.options.map((o) => renderOption(o, o.label === top.label)).join('')}</ol>
           ${notes ? `<div class="notes">${notes}</div>` : ''}
           ${arb}
           ${renderDetail(event)}

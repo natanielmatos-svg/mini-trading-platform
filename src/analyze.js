@@ -1,6 +1,6 @@
 'use strict';
 
-const { logit, sigmoid, devig, normalizeText } = require('./normalize');
+const { logit, sigmoid, devig, normalizeText, isCatchAll } = require('./normalize');
 const { clusterEvents, canonicalizeOptions } = require('./match');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -122,9 +122,18 @@ function analyzeCluster(cluster) {
 
   options.sort((a, b) => b.probability - a.probability);
 
-  const top = options[0] || null;
-  const runnerUp = options[1] || null;
+  // "Other" y compañía agrupan a todos los demás: son informativos, pero no son
+  // una respuesta a "cuál es más probable". Se muestran en la lista y cuentan
+  // para el reparto de probabilidad, pero nunca encabezan el veredicto.
+  options.forEach((o) => {
+    o.catchAll = isCatchAll(o.label);
+  });
+  const rankeables = options.filter((o) => !o.catchAll);
+
+  const top = rankeables[0] || null;
+  const runnerUp = rankeables[1] || null;
   const margin = top && runnerUp ? top.probability - runnerUp.probability : null;
+  const catchAll = options.find((o) => o.catchAll) || null;
 
   const totalWeight = options.reduce((acc, o) => acc + o.weight, 0);
   const platformsInvolved = cluster.events.length;
@@ -167,6 +176,7 @@ function analyzeCluster(cluster) {
           bestPrice: top.bestPrice,
         }
       : null,
+    catchAll: catchAll ? { label: catchAll.label, probability: catchAll.probability } : null,
     confidence,
     arbitrage: findArbitrage(options, mutuallyExclusive),
   };
@@ -216,7 +226,7 @@ function buildFlags(analysis) {
     });
   }
 
-  const top = analysis.options[0];
+  const top = analysis.options.find((o) => !o.catchAll);
   if (top && top.divergence !== null && top.divergence > 0.08) {
     flags.push({
       level: 'warn',
@@ -254,6 +264,18 @@ function buildFlags(analysis) {
       level: 'info',
       code: 'closing_soon',
       message: 'El evento cierra en menos de 24 horas.',
+    });
+  }
+
+  // Si el cajón de sastre pesa más que el favorito, el mercado está diciendo
+  // que lo más probable es alguien que no está en la lista.
+  if (analysis.catchAll && top && analysis.catchAll.probability > top.probability) {
+    flags.push({
+      level: 'warn',
+      code: 'wide_field',
+      message:
+        `"${analysis.catchAll.label}" (${(analysis.catchAll.probability * 100).toFixed(0)}%) supera al favorito: ` +
+        'el mercado apunta a alguien fuera de las opciones listadas.',
     });
   }
 

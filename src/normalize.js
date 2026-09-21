@@ -135,6 +135,19 @@ function yearsConflict(a, b) {
   return true;
 }
 
+// Cajones de sastre: agrupan "cualquier otro" y no son una respuesta. Aparecen
+// sobre todo en Manifold, cuyos mercados de varias opciones suelen cerrar la
+// lista con "Other" en vez de enumerar la cola entera como hace Polymarket.
+const CATCH_ALL_LABELS = new Set([
+  'other', 'others', 'otro', 'otros', 'another', 'someone else', 'anyone else',
+  'field', 'the field', 'any other', 'none of the above', 'ninguno', 'ninguna',
+  'otra opcion', 'otro candidato',
+]);
+
+function isCatchAll(label) {
+  return CATCH_ALL_LABELS.has(normalizeText(label));
+}
+
 module.exports = {
   EPS,
   clampProb,
@@ -150,4 +163,5 @@ module.exports = {
   canonicalLabelKey,
   extractYears,
   yearsConflict,
+  isCatchAll,
 };

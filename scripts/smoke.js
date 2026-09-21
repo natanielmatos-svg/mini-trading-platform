@@ -41,7 +41,7 @@ async function main() {
     }
   }
 
-  const analyses = analyzeEvents(events, { limit: 5 });
+  const analyses = analyzeEvents(events, { limit: 500 });
   const cruzados = analyses.filter((a) => a.crossPlatform).length;
 
   console.log(`\n${events.length} eventos crudos → ${analyses.length} analizados, ${cruzados} contrastados entre plataformas.`);
