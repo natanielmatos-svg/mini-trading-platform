@@ -107,6 +107,44 @@ test('la nominación demócrata se empareja pese a la redacción distinta', () =
   assert.ok(score >= UMBRAL, `debería emparejar, dio ${score.toFixed(3)}`);
 });
 
+// El año de resolución es el contrato, no un adorno del enunciado. Estos pares
+// salieron de una ejecución real con puntuaciones por encima del umbral pese a
+// referirse a comicios de años distintos.
+const PARTIDOS = ['Democratic', 'Republican'];
+
+test('mismo molde de pregunta pero años distintos NO se emparejan', () => {
+  const score = eventSimilarity(
+    multiple('polymarket', 'Which party will win the House in 2026?', PARTIDOS),
+    multiple('robinhood_kalshi', 'Which party will win the 2032 Presidential Election?', PARTIDOS)
+  );
+  assert.equal(score, 0, 'años incompatibles deben descartarse de plano');
+});
+
+test('la Cámara de 2026 y la presidencia de 2028 NO se emparejan', () => {
+  const score = eventSimilarity(
+    multiple('polymarket', 'Which party will win the House in 2026?', PARTIDOS),
+    multiple('manifold', 'Which political party wins the US presidency in 2028?', PARTIDOS)
+  );
+  assert.equal(score, 0);
+});
+
+test('un año mencionado de paso no rompe un emparejamiento válido', () => {
+  // Basta con que compartan un año: el segundo título cita 2024 además de 2026.
+  const score = eventSimilarity(
+    binario('polymarket', 'Will China invade Taiwan by end of 2026?'),
+    binario('manifold', 'After the 2024 elections, will China invade Taiwan by end of 2026?')
+  );
+  assert.ok(score >= UMBRAL, `debería emparejar, dio ${score.toFixed(3)}`);
+});
+
+test('si sólo un título cita un año, decide la similitud normal', () => {
+  const score = eventSimilarity(
+    multiple('polymarket', 'Prime Minister of Israel after the next election', ['Naftali Bennett', 'Yair Lapid']),
+    multiple('robinhood_kalshi', 'Who will succeed Netanyahu as Prime Minister of Israel in 2027?', ['Naftali Bennett', 'Yair Lapid'])
+  );
+  assert.ok(score > 0, 'sin año en un lado no se aplica el descarte');
+});
+
 test('sobre el lote completo, sólo se agrupa lo que de verdad coincide', () => {
   const candidatos = ['Gavin Newsom', 'JD Vance', 'Josh Shapiro'];
   const eventos = [

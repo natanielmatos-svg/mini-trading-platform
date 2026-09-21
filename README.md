@@ -13,7 +13,7 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet
-npm test             # 43 tests, sin red
+npm test             # 47 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -61,7 +61,9 @@ Añadir una plataforma es escribir un módulo en `src/providers/` que exporte
    coeficiente de Dice sobre tokens normalizados (sin acentos, sin stopwords) y
    se exige que las fechas de cierre sean compatibles. Entre dos mercados Sí/No
    decide sólo el título: sus opciones son idénticas por construcción y esa
-   señal no distingue nada. Cada plataforma aporta
+   señal no distingue nada. Y si ambos títulos citan años y no comparten
+   ninguno, se descartan de plano: en un mercado de predicción el año es el
+   contrato. Cada plataforma aporta
    como mucho un mercado por grupo.
 
 4. **Consenso ponderado en espacio logit.** La media se calcula sobre
@@ -275,5 +277,5 @@ scripts/smoke.js         valida las APIs reales antes de desplegar
 scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 Dockerfile, docker-compose.yml
-test/                  43 tests, sin red
+test/                  47 tests, sin red
 ```

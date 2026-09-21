@@ -1,6 +1,12 @@
 'use strict';
 
-const { textSimilarity, tokenize, diceSimilarity, canonicalLabelKey } = require('./normalize');
+const {
+  textSimilarity,
+  tokenize,
+  diceSimilarity,
+  canonicalLabelKey,
+  yearsConflict,
+} = require('./normalize');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -40,6 +46,14 @@ function isGenericBinary(event) {
 // eso, "Hantavirus pandemic in 2026?" y "US recession in 2026?" superaban el
 // umbral. Entre binarios decide el título y nada más.
 function eventSimilarity(a, b) {
+  // El año no es un matiz de la puntuación: es el contrato. Dos mercados que
+  // citan años distintos no son el mismo evento por mucho que compartan el
+  // molde de la pregunta ("Which party will win the House in 2026?" contra
+  // "Which party will win the 2032 Presidential Election?" llegaba a 0,705,
+  // porque el año queda sepultado entre las palabras comunes y los nombres de
+  // partido idénticos rematan la nota).
+  if (yearsConflict(a.title, b.title)) return 0;
+
   const titleScore = textSimilarity(a.title, b.title);
   if (isGenericBinary(a) && isGenericBinary(b)) return titleScore;
 

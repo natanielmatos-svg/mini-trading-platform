@@ -161,7 +161,13 @@ async function diagnoseMatching() {
 
       for (const ea of a) {
         for (const eb of b) {
-          pares.push({ score: eventSimilarity(ea, eb), ea, eb });
+          // Misma regla de fechas que usa el agrupador: 30 días de margen, y
+          // sin fecha en algún lado no se descarta nada.
+          const fechasOk =
+            !ea.closesAt || !eb.closesAt
+              ? true
+              : Math.abs(new Date(ea.closesAt) - new Date(eb.closesAt)) <= 30 * 24 * 3600 * 1000;
+          pares.push({ score: eventSimilarity(ea, eb), fechasOk, ea, eb });
         }
       }
       pares.sort((x, y) => y.score - x.score);
@@ -169,11 +175,16 @@ async function diagnoseMatching() {
       line();
       console.log(`${plataformas[i]} (${a.length}) vs ${plataformas[j]} (${b.length}) — umbral actual: 0.50`);
       for (const p of pares.slice(0, 8)) {
-        console.log(`  ${p.score.toFixed(3)}  ${trunc(p.ea.title, 46)}`);
-        console.log(`         ${trunc(p.eb.title, 46)}`);
+        const marca = p.score >= 0.5 ? (p.fechasOk ? '✓ agrupa' : '· fecha lo frena') : '  ';
+        console.log(`  ${p.score.toFixed(3)} ${marca}  ${trunc(p.ea.title, 44)}`);
+        console.log(`                ${trunc(p.eb.title, 44)}`);
       }
+      // El agrupamiento real exige además que las fechas de cierre sean
+      // compatibles, así que la similitud por sí sola sobreestima lo que se
+      // acabaría fusionando.
       const superan = pares.filter((p) => p.score >= 0.5).length;
-      console.log(`  parejas por encima del umbral: ${superan}`);
+      const agrupan = pares.filter((p) => p.score >= 0.5 && p.fechasOk).length;
+      console.log(`  parejas por encima del umbral: ${superan} (de las que se agruparían: ${agrupan})`);
     }
   }
 }
