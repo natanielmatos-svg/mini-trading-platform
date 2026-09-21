@@ -141,7 +141,9 @@ async function fetchEvents({ limit = 100, timeoutMs = 10000, full = false } = {}
       maxPages: Number(process.env.KALSHI_MAX_PAGES || 40),
       pageSize: 200,
     });
-    return raw.map(mapEvent).filter(Boolean);
+    const mapped = raw.map(mapEvent).filter(Boolean);
+    if (raw.note) mapped.note = raw.note;
+    return mapped;
   }
 
   const { batch } = await pedir({ cursor: null, limit: Math.min(limit, 200) });

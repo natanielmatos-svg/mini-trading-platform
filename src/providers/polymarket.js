@@ -120,7 +120,9 @@ async function fetchEvents({ limit = 60, timeoutMs = 10000, full = false } = {})
       },
       { maxPages: Number(process.env.POLYMARKET_MAX_PAGES || 40), pageSize: 100 }
     );
-    return raw.map(mapEvent).filter(Boolean);
+    const mapped = raw.map(mapEvent).filter(Boolean);
+    if (raw.note) mapped.note = raw.note;
+    return mapped;
   }
 
   const raw = await fetchJson(`${GAMMA_BASE}/events`, {

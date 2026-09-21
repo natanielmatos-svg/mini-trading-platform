@@ -207,6 +207,8 @@
       background: var(--track-fill);
     }
     .pill.live::before { background: var(--positive); }
+    .pill.partial::before { background: var(--accent); }
+    .pill.partial { color: var(--accent-ink); }
     .pill.down::before { background: var(--caution); }
     .pill.down { color: var(--caution); }
     .pill.sample { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-soft); }
@@ -522,8 +524,10 @@
 
       for (const s of data.sources) {
         pills.push(
-          `<span class="pill ${s.ok ? 'live' : 'down'}">${esc(s.platformLabel)}: ` +
-          (s.ok ? `${s.events} eventos` : esc((s.error || 'sin respuesta').slice(0, 70))) +
+          `<span class="pill ${s.ok ? (s.partial ? 'partial' : 'live') : 'down'}"${s.note ? ` title="${esc(s.note)}"` : ''}>${esc(s.platformLabel)}: ` +
+          (s.ok
+            ? `${s.events} eventos${s.partial ? ' (catálogo incompleto)' : ''}`
+            : esc((s.error || 'sin respuesta').slice(0, 70))) +
           '</span>'
         );
       }

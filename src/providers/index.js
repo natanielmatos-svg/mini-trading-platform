@@ -30,6 +30,10 @@ async function fetchAll({ limit = 60, query = '', platforms = null, timeoutMs = 
             platform: provider.meta.platform,
             platformLabel: provider.meta.platformLabel,
             ok: true,
+            // Una fuente puede traer datos útiles sin traer el catálogo
+            // entero: las APIs cortan la paginación pasado su tope de offset.
+            partial: Boolean(events.note),
+            note: events.note || null,
             events: events.length,
             elapsedMs: Date.now() - startedAt,
             error: null,
@@ -42,6 +46,8 @@ async function fetchAll({ limit = 60, query = '', platforms = null, timeoutMs = 
             platform: provider.meta.platform,
             platformLabel: provider.meta.platformLabel,
             ok: false,
+            partial: false,
+            note: null,
             events: 0,
             elapsedMs: Date.now() - startedAt,
             error: err.message,

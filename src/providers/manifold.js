@@ -110,7 +110,9 @@ async function fetchEvents({ limit = 40, query = '', timeoutMs = 10000, full = f
 
   const usable = markets.filter((m) => m && !m.isResolved);
   const complete = await hydrateMultiChoice(usable, { timeoutMs, maxHydrations: full ? 80 : 12 });
-  return complete.map(mapMarket).filter(Boolean);
+  const mapped = complete.map(mapMarket).filter(Boolean);
+  if (markets.note) mapped.note = markets.note;
+  return mapped;
 }
 
 module.exports = { meta, fetchEvents, mapMarket, optionsFromMarket };

@@ -13,7 +13,7 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet
-npm test             # 56 tests, sin red
+npm test             # 64 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -290,5 +290,5 @@ scripts/smoke.js         valida las APIs reales antes de desplegar
 scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 Dockerfile, docker-compose.yml
-test/                  56 tests, sin red
+test/                  64 tests, sin red
 ```
