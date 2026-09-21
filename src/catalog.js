@@ -2,6 +2,7 @@
 
 const providers = require('./providers');
 const { analyzeEvents } = require('./analyze');
+const ledger = require('./ledger');
 
 // Catalogar las tres plataformas enteras son miles de eventos y decenas de
 // llamadas paginadas: entre uno y dos minutos. Eso no puede pasar dentro de una
@@ -14,6 +15,10 @@ const { analyzeEvents } = require('./analyze');
 
 const REFRESH_MS = Number(process.env.CATALOG_REFRESH_MS || 5 * 60 * 1000);
 const TIMEOUT_MS = Number(process.env.CATALOG_TIMEOUT_MS || 25000);
+
+// El registro se puede desactivar, pero por defecto va: no cuesta casi nada y
+// sin él no hay forma de saber si las señales valen algo.
+const LEDGER_ENABLED = process.env.LEDGER !== '0';
 
 const state = {
   events: [],
@@ -55,10 +60,23 @@ async function refresh({ full = true } = {}) {
     state.lastError = null;
     state.refreshCount++;
 
+    // Cada refresco anota las señales nuevas. Es lo que convierte el servicio
+    // en algo que acumula evidencia mientras corre, en vez de sólo mostrar la
+    // foto del momento.
+    let anotadas = 0;
+    if (LEDGER_ENABLED) {
+      try {
+        anotadas = ledger.registrar(analyses).nuevas;
+      } catch (err) {
+        console.error('[registro] no se pudo anotar:', err.message);
+      }
+    }
+
     console.log(
       `[catálogo] ${events.length} eventos de ${sources.filter((s) => s.ok).length}/${sources.length} ` +
       `fuentes, ${analyses.length} analizados, ${analyses.filter((a) => a.crossPlatform).length} contrastados ` +
-      `(${(state.durationMs / 1000).toFixed(1)} s)`
+      `(${(state.durationMs / 1000).toFixed(1)} s)` +
+      (anotadas ? ` · ${anotadas} señales nuevas al registro` : '')
     );
   } catch (err) {
     state.lastError = err.message;

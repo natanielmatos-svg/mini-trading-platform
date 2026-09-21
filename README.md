@@ -13,8 +13,9 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet
-npm test             # 76 tests, sin red
+npm test             # 84 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
+npm run ledger       # informe del registro de oportunidades
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
 
@@ -282,6 +283,7 @@ agrupan en una sola llamada, para no chocar con los rate limits.
 server.js              rutas HTTP
 src/
   catalog.js           catálogo completo, refrescado en segundo plano
+  ledger.js            registro de señales detectadas, para medir si hay edge
   api.js               orquestación: descarga + caché + análisis
   analyze.js           consenso, ranking, confianza, arbitraje
   match.js             agrupación de eventos y opciones equivalentes
@@ -297,5 +299,5 @@ scripts/smoke.js         valida las APIs reales antes de desplegar
 scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 Dockerfile, docker-compose.yml
-test/                  76 tests, sin red
+test/                  84 tests, sin red
 ```

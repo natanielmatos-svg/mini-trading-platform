@@ -10,7 +10,8 @@
     "static": "node scripts/build-static.js",
     "smoke": "node scripts/smoke.js",
     "diagnose": "node scripts/diagnose.js",
-    "matches": "node scripts/matches.js"
+    "matches": "node scripts/matches.js",
+    "ledger": "node scripts/ledger.js"
   },
   "engines": {
     "node": ">=18"

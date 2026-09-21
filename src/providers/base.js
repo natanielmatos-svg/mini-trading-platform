@@ -40,10 +40,32 @@ function buildOption(raw) {
   };
 }
 
+// Una plataforma puede listar dos veces el mismo desenlace: Kalshi repite el
+// `yes_sub_title` cuando un evento tiene varios contratos con la misma
+// condición. Si se dejan pasar, el devig reparte el 100% entre dos copias de lo
+// mismo y cada una sale a la mitad de su precio real. Se conserva la más
+// líquida, que es la que de verdad se puede negociar.
+function dedupeOptions(options) {
+  const porClave = new Map();
+
+  for (const option of options) {
+    const previa = porClave.get(option.key);
+    if (!previa) {
+      porClave.set(option.key, option);
+      continue;
+    }
+    const mejor = (option.liquidity || 0) + (option.volume || 0) >
+                  (previa.liquidity || 0) + (previa.volume || 0);
+    if (mejor) porClave.set(option.key, option);
+  }
+
+  return [...porClave.values()];
+}
+
 function buildEvent(raw) {
-  const options = (raw.options || [])
-    .map(buildOption)
-    .filter((opt) => opt.price !== null);
+  const options = dedupeOptions(
+    (raw.options || []).map(buildOption).filter((opt) => opt.price !== null)
+  );
 
   if (options.length === 0) return null;
 
