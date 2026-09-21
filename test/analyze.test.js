@@ -127,22 +127,26 @@ test('un spread ancho reduce el peso de esa cotización', () => {
 // El arbitraje sólo cuenta dentro de una misma plataforma. Comprar cada pata
 // donde esté más barata entre varias parece más rentable y no lo es: son
 // contratos distintos que no tienen por qué liquidar igual.
+// price es el medio crudo, que mide cuánta probabilidad cubren las opciones;
+// ask es a lo que se compraría. Un libro cruzado tiene el ask por debajo.
 function opcion(label, cotizaciones) {
   return {
     label,
-    platforms: cotizaciones.map(([platform, ask]) => ({
+    platforms: cotizaciones.map(([platform, ask, price]) => ({
       platform,
       platformLabel: platform,
       ask,
+      price: price === undefined ? ask : price,
     })),
   };
 }
 
 test('findArbitrage detecta comprar todas las patas por menos de 1 en una plataforma', () => {
+  // Medios que suman 1 (la lista cubre todo) y asks que suman 0,95.
   const options = [
-    opcion('A', [['x', 0.45]]),
-    opcion('B', [['x', 0.4]]),
-    opcion('C', [['x', 0.1]]),
+    opcion('A', [['x', 0.45, 0.45]]),
+    opcion('B', [['x', 0.4, 0.4]]),
+    opcion('C', [['x', 0.1, 0.15]]),
   ];
 
   const arb = findArbitrage(options, true);
@@ -153,7 +157,7 @@ test('findArbitrage detecta comprar todas las patas por menos de 1 en una plataf
   assert.equal(arb.legs.length, 3);
 
   // Sin margen suficiente, o si el evento no es excluyente, no hay arbitraje.
-  assert.equal(findArbitrage([opcion('A', [['x', 0.6]]), opcion('B', [['x', 0.45]])], true), null);
+  assert.equal(findArbitrage([opcion('A', [['x', 0.6, 0.6]]), opcion('B', [['x', 0.45, 0.4]])], true), null);
   assert.equal(findArbitrage(options, false), null);
 });
 
@@ -298,4 +302,52 @@ test('un cajón de sastre nunca encabeza el veredicto', () => {
   assert.ok(analysis.flags.some((f) => f.code === 'wide_field'));
   // Sigue apareciendo en la lista de opciones: no se oculta información.
   assert.ok(analysis.options.some((o) => o.label === 'Other' && o.catchAll === true));
+});
+
+// El fallo que mantenía 345 "arbitrajes" sobre el catálogo real: las opciones
+// sin precio válido se descartan antes de llegar aquí, así que un evento con 30
+// candidatos del que sólo cotizan 12 sumaba 0,86 y parecía un 14% regalado. El
+// 14% que falta está en los 18 candidatos descartados.
+function opcionConPrecio(label, platform, price, ask) {
+  return {
+    label,
+    platforms: [{ platform, platformLabel: platform, price, ask }],
+  };
+}
+
+test('una lista de opciones incompleta no es arbitraje', () => {
+  // Tres candidatos de un mercado que tenía muchos más: los precios medios
+  // suman 0,60, así que el 40% restante vive en los que no llegaron.
+  const options = [
+    opcionConPrecio('Ana', 'x', 0.25, 0.26),
+    opcionConPrecio('Luis', 'x', 0.20, 0.21),
+    opcionConPrecio('Marta', 'x', 0.15, 0.16),
+  ];
+
+  assert.equal(findArbitrage(options, true), null, 'sólo cubren el 60% del espacio');
+});
+
+test('con las opciones completas y el libro cruzado sí hay arbitraje', () => {
+  // Medios que suman 1 —la lista cubre el espacio entero— y asks por debajo:
+  // el libro está cruzado y comprarlo todo cuesta 94¢ para cobrar 100¢.
+  const options = [
+    opcionConPrecio('Ana', 'x', 0.50, 0.48),
+    opcionConPrecio('Luis', 'x', 0.30, 0.28),
+    opcionConPrecio('Marta', 'x', 0.20, 0.18),
+  ];
+
+  const arb = findArbitrage(options, true);
+  assert.ok(arb, 'cobertura completa y asks sumando 0,94');
+  assert.ok(Math.abs(arb.coverage - 1) < 1e-9);
+  assert.ok(Math.abs(arb.cost - 0.94) < 1e-9);
+});
+
+test('cobertura completa pero sin margen suficiente tampoco cuenta', () => {
+  const options = [
+    opcionConPrecio('Ana', 'x', 0.50, 0.52),
+    opcionConPrecio('Luis', 'x', 0.30, 0.32),
+    opcionConPrecio('Marta', 'x', 0.20, 0.22),
+  ];
+
+  assert.equal(findArbitrage(options, true), null, 'los asks suman 1,06');
 });

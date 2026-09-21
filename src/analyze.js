@@ -216,8 +216,11 @@ function findArbitrage(options, mutuallyExclusive) {
     for (const quote of option.platforms || []) {
       if (!Number.isFinite(quote.ask) || quote.ask <= 0 || quote.ask >= 1) continue;
       let acc = porPlataforma.get(quote.platform);
-      if (!acc) porPlataforma.set(quote.platform, (acc = { label: quote.platformLabel, legs: [] }));
+      if (!acc) porPlataforma.set(quote.platform, (acc = { label: quote.platformLabel, legs: [], cobertura: 0 }));
       acc.legs.push({ label: option.label, ask: quote.ask });
+      // El precio medio crudo, sin devig: es lo que mide cuánta probabilidad
+      // cubren de verdad las opciones que han llegado hasta aquí.
+      if (Number.isFinite(quote.price)) acc.cobertura += quote.price;
     }
   }
 
@@ -226,13 +229,20 @@ function findArbitrage(options, mutuallyExclusive) {
     // Le falta alguna pata: sin cubrir todos los desenlaces no hay arbitraje.
     if (acc.legs.length !== options.length) continue;
 
+    // Y aunque estén todas las que llegaron, pueden faltar las que se
+    // descartaron por no tener precio. Si los precios medios no suman
+    // prácticamente 1, la lista no cubre el espacio de desenlaces y el
+    // "beneficio" es justamente la parte que falta: un evento con 30
+    // candidatos del que sólo cotizan 12 suma 0,86 y parece un 14% gratis.
+    if (acc.cobertura < 0.98) continue;
+
     const cost = acc.legs.reduce((sum, l) => sum + l.ask, 0);
     // Margen exigido amplio: por debajo de eso se lo comen las comisiones y el
     // hecho de que el precio publicado casi nunca tiene tamaño detrás.
     if (cost >= 0.97) continue;
 
     if (!mejor || cost < mejor.cost) {
-      mejor = { platform, platformLabel: acc.label, cost, legs: acc.legs };
+      mejor = { platform, platformLabel: acc.label, cost, cobertura: acc.cobertura, legs: acc.legs };
     }
   }
 
@@ -242,6 +252,7 @@ function findArbitrage(options, mutuallyExclusive) {
     platform: mejor.platform,
     platformLabel: mejor.platformLabel,
     cost: mejor.cost,
+    coverage: mejor.cobertura,
     profit: 1 - mejor.cost,
     returnPct: (1 - mejor.cost) / mejor.cost,
     legs: mejor.legs.map((l) => ({

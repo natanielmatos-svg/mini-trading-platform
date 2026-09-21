@@ -13,7 +13,7 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet
-npm test             # 73 tests, sin red
+npm test             # 76 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -86,8 +86,11 @@ Añadir una plataforma es escribir un módulo en `src/providers/` que exporte
      acuerdo entre ellas,
    - **divergencia**: cuánto discrepan las plataformas en la opción ganadora,
    - **mejor precio de compra** y el *edge* frente al consenso,
-   - **arbitraje**: si comprar todas las opciones del evento cuesta menos de
-     100¢ y una de ellas paga 100¢ seguro.
+   - **arbitraje**: sólo si todas las patas se pueden comprar en la misma
+     plataforma, sus precios medios cubren el espacio entero de desenlaces y
+     los asks suman menos de 97¢. Repartir las patas entre plataformas no es
+     arbitraje, y una lista de opciones incompleta convierte lo que falta en un
+     beneficio aparente.
 
 ### Límites conocidos
 
@@ -294,5 +297,5 @@ scripts/smoke.js         valida las APIs reales antes de desplegar
 scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 Dockerfile, docker-compose.yml
-test/                  73 tests, sin red
+test/                  76 tests, sin red
 ```

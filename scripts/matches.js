@@ -85,9 +85,31 @@ async function main() {
   const conArbitraje = analyses.filter((a) => a.arbitrage);
   console.log(`\n${'─'.repeat(78)}`);
   console.log(`Eventos con arbitraje aparente: ${conArbitraje.length}`);
-  for (const a of conArbitraje.slice(0, 10)) {
-    console.log(`  ${(a.arbitrage.cost * 100).toFixed(1)}¢ → 100¢  (${(a.arbitrage.returnPct * 100).toFixed(1)}%)  ${trunc(a.title, 46)}`);
+
+  // Un arbitraje sólo es real si las opciones cubren todos los desenlaces y se
+  // pueden comprar todas en el mismo sitio. Estas cifras dicen si se cumple:
+  // sumaMid muy por debajo de 1 significa que la lista de opciones está
+  // incompleta, y entonces el "beneficio" es la parte que falta.
+  console.log('\n  coste  opciones  sumaMid  excl  anid  plataforma  evento');
+  for (const a of conArbitraje.slice(0, 15)) {
+    const arb = a.arbitrage;
+    const sumaMid = a.options.reduce((acc, o) => acc + (o.probability || 0), 0);
+    const sumaCrudos = a.options.reduce((acc, o) => {
+      const q = (o.platforms || []).find((x) => x.platform === arb.platform);
+      return acc + (q && Number.isFinite(q.impliedProb) ? q.impliedProb : 0);
+    }, 0);
+
+    console.log(
+      `  ${(arb.cost * 100).toFixed(1).padStart(5)}¢ ` +
+      `${String(a.options.length).padStart(8)} ` +
+      `${sumaCrudos.toFixed(3).padStart(8)} ` +
+      `${String(a.mutuallyExclusive).padStart(5)} ` +
+      `${String(Boolean(a.nestedThresholds)).padStart(5)}  ` +
+      `${arb.platformLabel.slice(0, 10).padEnd(10)}  ${trunc(a.title, 34)}`
+    );
+    console.log(`         opciones: ${a.options.slice(0, 5).map((o) => trunc(o.label, 16)).join(' · ')}`);
   }
+
   if (conArbitraje.length) {
     console.log('\n  Trátalos como sospechosos, no como oportunidades: casi siempre son');
     console.log('  un emparejamiento falso, un tamaño irrisorio a ese precio, o reglas de');
