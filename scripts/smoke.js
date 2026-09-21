@@ -140,14 +140,31 @@ function repasarSenales(candles, interval = '1h') {
   const COMISION_IDA_Y_VUELTA = 0.002;
   const neta = media - COMISION_IDA_Y_VUELTA;
 
+  // Y la media se acompaña de su error típico. Una media de diez operaciones
+  // sin dispersión al lado invita a leer una ventaja donde sólo hay ruido: si
+  // el error típico es mayor que la media, el resultado es indistinguible de
+  // cero por muy redondo que parezca el número.
+  const resultados = cerradas.map((c) => c.resultado);
+  const varianza = resultados.length > 1
+    ? resultados.reduce((a, r) => a + (r - media) ** 2, 0) / (resultados.length - 1)
+    : 0;
+  const errorTipico = resultados.length ? Math.sqrt(varianza) / Math.sqrt(resultados.length) : 0;
+  const concluyente = Math.abs(neta) > 2 * errorTipico && resultados.length >= 30;
+
   console.log(
     `  INFO  Señales sobre el histórico real: ${compras.length} compras (${cerradas.length} cerradas, ` +
       `${ganadoras} en positivo), media ${(media * 100).toFixed(2)}% bruto por operación, ${avisos} avisos previos.`
   );
   console.log(`        Motivos de venta: ${Object.entries(motivos).map(([k, v]) => `${k} ${v}`).join(', ') || '—'}`);
   console.log(
-    `        Con 0,2% de comisión ida y vuelta quedaría en ${(neta * 100).toFixed(2)}% por operación. ` +
-      `${cerradas.length} operaciones no bastan para concluir nada: es una comprobación de comportamiento, no un backtest.`
+    `        Con 0,2% de comisión ida y vuelta: ${(neta * 100).toFixed(2)}% ± ${(errorTipico * 100).toFixed(2)}% ` +
+      `(error típico) por operación.`
+  );
+  console.log(
+    concluyente
+      ? '        La media supera dos errores típicos con muestra suficiente, pero un solo par y un solo tramo siguen sin ser una demostración.'
+      : `        Indistinguible de cero: con ${cerradas.length} operaciones el ruido es mayor que la media. ` +
+        'Es una comprobación de comportamiento, no un backtest.'
   );
   console.log('        Los stops se miran contra el mínimo y el máximo de cada vela, y ante la duda pierde.');
 }
