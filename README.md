@@ -14,6 +14,7 @@ npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet
 npm test             # 32 tests, sin red
+npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
 
@@ -102,7 +103,8 @@ Todas las rutas aceptan `?demo=1` para responder con datos de ejemplo.
 
 Análisis completo. Parámetros: `q` (búsqueda), `platforms`
 (`polymarket,robinhood_kalshi,manifold`), `limit`, `minLiquidity`, `threshold`
-(umbral de emparejamiento, 0..1), `fetchLimit`.
+(umbral de emparejamiento, 0..1). Cuántos eventos se piden a cada plataforma no
+es un parámetro de la petición — ver *Exposición pública* más abajo.
 
 ```jsonc
 {
@@ -136,6 +138,104 @@ Plataformas soportadas y su credibilidad asignada.
 
 Proxy a Binance para el gráfico de trading (sin cambios).
 
+## Despliegue en un VPS
+
+La app no guarda estado: es un proceso Node que consulta APIs públicas y cachea
+en memoria. No hay base de datos ni volúmenes que respaldar, así que desplegar
+es copiar el código y reiniciar el proceso.
+
+### 1. Antes de exponer nada: comprobar las fuentes
+
+```bash
+npm ci
+npm run smoke
+```
+
+Llama a las APIs reales de las tres plataformas y verifica que sus respuestas se
+siguen pudiendo parsear y analizar. Sale con código 1 si alguna falla, así que
+sirve como puerta en un script de despliegue. **Córrelo antes del primer
+arranque y después de cada actualización**: las tres son APIs públicas sin
+contrato de estabilidad y pueden cambiar un campo sin avisar.
+
+Con `--tolerante` sólo falla si caen todas, que es el criterio razonable para un
+reinicio automático — el agregador funciona con las fuentes que respondan.
+
+### 2a. Con Docker (recomendado)
+
+```bash
+docker compose up -d --build
+docker compose logs -f
+curl localhost:3000/healthz
+```
+
+El contenedor sólo escucha en `127.0.0.1`: quien da la cara a Internet es Nginx.
+
+### 2b. Sin Docker, con systemd
+
+```bash
+sudo useradd --system --home /opt/mini-trading-platform mtp
+sudo git clone https://github.com/natanielmatos-svg/mini-trading-platform /opt/mini-trading-platform
+cd /opt/mini-trading-platform && sudo npm ci --omit=dev
+sudo chown -R mtp:mtp /opt/mini-trading-platform
+
+sudo cp deploy/mini-trading-platform.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now mini-trading-platform
+sudo systemctl status mini-trading-platform
+```
+
+La unidad corre como usuario sin privilegios, con el directorio en sólo lectura
+y `ProtectSystem=strict`. La app no escribe nada en disco, así que no le hace
+falta más.
+
+### 3. Nginx y TLS
+
+```bash
+sudo cp deploy/nginx.conf /etc/nginx/sites-available/mini-trading-platform
+# edita el archivo y sustituye TU-DOMINIO.com
+sudo ln -s /etc/nginx/sites-available/mini-trading-platform /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d TU-DOMINIO.com
+```
+
+### 4. Actualizar
+
+```bash
+cd /opt/mini-trading-platform
+git pull && npm ci --omit=dev
+npm run smoke                                  # valida antes de reiniciar
+sudo systemctl restart mini-trading-platform   # o: docker compose up -d --build
+```
+
+El proceso cierra ordenadamente con SIGTERM: deja terminar las peticiones en
+vuelo antes de salir, hasta 10 segundos.
+
+### Qué vigilar
+
+- **`GET /healthz`** — sonda de vida. No llama a ninguna API externa a
+  propósito: si lo hiciera, una caída de Polymarket provocaría reinicios en
+  cadena de un servicio que está perfectamente sano.
+- **El campo `sources[]` de `/api/predictions`** — ahí se ve si una plataforma
+  dejó de responder o cambió de formato, sin tumbar el resto del análisis. Es la
+  señal que conviene alertar, no el healthcheck.
+- **Logs** — `journalctl -u mini-trading-platform -f` o `docker compose logs -f`.
+
+### Exposición pública
+
+Al abrirlo a Internet hay dos cosas que el servidor ya controla:
+
+- **Límite de peticiones por IP** (120 por minuto por defecto, `RATE_MAX` y
+  `RATE_WINDOW_MS`). No frena un ataque serio — para eso está el proxy — pero
+  evita que el bucle descontrolado del navegador de alguien agote los rate
+  limits de las APIs ajenas, que son compartidos por todos tus usuarios.
+- **Cuántos eventos se piden a cada plataforma** es una constante del servidor
+  (`PREDICTIONS_FETCH_LIMIT`), no un parámetro de la petición. Si el cliente
+  pudiera elegirlo, cada valor sería una clave de caché distinta y bastaría
+  recorrerlos para multiplicar por doscientas las llamadas salientes.
+
+La app no tiene autenticación ni la necesita: todo lo que sirve son datos
+públicos de mercado, y no acepta ninguna escritura.
+
 ## Configuración
 
 | Variable | Por defecto | Para qué |
@@ -144,6 +244,9 @@ Proxy a Binance para el gráfico de trading (sin cambios).
 | `DEMO` | — | `DEMO=1` fuerza datos de ejemplo en todas las respuestas |
 | `PREDICTIONS_TTL_MS` | `30000` | Caché de los datos de mercado |
 | `POLYMARKET_API` / `KALSHI_API` / `MANIFOLD_API` | APIs públicas | Para apuntar a un mirror o a un mock |
+| `PREDICTIONS_FETCH_LIMIT` | `80` | Eventos pedidos a cada plataforma por ciclo |
+| `RATE_MAX` / `RATE_WINDOW_MS` | `120` / `60000` | Límite de peticiones por IP a `/api` |
+| `TRUST_PROXY_HOPS` | `1` | Saltos de proxy de confianza para leer la IP real |
 
 Ninguna API necesita clave: se usan sólo endpoints públicos de lectura. Las
 respuestas se cachean 30 s y las peticiones simultáneas a la misma clave se
@@ -165,6 +268,9 @@ public/
   index.html           plataforma de trading
   predicciones.html    analizador de predicciones
 data/demo/             datos de ejemplo (también usados por los tests)
+scripts/smoke.js         valida las APIs reales antes de desplegar
 scripts/build-static.js  instantánea estática autocontenida para compartir
+deploy/                  unidad systemd y configuración de Nginx
+Dockerfile, docker-compose.yml
 test/                  32 tests, sin red
 ```

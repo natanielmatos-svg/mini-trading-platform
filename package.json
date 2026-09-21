@@ -7,7 +7,8 @@
     "start": "node server.js",
     "demo": "DEMO=1 node server.js",
     "test": "node --test \"test/*.test.js\"",
-    "static": "node scripts/build-static.js"
+    "static": "node scripts/build-static.js",
+    "smoke": "node scripts/smoke.js"
   },
   "engines": {
     "node": ">=18"

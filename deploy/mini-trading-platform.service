@@ -1,0 +1,39 @@
+[Unit]
+Description=Mini Trading Platform y analizador de predicciones
+Documentation=https://github.com/natanielmatos-svg/mini-trading-platform
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mtp
+Group=mtp
+WorkingDirectory=/opt/mini-trading-platform
+ExecStart=/usr/bin/node server.js
+
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=PREDICTIONS_TTL_MS=30000
+Environment=TRUST_PROXY_HOPS=1
+
+# El servidor cierra ordenadamente al recibir SIGTERM; se le dan 15 s antes de
+# matarlo, más que los 10 s que espera él mismo a las peticiones en vuelo.
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+Restart=on-failure
+RestartSec=5
+
+# La app sólo necesita leer su propio directorio y salir a Internet.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/mini-trading-platform
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mini-trading-platform
+
+[Install]
+WantedBy=multi-user.target
