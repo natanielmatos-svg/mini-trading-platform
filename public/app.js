@@ -28,6 +28,8 @@ const state = {
   livePrice: null,   // último precio operado en Binance, tick a tick
   consolidado: null, // mediana de los mercados elegidos
   mercados: null,    // ids elegidos; null = todos los que haya
+  catalogo: null,    // mercados soportados, pedidos aparte de los precios
+  precioError: null, // por qué no hay consolidado, si lo hay
   base: 0,           // diferencia medida entre el consolidado y Binance
   priceTimer: null,
   ultimoPintado: null,
@@ -309,7 +311,24 @@ async function loadBreakout() {
   }
 }
 
+async function loadCatalogo() {
+  try {
+    const { venues } = await getJson('/api/venues');
+    if (Array.isArray(venues) && venues.length) {
+      state.catalogo = venues;
+      renderClock();
+    }
+  } catch {
+    // Sin catálogo el selector se pinta con lo que traiga /api/price.
+  }
+}
+
 async function loadConsolidado() {
+  // Sin guardia, una consulta lenta se solapa con la siguiente cada dos
+  // segundos y acaban pisándose.
+  if (state.cargandoPrecio) return;
+  state.cargandoPrecio = true;
+
   try {
     const eleccion = state.mercados && state.mercados.length ? `&venues=${state.mercados.join(',')}` : '';
     const data = await getJson(`/api/price?symbol=${encodeURIComponent(state.symbol)}${eleccion}`);
@@ -328,11 +347,17 @@ async function loadConsolidado() {
     // consolidado tal cual.
     state.base = Math.abs(base) <= data.price * 0.005 ? base : 0;
 
+    state.precioError = null;
     renderClock();
-  } catch {
-    // Sin consolidado se sigue enseñando el de Binance; se nota en el detalle.
+  } catch (err) {
+    // Se guarda el motivo: tragárselo dejaba la interfaz diciendo
+    // "consolidando…" para siempre, sin pista de qué pasaba.
     state.consolidado = null;
     state.base = 0;
+    state.precioError = err.message;
+    renderClock();
+  } finally {
+    state.cargandoPrecio = false;
   }
 }
 
@@ -755,69 +780,98 @@ function setStatus(text, isError = false) {
 // El desglose por mercado. Lo interesante no es el número consolidado sino
 // ver cuánto discrepan: parte de esa diferencia ni siquiera es desacuerdo
 // sobre el activo, es que Binance cotiza en USDT y los otros dos en dólares.
+let firmaVenues = null;
+
 function renderVenues() {
   const c = state.consolidado;
 
-  if (!c || !(c.price > 0)) {
-    el.venues.innerHTML = '<span class="venue-none">sólo Binance · consolidando…</span>';
+  // Las casas soportadas salen del catálogo, que no depende de que haya
+  // precios. Antes se sacaban de la respuesta de precios, así que un fallo
+  // ahí se llevaba por delante el selector entero — y es justo cuando quieres
+  // apagar la casa que falla.
+  const soportadas = state.catalogo || (c && c.venuesSupported) || [];
+
+  if (!soportadas.length) {
+    if (firmaVenues !== 'vacío') {
+      el.venues.innerHTML = '<span class="venue-none">cargando mercados…</span>';
+      firmaVenues = 'vacío';
+    }
     return;
   }
 
-  // Se pintan TODAS las casas soportadas, no sólo las elegidas: si no, no
-  // habría dónde volver a marcar la que acabas de quitar.
-  const soportadas = c.venuesSupported || [];
-  const porId = new Map(c.venues.map((v) => [v.id, v]));
-  // Sin elección guardada entran los de por defecto: los `optIn` —índices que
-  // ya agregan a otros de la lista— hay que marcarlos a propósito.
+  const porId = new Map(((c && c.venues) || []).map((v) => [v.id, v]));
   const elegidos = state.mercados && state.mercados.length
     ? state.mercados
     : soportadas.filter((v) => !v.optIn).map((v) => v.id);
   const unicoElegido = elegidos.length === 1;
 
+  // Este bloque se repinta desde el reloj, cuatro veces por segundo, pero sus
+  // datos sólo cambian cada dos segundos. Reconstruir el HTML para nada
+  // desprendía las casillas del DOM mientras el usuario intentaba marcarlas,
+  // así que sólo se rehace cuando algo cambió de verdad.
+  const firma = JSON.stringify([
+    c && c.price, c && c.used, c && c.spreadPct, state.precioError,
+    elegidos, soportadas.length, state.venuesAbierto, state.venuesTocado,
+  ]);
+  if (firma === firmaVenues) return;
+  firmaVenues = firma;
+
   const filas = soportadas
     .map((soportada) => {
       const v = porId.get(soportada.id);
       const activo = elegidos.includes(soportada.id);
-      const estado = !activo ? 'apagado' : !v ? '—' : !v.usable ? (v.error ? 'caído' : 'viejo') : '';
-      const etiqueta = soportada.kind === 'índice' ? ' <b class="v-kind">índice</b>' : '';
+      const estado = !activo ? 'apagado' : !v ? 'sin datos' : !v.usable ? (v.error ? 'caído' : 'viejo') : '';
       const diff = activo && v && v.usable && v.diff !== null
         ? `${v.diff >= 0 ? '+' : ''}${num(v.diffPct, 3)}%`
         : estado;
+      const etiqueta = soportada.kind === 'índice' ? ' <b class="v-kind">índice</b>' : '';
 
-      return `<label class="venue ${activo && v && v.usable ? '' : 'off'}">
+      return `<label class="venue ${activo && v && v.usable ? '' : 'off'}" ${v && v.error ? `title="${v.error.replace(/"/g, "'")}"` : ''}>
         <input type="checkbox" data-venue="${soportada.id}" ${activo ? 'checked' : ''} ${activo && unicoElegido ? 'disabled' : ''} />
         <span class="v-name">${soportada.label}${etiqueta}<em>${(v && v.pair) || ''}${
           v && v.converted ? ` · ${formatPrice(v.priceRaw)} USDT` : ''
-        }${
-          // El sufijo de fuente sólo aporta cuando no es lo esperado de esa
-          // casa: en un índice repetiría la etiqueta que ya lleva al lado.
-          v && v.source && v.source !== 'libro' && v.source !== soportada.kind ? ' · ' + v.source : ''
-        }</em></span>
+        }${v && v.source && v.source !== 'libro' && v.source !== soportada.kind ? ' · ' + v.source : ''}</em></span>
         <span class="v-price">${v && v.price > 0 ? formatPrice(v.price) : '—'}</span>
         <span class="v-diff ${v && v.diff > 0 ? 'up' : v && v.diff < 0 ? 'down' : ''}">${diff}</span>
       </label>`;
     })
     .join('');
 
+  // El resumen dice la verdad también cuando no hay precio.
+  const resumen = c && c.price > 0
+    ? `${c.used} de ${soportadas.length} mercados · ${c.agreement} · dif. ${num(c.spreadPct, 3)}%`
+    : state.precioError
+      ? `sin precio consolidado · ${state.precioError}`
+      : 'sin precio consolidado · ningún mercado responde';
+
+  const fallos = ((c && c.venues) || []).filter((v) => v.error);
+  const detalleFallos = !c || c.price > 0 || !fallos.length
+    ? ''
+    : `<p class="venue-note venue-error">${fallos.map((v) => `<b>${v.label}</b>: ${v.error}`).join('<br>')}</p>`;
+
+  const notaConversion = c && c.venues && c.venues.some((v) => v.converted)
+    ? `<p class="venue-note">Los precios en USDT se pasan a dólares al cambio de ${num(c.venues.find((v) => v.converted).stable.rate, 4)} (${c.venues.find((v) => v.converted).stable.source}): si no, el desvío de la stablecoin se colaría en la mediana como si fuera precio del activo.</p>`
+    : '';
+
   el.venues.innerHTML =
-    `<button class="venue-summary" id="venueToggle" aria-expanded="false">` +
-    `${c.used} de ${soportadas.length} mercados · ${c.agreement} · dif. ${num(c.spreadPct, 3)}%` +
-    `</button>` +
-    `<div class="venue-list" hidden>${filas}` +
-    (c.venues.some((v) => v.converted)
-      ? `<p class="venue-note">Los precios en USDT se pasan a dólares al cambio de ${num(c.venues.find((v) => v.converted).stable.rate, 4)} (${c.venues.find((v) => v.converted).stable.source}): si no, el desvío de la stablecoin se colaría en la mediana como si fuera precio del activo.</p>`
-      : '') +
+    `<button class="venue-summary ${c && c.price > 0 ? '' : 'malo'}" id="venueToggle" aria-expanded="false">${resumen}</button>` +
+    `<div class="venue-list" hidden>${filas}${detalleFallos}${notaConversion}` +
     `<p class="venue-note">Mediana del punto medio del libro de cada mercado, que siempre es de ahora — la última operación de un mercado poco activo puede ser de hace minutos. El análisis de ruptura usa el precio de Binance, que es de donde salen las velas.</p>` +
     `</div>`;
 
   const toggle = $('venueToggle');
   const lista = el.venues.querySelector('.venue-list');
-  if (state.venuesAbierto) {
-    lista.hidden = false;
-    toggle.setAttribute('aria-expanded', 'true');
-  }
+
+  // Si no hay precio, el detalle se abre solo: el motivo está ahí dentro y
+  // esconderlo detrás de un clic es esconder justo lo que hace falta leer.
+  // Salvo que el usuario ya lo haya cerrado a mano.
+  const abrir = state.venuesTocado ? state.venuesAbierto : state.venuesAbierto || !(c && c.price > 0);
+  lista.hidden = !abrir;
+  toggle.setAttribute('aria-expanded', String(abrir));
+
   toggle.addEventListener('click', () => {
-    state.venuesAbierto = !state.venuesAbierto;
+    state.venuesTocado = true;
+    state.venuesAbierto = lista.hidden;
     lista.hidden = !state.venuesAbierto;
     toggle.setAttribute('aria-expanded', String(state.venuesAbierto));
   });
@@ -826,15 +880,11 @@ function renderVenues() {
     casilla.addEventListener('change', () => {
       const id = casilla.dataset.venue;
       const siguiente = casilla.checked ? [...elegidos, id] : elegidos.filter((x) => x !== id);
+      if (!siguiente.length) return; // sin mercados no hay precio
 
-      // Nunca se queda sin ninguno: sin mercados no hay precio.
-      if (!siguiente.length) return;
-
-      // Se guarda null sólo si coincide con la selección por defecto; si no,
-      // la lista explícita, para que un índice marcado no se pierda.
       const porDefecto = soportadas.filter((v) => !v.optIn).map((v) => v.id);
       const igualQueDefecto =
-        siguiente.length === porDefecto.length && porDefecto.every((id) => siguiente.includes(id));
+        siguiente.length === porDefecto.length && porDefecto.every((x) => siguiente.includes(x));
       state.mercados = igualQueDefecto ? null : siguiente;
       saveMercados();
       loadConsolidado();
@@ -1475,6 +1525,7 @@ function init() {
   renderAlerts();
 
   loadSymbols();
+  loadCatalogo();
   connectStream();
   loadAll();
   loadConsolidado();

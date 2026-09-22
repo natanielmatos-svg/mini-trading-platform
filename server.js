@@ -195,6 +195,12 @@ app.get('/api/symbols', async (req, res) => {
   });
 });
 
+// Catálogo de mercados. No sale a la red: la interfaz necesita poder pintar el
+// selector aunque no haya precios, que es justo cuando hace falta cambiarlo.
+app.get('/api/venues', (req, res) => {
+  sendJson(res, { venues: listVenues() });
+});
+
 // Precio consolidado de los mercados al contado. Devuelve el número y, sobre
 // todo, el detalle: cuánto se separa cada mercado. Esa diferencia es la razón
 // de que este endpoint exista.

@@ -110,6 +110,13 @@ cotización, es un error de lectura.
 | Gemini | `btcusd` (en minúsculas y sin separador), `/v1/pubticker` |
 | CF Benchmarks | `BRTI` / `ETHUSD_RTI` — **un índice, no un mercado, y de pago**; no entra por defecto |
 
+El selector se pinta siempre, aunque no llegue ningún precio: el catálogo se
+pide aparte (`GET /api/venues`, que no sale a la red). Antes salía de la
+respuesta de precios, así que un fallo ahí se llevaba por delante las
+casillas — justo cuando quieres apagar la casa que falla. Y si no hay
+consolidado, el panel se abre solo enseñando el error de cada mercado en vez
+de quedarse diciendo «consolidando…».
+
 Un mercado que no responda se marca como caído y el consolidado sigue con los
 demás; uno cuyo precio lleve más de diez segundos parado se enseña, pero no
 cuenta. Con un solo mercado se dice «sin comparación» en vez de «alineados»:
