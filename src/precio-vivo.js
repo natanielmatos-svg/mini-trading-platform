@@ -69,25 +69,24 @@ function escalon(price, objetivo = OBJETIVO) {
   return k === null ? null : 10 ** k;
 }
 
-// Cuántos decimales enseñar. Nunca más de los que ya se enseñaban: esto está
-// para quitar dígitos de ruido, así que añadir alguno sería justo lo contrario.
-// Pasaba con los precios muy pequeños, donde el objetivo pedía nueve.
-function decimales(price, objetivo = OBJETIVO) {
-  const k = exponente(price, objetivo);
-  if (k === null) return 2;
-  return Math.min(Math.max(0, -k), F.priceDecimals(price));
+// Los MISMOS decimales que el resto de la aplicación.
+//
+// Durante un tiempo el titular enseñaba menos —bitcoin en dólares enteros—
+// para que el último dígito no bailara. Era resolver dos veces el mismo
+// problema: la banda de histéresis ya impide repintar hasta que el precio se
+// mueve un 0,05%, que en bitcoin son unos 43 dólares, así que el decimal no
+// puede parpadear aunque esté. Lo único que conseguía era que el titular
+// fuese el ÚNICO sitio de la pantalla con otra precisión que el gráfico, la
+// tabla de predicción y los niveles de ruptura.
+function decimales(price) {
+  return F.priceDecimals(price);
 }
 
-function cuantizar(price, objetivo = OBJETIVO) {
-  const k = exponente(price, objetivo);
-  if (k === null) return null;
-
-  // Con exponente negativo, redondear a esos decimales ES cuantizar, y
-  // toFixed no arrastra el error de la potencia. Con exponente positivo
-  // (un precio de seis cifras) 10**k es exacto y se redondea al múltiplo.
-  const d = decimales(price, objetivo);
-  if (k < 0 || d > 0) return Number(price.toFixed(d));
-  return Math.round(price / 10 ** k) * 10 ** k;
+// Redondear a los decimales que se enseñan ES cuantizar, y toFixed no arrastra
+// el error de las potencias de diez negativas.
+function cuantizar(price) {
+  if (!(price > 0)) return null;
+  return Number(price.toFixed(decimales(price)));
 }
 
 /**
@@ -108,9 +107,9 @@ function crear({ objetivo = OBJETIVO, banda = BANDA, minMs = MIN_MS } = {}) {
       // El primero entra sin esperar: la pantalla no puede quedarse vacía
       // un cuarto de segundo por una regla pensada para el ruido.
       if (mostrado === null) {
-        mostrado = cuantizar(precio, objetivo);
+        mostrado = cuantizar(precio);
         pintadoEn = now;
-        return { valor: mostrado, direccion: null, decimales: decimales(mostrado, objetivo) };
+        return { valor: mostrado, direccion: null, decimales: decimales(mostrado) };
       }
 
       // Histéresis: se mide contra lo que se está ENSEÑANDO, no contra una
@@ -120,17 +119,19 @@ function crear({ objetivo = OBJETIVO, banda = BANDA, minMs = MIN_MS } = {}) {
       // La banda nunca es menor que el escalón: si lo fuera, el número podría
       // "moverse" sin que cambiara ningún dígito visible, y eso es un
       // destello de color sin motivo.
-      const umbral = Math.max(mostrado * banda, escalon(mostrado, objetivo) || 0);
+      // Nunca menos de un dígito visible: por debajo de eso el número no
+      // podría cambiar aunque se repintara, y sería un destello sin motivo.
+      const umbral = Math.max(mostrado * banda, 10 ** -decimales(mostrado));
       if (Math.abs(precio - mostrado) < umbral) return null;
       if (now - pintadoEn < minMs) return null;
 
-      const q = cuantizar(precio, objetivo);
+      const q = cuantizar(precio);
       if (q === mostrado) return null;
 
       const direccion = q > mostrado ? 'sube' : 'baja';
       mostrado = q;
       pintadoEn = now;
-      return { valor: q, direccion, decimales: decimales(q, objetivo) };
+      return { valor: q, direccion, decimales: decimales(q) };
     },
 
     // Al cambiar de activo hay que olvidar: si no, el primer precio del nuevo

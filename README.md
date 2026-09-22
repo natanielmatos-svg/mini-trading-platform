@@ -98,19 +98,25 @@ Kalshi se ve quieto por lo contrario: cotiza de 0 a 100 ¢ con tick de 1 ¢, un
 1% del rango. Sencillamente no puede enseñar ruido más fino. Nuestra pantalla
 tenía ocho mil veces más resolución que la suya.
 
-`src/precio-vivo.js` hace lo mismo a la escala que toca, con dos piezas:
+`src/precio-vivo.js` hace lo mismo a la escala que toca:
 
 - **El escalón** decide cuántos dígitos se enseñan: se redondea a entre el
   0,001% y el 0,01% del precio, que es el orden de la horquilla del libro.
 - **La banda** decide cuándo se repinta: el número no se mueve hasta que el
   precio se aleja de lo que está puesto más de un 0,05%.
 
-Las dos hacen falta, y eso salió de medirlo. Con sólo el escalón, un mercado
-quieto seguía repintando 173 veces por minuto: el rebote entre compra y venta
-es **más ancho que el escalón**, así que cruzaba la frontera de redondeo en
-cada tick. Redondear no quita un rebote que salta por encima del redondeo; la
-histéresis sí, porque mide contra lo que se está enseñando y no contra una
-rejilla fija.
+Al principio había una segunda pieza: redondear el titular a menos decimales
+—bitcoin en dólares enteros— para que el último dígito no bailara. Medido, no
+servía: con sólo ese redondeo un mercado quieto seguía repintando 173 veces por
+minuto, porque el rebote entre compra y venta es **más ancho que el redondeo** y
+cruzaba su frontera en cada tick. La histéresis sí lo mata, porque mide contra
+lo que se está enseñando y no contra una rejilla fija.
+
+Y una vez puesta la histéresis, quitar decimales dejó de tener sentido: el
+número sólo se repinta cuando el precio se mueve 43 dólares, así que el decimal
+no puede parpadear. Lo único que conseguía era que el titular fuese **el único
+sitio de la pantalla** con otra precisión que el gráfico, la tabla de predicción
+y los niveles de ruptura. Ahora enseña los mismos decimales que todo lo demás.
 
 Medido sobre 600 ticks en un minuto (10/s):
 

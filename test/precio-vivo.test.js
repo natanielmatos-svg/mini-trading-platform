@@ -36,24 +36,24 @@ function repintados(flujo, opciones) {
   return n;
 }
 
-test('el escalón sale de una potencia de diez, sin el error de coma flotante', () => {
-  // `10 ** -4` es 0,00009999999999999999, y de ahí salía un decimal de más y
-  // un precio cuantizado como 0,12345999999999999.
-  assert.equal(P.cuantizar(1.23456), 1.2346);
-  assert.equal(P.cuantizar(0.123456), 0.12346);
-  assert.equal(P.cuantizar(85763.27), 85763);
-  assert.equal(P.cuantizar(285763.27), 285760, 'por encima de cien mil, de diez en diez');
+test('el titular enseña los MISMOS decimales que el resto de la pantalla', () => {
+  // Durante un tiempo enseñaba menos —bitcoin en dólares enteros— para que el
+  // último dígito no bailara. Era resolver dos veces el mismo problema: la
+  // banda de histéresis ya impide repintar hasta que el precio se mueve un
+  // 0,05%, así que el decimal no puede parpadear aunque esté. Lo único que
+  // conseguía era que el titular fuese el único sitio con otra precisión que
+  // el gráfico, la tabla de predicción y los niveles.
+  for (const p of [285763.27, 85763.27, 3083.85, 150.257, 24.3271, 1.23456, 0.123456, 0.00001234]) {
+    assert.equal(P.decimales(p), priceDecimals(p), `${p} descuadra con el resto de la aplicación`);
+  }
 });
 
-test('nunca se enseñan más decimales que antes', () => {
-  // Esto está para QUITAR dígitos de ruido: añadir alguno sería lo contrario.
-  // Pasaba con los precios muy pequeños, donde el objetivo pedía nueve.
-  for (const p of [285763.27, 85763.27, 3083.85, 150.257, 24.3271, 1.23456, 0.123456, 0.00001234, 0.000000123]) {
-    assert.ok(
-      P.decimales(p) <= priceDecimals(p),
-      `${p}: ${P.decimales(p)} decimales, antes ${priceDecimals(p)}`
-    );
-  }
+test('cuantizar redondea a los decimales que se enseñan, sin cola de coma flotante', () => {
+  assert.equal(P.cuantizar(1.23456), 1.2346);
+  assert.equal(P.cuantizar(85763.27), 85763.3);
+  assert.equal(P.cuantizar(150.257), 150.26);
+  // Nada de 0,12345999999999999, que es lo que salía al dividir por 10**-5.
+  assert.equal(String(P.cuantizar(0.123456)), '0.123456');
 });
 
 test('el escalón se mantiene en el mismo orden de magnitud relativo', () => {
@@ -71,7 +71,7 @@ test('el primer precio se enseña sin esperar', () => {
   const c = P.crear();
   const r = c.siguiente(85763.27, 0);
   assert.ok(r);
-  assert.equal(r.valor, 85763);
+  assert.equal(r.valor, 85763.3);
   assert.equal(r.direccion, null, 'el primero no lleva destello: no hay con qué comparar');
 });
 
