@@ -121,22 +121,6 @@ test('/api/symbols sirve el desplegable agrupado', async () => {
   assert.ok(todos.some((s) => s.symbol === 'BTCUSDT'));
 });
 
-test('sólo se publican al navegador los tres módulos compartidos', async () => {
-  for (const modulo of ['indicators.js', 'format.js', 'signals.js']) {
-    const res = await fetch(`${base}/lib/${modulo}`);
-    assert.strictEqual(res.status, 200, `/lib/${modulo}`);
-    assert.match(res.headers.get('content-type'), /javascript/);
-    await res.text();
-  }
-
-  // El resto de src/ no se publica: ahí están los proveedores y la orquestación.
-  for (const prohibido of ['api.js', 'providers/index.js', '../package.json', '../server.js']) {
-    const res = await fetch(`${base}/lib/${prohibido}`);
-    assert.ok(res.status === 404, `/lib/${prohibido} devolvió ${res.status}`);
-    await res.arrayBuffer().catch(() => {});
-  }
-});
-
 test('el motor de señales que recibe el navegador es el mismo que usa Node', async () => {
   const código = await (await fetch(`${base}/lib/signals.js`)).text();
   assert.match(código, /globalThis\.Signals/);
@@ -221,4 +205,107 @@ test('/api/stream entrega ticks por SSE', async () => {
   assert.strictEqual(tick.interval, '1m');
   assert.strictEqual(tick.source, 'demo');
   assert.ok(tick.close > 0);
+});
+
+// ---------------------------------------------------------------------------
+// Acciones
+// ---------------------------------------------------------------------------
+
+test('/api/stocks/symbols no sale a la red y dice si hay clave', async () => {
+  const { status, body } = await getJson('/api/stocks/symbols');
+  assert.strictEqual(status, 200);
+  assert.strictEqual(typeof body.conClave, 'boolean');
+  assert.ok(body.count > 20);
+  assert.ok(Array.isArray(body.groups) && body.groups.length >= 4);
+  assert.ok(body.intervals.includes('1h'));
+
+  // La interfaz tiene que poder pintar el desplegable sin clave: es
+  // justamente cuando hay que explicar qué falta.
+  for (const g of body.groups) assert.ok(g.symbols.length > 0);
+});
+
+test('/api/stocks/clock dice si el mercado está abierto y cuándo cambia', async () => {
+  const { status, body } = await getJson('/api/stocks/clock');
+  assert.strictEqual(status, 200);
+  assert.strictEqual(typeof body.isOpen, 'boolean');
+  // Uno de los dos siempre: si está abierto, cuándo cierra; si no, cuándo abre.
+  assert.ok(Number.isFinite(body.isOpen ? body.nextClose : body.nextOpen));
+  assert.ok((body.isOpen ? body.nextClose : body.nextOpen) > Date.now());
+});
+
+test('/api/stocks/candles devuelve velas de bolsa con la misma forma', async () => {
+  const { status, body } = await getJson('/api/stocks/candles?symbol=nvda&interval=1h&limit=12');
+  assert.strictEqual(status, 200);
+  assert.strictEqual(body.symbol, 'NVDA');
+  assert.strictEqual(body.interval, '1h');
+  assert.strictEqual(body.count, 12);
+
+  const c = body.candles[0];
+  for (const campo of ['openTime', 'open', 'high', 'low', 'close', 'volume', 'closeTime', 'closed']) {
+    assert.ok(campo in c, `falta ${campo}`);
+  }
+  assert.ok(c.high >= c.low);
+});
+
+test('/api/stocks/candles rechaza un ticker que no está en el catálogo', async () => {
+  // No es paranoia con Alpaca: un ticker inventado gasta una llamada y
+  // devuelve un error críptico.
+  const { body } = await getJson('/api/stocks/candles?symbol=ZZZZ&limit=3');
+  assert.strictEqual(body.symbol, 'AAPL');
+});
+
+test('/api/stocks/quote da un precio y de qué feed viene', async () => {
+  const { status, body } = await getJson('/api/stocks/quote?symbol=SPY');
+  assert.strictEqual(status, 200);
+  assert.strictEqual(body.symbol, 'SPY');
+  assert.ok(body.price > 0, 'incluso con el mercado cerrado hay un último precio');
+  assert.ok(body.feed, 'siempre se dice de dónde sale el precio');
+});
+
+test('/api/stocks/breakout analiza velas de bolsa y adjunta el reloj', async () => {
+  const { status, body } = await getJson('/api/stocks/breakout?symbol=AAPL&interval=1h');
+  assert.strictEqual(status, 200);
+  assert.strictEqual(body.symbol, 'AAPL');
+  assert.strictEqual(body.ok, true);
+
+  // El reloj va en la respuesta porque sin él la interfaz enseñaría una cuenta
+  // atrás hacia el cierre de una vela que no se va a mover hasta el lunes.
+  assert.ok(body.clock);
+  assert.strictEqual(typeof body.clock.isOpen, 'boolean');
+
+  // Y el análisis es el mismo que en cripto: mismos campos, misma explicación.
+  assert.ok(Number.isFinite(body.atr) && body.atr > 0);
+  assert.ok(Array.isArray(body.explanation) && body.explanation.length);
+  assert.ok(Array.isArray(body.context));
+  assert.ok(body.sample && Array.isArray(body.sample.up));
+  assert.ok(body.disclaimer);
+});
+
+test('los módulos compartidos con el navegador se publican y nada más', async () => {
+  for (const archivo of ['indicators.js', 'format.js', 'signals.js', 'chart.js', 'panel-ruptura.js', 'avisos.js', 'tabla-mtf.js']) {
+    const res = await fetch(`${base}/lib/${archivo}`);
+    assert.strictEqual(res.status, 200, `/lib/${archivo}`);
+    assert.match(res.headers.get('content-type') || '', /javascript/, `${archivo}: tipo servible`);
+  }
+
+  // Dentro de src/ están también los proveedores y la orquestación.
+  for (const fuera of ['api.js', 'providers.js', 'venues.js', 'alpaca.js', 'stocks.js', '../package.json']) {
+    const res = await fetch(`${base}/lib/${encodeURIComponent(fuera)}`);
+    assert.strictEqual(res.status, 404, `/lib/${fuera} no debería servirse`);
+  }
+});
+
+test('las dos páginas cargan los módulos que usan', async () => {
+  const necesarios = {
+    '/index.html': ['indicators.js', 'format.js', 'signals.js', 'chart.js', 'panel-ruptura.js', 'avisos.js', 'tabla-mtf.js'],
+    '/acciones.html': ['indicators.js', 'format.js', 'signals.js', 'chart.js', 'panel-ruptura.js', 'avisos.js', 'tabla-mtf.js'],
+  };
+
+  for (const [pagina, modulos] of Object.entries(necesarios)) {
+    const html = await (await fetch(`${base}${pagina}`)).text();
+    for (const m of modulos) {
+      assert.match(html, new RegExp(`/lib/${m.replace('.', '\\.')}`), `${pagina} no carga ${m}`);
+    }
+    assert.match(html, /\/estilo\.css/, `${pagina} no carga la hoja común`);
+  }
 });

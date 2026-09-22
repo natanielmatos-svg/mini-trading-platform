@@ -240,6 +240,11 @@ function analyzeBreakout(candles, options = {}) {
     fast = 20,
     slow = 50,
     livePrice = null,
+    // La bolsa cierra. Con el mercado cerrado no hay vela en curso: descontar
+    // el tiempo restante daría 0% en los dos lados —cierto e inútil— y la
+    // explicación diría que a la vela "le queda nada". Se analiza entonces la
+    // vela entera que abrirá en la próxima sesión, y se dice.
+    mercadoCerrado = false,
   } = options;
 
   if (!Array.isArray(candles) || candles.length < MIN_CANDLES) {
@@ -262,9 +267,9 @@ function analyzeBreakout(candles, options = {}) {
   // cacheada; si está disponible, manda.
   const price = Number.isFinite(livePrice) && livePrice > 0 ? livePrice : current.close;
   const step = Math.max(current.closeTime - current.openTime + 1, 1);
-  const elapsed = Math.min(Math.max((now - current.openTime) / step, 0.01), 1);
-  const remaining = Math.min(Math.max(1 - elapsed, 0.01), 1);
-  const remainingMs = Math.max(current.closeTime - now, 0);
+  const elapsed = mercadoCerrado ? 1 : Math.min(Math.max((now - current.openTime) / step, 0.01), 1);
+  const remaining = mercadoCerrado ? 1 : Math.min(Math.max(1 - elapsed, 0.01), 1);
+  const remainingMs = mercadoCerrado ? 0 : Math.max(current.closeTime - now, 0);
 
   const sample = excursionSample(completed, atrLength);
   const { resistance, support, rangeHigh, rangeLow } = findLevels(completed, price, atr * 0.35);
@@ -307,7 +312,7 @@ function analyzeBreakout(candles, options = {}) {
     biasStrength: strength,
     trigger: buildTriggers({ up, down, volAvg, interval }),
     context,
-    explanation: buildExplanation({ interval, price, atr, up, down, current, remainingMs, bias, context }),
+    explanation: buildExplanation({ interval, price, atr, up, down, current, remainingMs, bias, context, mercadoCerrado }),
     // La muestra viaja al navegador para poder recalcular la probabilidad con
     // cada tick del WebSocket sin volver a preguntar al servidor.
     sample: {
@@ -344,11 +349,13 @@ function buildTriggers({ up, down, volAvg, interval }) {
   };
 }
 
-function buildExplanation({ interval, price, atr, up, down, current, remainingMs, bias, context }) {
+function buildExplanation({ interval, price, atr, up, down, current, remainingMs, bias, context, mercadoCerrado = false }) {
   const lines = [];
 
   lines.push(
-    `Vela de ${interval} en curso: abrió en ${formatPrice(current.open)}, va por ${formatPrice(price)} y le quedan ${formatDuration(remainingMs)}. El ATR(14) es de ${formatPrice(atr)}, que es lo que se mueve una vela corriente de este timeframe.`
+    mercadoCerrado
+      ? `Mercado cerrado: no hay vela en curso. La última de ${interval} cerró en ${formatPrice(current.close)} y lo que sigue son las cuentas para una vela entera, la que se abrirá en la próxima sesión. El ATR(14) es de ${formatPrice(atr)}, que es lo que se mueve una vela corriente de este timeframe.`
+      : `Vela de ${interval} en curso: abrió en ${formatPrice(current.open)}, va por ${formatPrice(price)} y le quedan ${formatDuration(remainingMs)}. El ATR(14) es de ${formatPrice(atr)}, que es lo que se mueve una vela corriente de este timeframe.`
   );
 
   if (up) {
@@ -358,7 +365,9 @@ function buildExplanation({ interval, price, atr, up, down, current, remainingMs
     lines.push(
       up.probability === null
         ? `Al alza, la referencia está en ${formatPrice(up.level)} (${strength}), a ${num(up.distancePct)}% de aquí. No hay muestra suficiente para ponerle número.`
-        : `Para romper al alza faltan ${num(up.distancePct)}% hasta ${formatPrice(up.level)} (${strength}), que son ${num(up.distanceAtr)} ATR. Ajustado al tiempo que le queda a la vela equivale a exigirle ${num(up.requiredAtr)} ATR de recorrido completo: de las ${up.sampleSize} velas anteriores de ${interval}, el ${num(pct(up.probability), 1)}% recorrió eso o más desde su apertura. Ésa es la probabilidad.`
+        : `Para romper al alza faltan ${num(up.distancePct)}% hasta ${formatPrice(up.level)} (${strength}), que son ${num(up.distanceAtr)} ATR.${
+            mercadoCerrado ? '' : ` Ajustado al tiempo que le queda a la vela equivale a exigirle ${num(up.requiredAtr)} ATR de recorrido completo:`
+          }${mercadoCerrado ? ' De' : ''} ${mercadoCerrado ? '' : 'de '}las ${up.sampleSize} velas anteriores de ${interval}, el ${num(pct(up.probability), 1)}% recorrió eso o más desde su apertura. Ésa es la probabilidad.`
     );
   } else {
     lines.push('Al alza no hay nivel por delante: el precio está en máximos del rango analizado.');
@@ -371,7 +380,9 @@ function buildExplanation({ interval, price, atr, up, down, current, remainingMs
     lines.push(
       down.probability === null
         ? `A la baja, la referencia está en ${formatPrice(down.level)} (${strength}), a ${num(down.distancePct)}% de aquí.`
-        : `Para romper a la baja faltan ${num(down.distancePct)}% hasta ${formatPrice(down.level)} (${strength}), ${num(down.distanceAtr)} ATR, equivalentes a ${num(down.requiredAtr)} ATR completos: el ${num(pct(down.probability), 1)}% de las ${down.sampleSize} velas anteriores bajó eso o más desde su apertura.`
+        : `Para romper a la baja faltan ${num(down.distancePct)}% hasta ${formatPrice(down.level)} (${strength}), ${num(down.distanceAtr)} ATR${
+            mercadoCerrado ? '' : `, equivalentes a ${num(down.requiredAtr)} ATR completos`
+          }: el ${num(pct(down.probability), 1)}% de las ${down.sampleSize} velas anteriores bajó eso o más desde su apertura.`
     );
   } else {
     lines.push('A la baja no hay nivel por delante dentro del rango analizado.');

@@ -3,20 +3,34 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Mini Plataforma de Trading</title>
+  <title>Acciones · Mini Plataforma de Trading</title>
   <link rel="stylesheet" href="/estilo.css" />
+  <style>
+    /* Lo único propio de esta página: el estado del mercado. En cripto no
+       existe —no cierra nunca— así que no pinta en la hoja común. */
+    .market { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+    .market .dot { width: 8px; height: 8px; border-radius: 50%; background: #64748b; }
+    .market.abierto .dot { background: var(--up); box-shadow: 0 0 6px var(--up); }
+    .market.cerrado .dot { background: #f59e0b; }
+    .aviso-clave {
+      margin: 0; padding: 9px 16px; font-size: 11.5px; line-height: 1.5;
+      background: #422006; color: #fde68a; border-bottom: 1px solid #78350f;
+    }
+    .aviso-clave code { background: rgba(0,0,0,0.3); padding: 1px 4px; border-radius: 3px; }
+    .aviso-clave a { color: #fcd34d; }
+    .clock-card.cerrado #bigCountdown { color: var(--muted); font-size: 24px; }
+  </style>
 </head>
 <body>
   <header>
-    <h1>Mini Plataforma de Trading</h1>
+    <h1>Acciones · EE. UU.</h1>
 
-    <span class="stream"><span class="dot" id="streamDot"></span><span id="streamLabel">desconectado</span></span>
+    <span class="market" id="marketState"><span class="dot"></span><span id="marketLabel">—</span></span>
 
     <div class="controls">
-      <label>Cripto
+      <label>Valor
         <select id="symbolSelect"></select>
       </label>
-      <input id="symbolInput" value="BTCUSDT" hidden placeholder="Par" autocomplete="off" />
       <label>Timeframe
         <select id="intervalSelect">
           <option value="1m">1m</option>
@@ -25,16 +39,17 @@
           <option value="30m">30m</option>
           <option value="1h" selected>1h</option>
           <option value="4h">4h</option>
-          <option value="12h">12h</option>
           <option value="1d">1d</option>
           <option value="1w">1w</option>
         </select>
       </label>
       <button id="loadBtn">Cargar</button>
-      <a href="/acciones.html">Acciones →</a>
+      <a href="/">← Criptomonedas</a>
       <a href="/predicciones.html">Predicciones →</a>
     </div>
   </header>
+
+  <p class="aviso-clave" id="avisoClave" hidden></p>
 
   <div class="container">
     <div class="chart-area">
@@ -43,7 +58,7 @@
     </div>
 
     <div class="side-panel">
-      <div class="card clock-card">
+      <div class="card clock-card" id="clockCard">
         <div class="clock-head">
           <span id="clockPair">—</span>
           <span class="live-dot"></span>
@@ -52,9 +67,9 @@
           <span id="bigPrice">—</span>
           <span class="change" id="bigChange"></span>
         </div>
-        <div id="venueBox" class="venue-box"></div>
+        <p class="venue-note" id="feedNote"></p>
         <div class="clock-count">
-          <span class="label">cierra en</span>
+          <span class="label" id="countdownLabel">cierra en</span>
           <span class="time" id="bigCountdown">--:--</span>
         </div>
         <div class="clock-bar"><span id="clockBar"></span></div>
@@ -104,15 +119,14 @@
         </label>
         <label class="switch sub">
           <input type="checkbox" id="avisoToggle" />
-          <span>Avisar también antes de romper <em>(unas 2-3 veces al día)</em></span>
+          <span>Avisar también antes de romper</span>
         </label>
         <p class="note" id="alertHint">Apagados.</p>
         <div id="positionBox"></div>
         <ul class="signals" id="signalHistory"></ul>
         <p class="note">
-          Compra cuando una vela <strong>cierra</strong> por encima de la resistencia con volumen, no
-          cuando la toca. Vende al stop, al objetivo, si la vela siguiente devuelve el nivel o si se
-          confirma la ruptura contraria. Es un seguimiento en papel: no manda ninguna orden.
+          Con la bolsa cerrada no salta nada: la última vela ya cerró y no puede romper nada.
+          Es un seguimiento en papel: no manda ninguna orden.
         </p>
       </div>
 
@@ -139,6 +153,6 @@
   <script src="/lib/panel-ruptura.js"></script>
   <script src="/lib/avisos.js"></script>
   <script src="/lib/tabla-mtf.js"></script>
-  <script src="/app.js"></script>
+  <script src="/acciones.js"></script>
 </body>
 </html>

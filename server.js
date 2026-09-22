@@ -47,10 +47,11 @@ app.use((req, res, next) => {
 // archivo que ejecuta el análisis, así que no puede haber dos versiones de la
 // misma regla. `chart.js`, `panel-ruptura.js` y `avisos.js` no los usa el
 // servidor, pero sí las dos páginas —cripto y acciones—, y viven aquí por el
-// mismo motivo: un solo gráfico, un solo panel y un solo gestor de avisos.
+// mismo motivo: un solo gráfico, un solo panel, un solo gestor de avisos y
+// una sola tabla.
 // Lista blanca explícita y no `express.static('src')`: ahí dentro están
 // también los proveedores y la orquestación.
-const SHARED_MODULES = ['indicators.js', 'format.js', 'signals.js', 'chart.js', 'panel-ruptura.js', 'avisos.js'];
+const SHARED_MODULES = ['indicators.js', 'format.js', 'signals.js', 'chart.js', 'panel-ruptura.js', 'avisos.js', 'tabla-mtf.js'];
 
 app.get('/lib/:file', (req, res) => {
   if (!SHARED_MODULES.includes(req.params.file)) {
@@ -356,6 +357,9 @@ app.get('/api/stocks/breakout', async (req, res) => {
     const analysis = analyzeBreakout(candles, {
       interval,
       livePrice: Number.isFinite(livePrice) && livePrice > 0 ? livePrice : null,
+      // Si el mercado está cerrado, la última vela ya cerró: el análisis lo
+      // dice en vez de hablar de una vela en curso a la que "le queda nada".
+      mercadoCerrado: Boolean(clock) && !clock.isOpen,
     });
 
     sendJson(res, { symbol, interval, source, fetchedAt, aviso: aviso || null, clock, ...analysis });

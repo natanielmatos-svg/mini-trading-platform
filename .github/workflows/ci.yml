@@ -1,6 +1,6 @@
 name: CI
 
-# Los 165 tests no usan red: corren igual en cualquier runner y tardan unos
+# Los 268 tests no usan red: corren igual en cualquier runner y tardan unos
 # cinco segundos. Hasta ahora sólo se ejecutaban si alguien se acordaba.
 #
 # `push` se limita a main: con `['**']` y `pull_request` a la vez, cada push a
@@ -46,6 +46,11 @@ jobs:
           done
           curl -sf http://127.0.0.1:3999/healthz
           curl -sf "http://127.0.0.1:3999/api/breakout?interval=1h" > /dev/null
+          # Acciones: sin clave de Alpaca la página tiene que arrancar igual,
+          # con datos de ejemplo. Es el caso de quien acaba de clonar el repo.
+          curl -sf "http://127.0.0.1:3999/api/stocks/breakout?symbol=AAPL&interval=1h" > /dev/null
+          curl -sf "http://127.0.0.1:3999/api/stocks/clock" > /dev/null
+          curl -sf "http://127.0.0.1:3999/acciones.html" > /dev/null
           kill %1
 
   apis-reales:

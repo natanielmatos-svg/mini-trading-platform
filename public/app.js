@@ -8,11 +8,12 @@
 // servidor: no puede haber dos versiones de la misma regla.
 
 (function () {
-const { ema } = globalThis.Indicators;
+// Los indicadores los usan ya los módulos compartidos; aquí no queda ninguno.
 const { formatPrice, num, formatPercent, formatClock, candleWindow } = globalThis.Format;
 const Chart = globalThis.Chart;
 const Ruptura = globalThis.Ruptura;
 const Avisos = globalThis.Avisos;
+const TablaMtf = globalThis.TablaMtf;
 
 const MTF = ['1h', '4h', '1d', '1w'];
 const CANDLES = 300;
@@ -737,32 +738,7 @@ function hideTooltip() {
 
 function renderTable() {
   const { fast, slow } = emaLengths();
-
-  for (const tf of MTF) {
-    const cell = $(`cell-${tf}`);
-    if (!cell) continue;
-    const candles = state.mtf[tf];
-    const closes = candles ? candles.map((c) => c.close) : [];
-    const f = fast ? ema(closes, fast) : null;
-    const s = slow ? ema(closes, slow) : null;
-
-    cell.classList.remove('bull', 'bear', 'flat');
-
-    if (!Number.isFinite(f) || !Number.isFinite(s)) {
-      cell.textContent = '—';
-      cell.classList.add('flat');
-      cell.title = 'Sin datos suficientes o parámetros de EMA inválidos';
-      continue;
-    }
-
-    // Banda neutra: una diferencia del 0,05% entre EMAs no es una tendencia,
-    // es ruido. Antes cualquier diferencia pintaba la celda entera.
-    const gap = (f - s) / s;
-    const label = gap > 0.0005 ? 'Alcista' : gap < -0.0005 ? 'Bajista' : 'Plano';
-    cell.textContent = label;
-    cell.classList.add(label === 'Alcista' ? 'bull' : label === 'Bajista' ? 'bear' : 'flat');
-    cell.title = `EMA${fast} ${formatPrice(f)} vs EMA${slow} ${formatPrice(s)} (${gap >= 0 ? '+' : ''}${formatPercent(gap, 2)})`;
-  }
+  TablaMtf.render({ mtf: state.mtf, fast, slow, timeframes: MTF, celda: (tf) => $(`cell-${tf}`) });
 }
 
 // --- Panel de ruptura ------------------------------------------------------

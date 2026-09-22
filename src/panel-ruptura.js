@@ -135,8 +135,12 @@ function sideHtml(side, title, cls) {
  *   price      el precio de ahora; si falta se usa el del análisis
  *   remaining  fracción de vela que queda, 0..1
  *   force      salta el límite de repintados (cambio de símbolo, por ejemplo)
+ *   nota       sustituye al veredicto. La usa la bolsa cuando está cerrada:
+ *              «más cerca de romper al alza» no dice nada si no hay vela
+ *              abriéndose, y el veredicto por tiempo restante diría que no le
+ *              da tiempo, que es cierto y engañoso a la vez.
  */
-function render(contenedor, { breakout, price = null, remaining = 1, force = false, now = Date.now() } = {}) {
+function render(contenedor, { breakout, price = null, remaining = 1, force = false, nota = null, now = Date.now() } = {}) {
   const b = breakout;
 
   if (!force && b && b.ok && now - (ultimo.get(contenedor) || 0) < THROTTLE_MS) return false;
@@ -157,7 +161,7 @@ function render(contenedor, { breakout, price = null, remaining = 1, force = fal
   const abiertas = seccionesAbiertas(contenedor);
 
   contenedor.innerHTML = `
-    <div class="verdict ${bias.cls}">${bias.text}</div>
+    <div class="verdict ${nota ? 'flat' : bias.cls}">${nota || bias.text}</div>
     ${sideHtml(up, 'Ruptura al alza', 'up')}
     ${sideHtml(down, 'Ruptura a la baja', 'down')}
     <details class="method" data-k="porque" open>

@@ -1,11 +1,17 @@
 # Mini Trading Platform + Analizador de Mercados de Predicción
 
-Dos aplicaciones sobre el mismo servidor Node/Express:
+Tres páginas sobre el mismo servidor Node/Express:
 
 | Ruta | Qué es |
 |---|---|
-| `/index.html` | **Plataforma de trading**: velas de Binance en vivo, tendencia multi-timeframe con EMAs, análisis de ruptura de la vela en curso y avisos de compra y venta con sonido |
+| `/index.html` | **Criptomonedas**: velas de Binance en vivo, precio consolidado entre mercados, tendencia multi-timeframe con EMAs, análisis de ruptura de la vela en curso y avisos de compra y venta con sonido |
+| `/acciones.html` | **Acciones de EE. UU.**: lo mismo, con velas de Alpaca y consciente del horario del mercado |
 | `/predicciones.html` | **Analizador de predicciones**: agrega Polymarket, Robinhood/Kalshi y Manifold y dice qué opción es la más probable de cada evento |
+
+Las dos primeras **no son dos aplicaciones**: comparten el gráfico, el panel de
+ruptura, el motor de señales, los avisos y la hoja de estilo. Una vela de Apple
+tiene la misma forma que una de bitcoin, así que el análisis es literalmente el
+mismo código (ver [Estructura](#estructura)).
 
 ## Arranque
 
@@ -336,6 +342,56 @@ verificar antes que dejar el desplegable vacío.
 - Frecuencia histórica no es probabilidad futura. Es análisis de mercado, no una
   recomendación de inversión.
 
+## Acciones (`/acciones.html`)
+
+La misma página que la de criptomonedas, con tres diferencias que no son de
+formato sino de cómo funciona la bolsa.
+
+**Hace falta clave.** No existe el equivalente al endpoint público de Binance:
+los datos de bolsa están licenciados. Con una cuenta gratuita de
+[Alpaca](https://alpaca.markets/) se consigue tiempo real de IEX:
+
+```bash
+export ALPACA_KEY_ID=...
+export ALPACA_SECRET_KEY=...
+npm start
+```
+
+Sin clave la página **funciona igual con velas de ejemplo** y lo dice en una
+banda arriba, en vez de quedarse en blanco. IEX es un solo mercado con poca
+cuota, así que su precio puede separarse unos céntimos del consolidado oficial;
+la página lo advierte en vez de aparentar que es el precio de mercado.
+`ALPACA_FEED=sip` da la cinta consolidada, que es de pago.
+
+**El mercado cierra**, y eso cambia tres cosas:
+
+- La cuenta atrás de la vela **se corta al cierre**: una vela de una hora
+  abierta a las 15:30 no dura hasta las 16:30, y la etiqueta pasa a decir
+  «cierra la sesión en».
+- Con el mercado cerrado no hay vela en curso, así que la cuenta atrás pasa a
+  ser **cuánto falta para abrir**, en hora de Nueva York y con el «NY» puesto.
+- El panel de ruptura, cerrado el mercado, calcula las probabilidades sobre
+  **una vela entera** —la que abrirá en la próxima sesión— y lo dice. Descontar
+  el tiempo restante daría 0% en los dos lados: cierto e inútil.
+
+El horario se le pregunta a Alpaca (`/v2/clock`) en vez de mantener un
+calendario de festivos a mano, que es una fuente de errores silenciosos. En
+modo de ejemplo se calcula con la sesión regular —días hábiles de 9:30 a 16:00
+en Nueva York, con su horario de verano— y ahí sí puede colarse un festivo.
+
+**No hay WebSocket.** El precio se pregunta cada cinco segundos con el mercado
+abierto y cada minuto cuando está cerrado, porque no se va a mover. Las velas,
+cada minuto y cada diez respectivamente.
+
+El desplegable trae 34 valores agrupados —grandes tecnológicas,
+semiconductores, banca, energía, salud y ETFs de índices— y sólo esos: un
+ticker inventado gastaría una llamada a Alpaca para devolver un error críptico,
+así que el servidor lo rechaza antes. La lista vive en `src/stocks.js`.
+
+Los avisos guardan sus preferencias aparte de los de cripto: encender el sonido
+en una página no lo enciende en la otra, y el seguimiento en papel de AAPL no
+se mezcla con el de BTCUSDT.
+
 ## Qué hace el analizador
 
 Para cada evento (unas elecciones, una decisión de la Fed, un partido) descarga
@@ -541,6 +597,41 @@ pudo contrastar con Binance.
 }
 ```
 
+### `GET /api/stocks/symbols`
+
+Los valores del desplegable, agrupados, más `conClave` y `feed`: la interfaz
+tiene que poder pintarlo sin clave, que es justo cuando hay que explicar qué
+falta. No sale a la red.
+
+### `GET /api/stocks/clock`
+
+```json
+{ "isOpen": false, "now": 1790049453221, "nextOpen": 1790083800000, "nextClose": null, "source": "alpaca" }
+```
+
+`source: "demo"` significa que se ha calculado con la sesión regular en vez de
+preguntárselo a Alpaca, así que puede ignorar un festivo.
+
+### `GET /api/stocks/candles`
+
+`?symbol=AAPL&interval=1h&limit=300`. Misma forma que `/api/klines`. Los
+intervalos son los de Alpaca: `1m` … `4h`, `1d`, `1w`. Un ticker que no esté en
+el catálogo se sustituye por el de por defecto en vez de gastar una llamada.
+
+### `GET /api/stocks/quote`
+
+Punto medio del libro del valor, y de qué `feed` viene. Sin consolidar entre
+mercados como en cripto: la cinta consolidada es un producto licenciado, así
+que la respuesta dice de dónde sale el precio en vez de aparentar que es el
+oficial.
+
+### `GET /api/stocks/breakout`
+
+El mismo análisis que `/api/breakout` —mismos campos, misma explicación, mismo
+`disclaimer`— más `clock`, porque sin él la interfaz enseñaría una cuenta atrás
+hacia el cierre de una vela que no se va a mover hasta el lunes. Si los datos
+son de ejemplo, `aviso` dice por qué.
+
 ### `GET /api/stream`
 
 Precio en vivo por SSE. Parámetros: `symbol`, `interval`. Emite tres eventos
@@ -676,14 +767,16 @@ públicos de mercado, y no acepta ninguna escritura.
 | `KRAKEN_API` / `COINBASE_API` / `GEMINI_API` | APIs públicas | Igual, para los otros mercados |
 | `CFBENCHMARKS_API` | API pública | Endpoint del índice |
 | `CFBENCHMARKS_API_KEY` | — | Sólo si tu acceso al índice la necesita |
-| `ALPACA_KEY_ID` / `ALPACA_SECRET_KEY` | — | **Obligatorias para acciones**: los datos de bolsa están licenciados |
+| `ALPACA_KEY_ID` / `ALPACA_SECRET_KEY` | — | Precios de bolsa de verdad. Sin ellas `/acciones.html` funciona con datos de ejemplo y lo dice |
 | `ALPACA_FEED` | `iex` | `iex` es gratis y de un solo mercado; `sip` es la cinta consolidada, de pago |
 | `ALPACA_DATA_API` / `ALPACA_API` | APIs de Alpaca | Para apuntar a un mock |
 | `RATE_MAX` / `RATE_WINDOW_MS` | `120` / `60000` | Límite de peticiones por IP a `/api` |
 | `TRUST_PROXY_HOPS` | `1` | Saltos de proxy de confianza para leer la IP real |
 
-Ninguna API necesita clave: se usan sólo endpoints públicos de lectura. Las
-respuestas se cachean 30 s y las peticiones simultáneas a la misma clave se
+Ninguna clave es obligatoria para arrancar: cripto y predicciones usan sólo
+endpoints públicos de lectura, y acciones cae a datos de ejemplo si falta la de
+Alpaca, que es la única con clave porque los datos de bolsa están licenciados.
+Las respuestas se cachean 30 s y las peticiones simultáneas a la misma clave se
 agrupan en una sola llamada, para no chocar con los rate limits.
 
 ## Estructura
@@ -694,7 +787,12 @@ src/
   indicators.js        EMA, ATR, RSI, pivotes, niveles — servidor Y navegador
   format.js            formato de precios y porcentajes — servidor Y navegador
   signals.js           compras y ventas — servidor Y navegador
+  chart.js             el gráfico de velas — las DOS páginas
+  panel-ruptura.js     el panel «¿Rompe esta vela?» — las DOS páginas
+  avisos.js            sonido, ventana emergente y seguimiento — las DOS páginas
+  tabla-mtf.js         la tabla de tendencia — las DOS páginas
   symbols.js           catálogo de criptomonedas del desplegable
+  stocks.js            acciones: catálogo, sesión, reloj y modo de ejemplo
   alpaca.js            acciones: velas, precio y el reloj del mercado
   venues.js            un adaptador por mercado al contado: Binance, Kraken, Coinbase
   consolidated.js      mediana entre mercados y cuánto discrepan
@@ -709,8 +807,11 @@ src/
   http.js              fetch con timeout y reintentos
   providers/           un módulo por plataforma
 public/
-  index.html           plataforma de trading (maquetación)
-  app.js               gráfico, tabla multi-timeframe, ruptura y avisos
+  estilo.css           hoja común de las dos páginas de mercado
+  index.html           criptomonedas (maquetación)
+  app.js               criptomonedas: datos, precio consolidado y SSE
+  acciones.html        acciones (maquetación)
+  acciones.js          acciones: datos, horario del mercado y precio
   predicciones.html    analizador de predicciones
 data/demo/             datos de ejemplo (también usados por los tests)
 scripts/smoke.js         valida las APIs reales antes de desplegar
@@ -718,5 +819,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  217 tests, sin red
+test/                  268 tests, sin red
 ```

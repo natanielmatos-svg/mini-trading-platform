@@ -131,7 +131,13 @@ function relojDemo(now = Date.now()) {
   let siguienteApertura = null;
   let siguienteCierre = null;
 
-  for (let t = now + PASO, i = 0; i < 4 * 24 * 12 * 5; t += PASO, i++) {
+  // La búsqueda arranca en una frontera de cinco minutos y no en `now`: si no,
+  // la apertura sale a las 9:32 porque hereda los segundos del instante en que
+  // se preguntó. Nueva York está a un número entero de horas de UTC, así que
+  // una frontera de cinco minutos en UTC lo es también allí.
+  const inicio = Math.floor(now / PASO) * PASO + PASO;
+
+  for (let t = inicio, i = 0; i < 4 * 24 * 12 * 5; t += PASO, i++) {
     const dentro = enSesion(t);
     if (dentro && siguienteApertura === null && !abierto) siguienteApertura = t;
     if (!dentro && siguienteCierre === null && abierto) siguienteCierre = t;

@@ -17,6 +17,8 @@ const { getKlines, BINANCE_API } = require('../src/klines');
 const { analyzeBreakout } = require('../src/breakout');
 const { evaluateSignals } = require('../src/signals');
 const { fetchAllPrices, VENUES } = require('../src/venues');
+const alpaca = require('../src/alpaca');
+const stocks = require('../src/stocks');
 const { consolidate } = require('../src/consolidated');
 const { formatPrice, num, priceDecimals } = require('../src/format');
 
@@ -254,10 +256,70 @@ async function comprobarPrecios() {
   return out.used >= 2;
 }
 
+// Acciones. Es la única fuente con clave, así que aquí se comprueba sobre todo
+// que la clave sirve: el error de Alpaca cuando no vale es un 403 seco, y
+// enterarse por la página en blanco de un usuario es la peor forma.
+async function comprobarAcciones() {
+  if (!alpaca.hayClave()) {
+    console.log('  OMITIDO Alpaca: sin ALPACA_KEY_ID / ALPACA_SECRET_KEY.');
+    console.log('          /acciones.html funcionará con datos de ejemplo. La cuenta gratuita sirve:');
+    console.log('          https://alpaca.markets/');
+    return null; // ni bien ni mal: no se ha probado
+  }
+
+  try {
+    const reloj = await alpaca.fetchClock();
+    const cuando = reloj.isOpen ? reloj.nextClose : reloj.nextOpen;
+    console.log(
+      `  OK    Reloj del mercado: ${reloj.isOpen ? 'abierto' : 'cerrado'}` +
+        (cuando ? ` · ${reloj.isOpen ? 'cierra' : 'abre'} ${new Date(cuando).toISOString()}` : '')
+    );
+
+    const inicio = Date.now();
+    const { candles, source } = await alpaca.fetchCandles({ symbol: 'AAPL', interval: '1h', limit: 400 });
+    const elapsed = Date.now() - inicio;
+
+    if (candles.length < 60) {
+      console.log(`  FALLO Alpaca: sólo ${candles.length} velas utilizables; el análisis necesita 60.`);
+      return false;
+    }
+
+    const ultima = candles[candles.length - 1];
+    console.log(`  OK    ${source}: ${candles.length} velas de 1h en ${elapsed} ms (AAPL a ${formatPrice(ultima.close)})`);
+
+    // Que las velas caigan dentro de la sesión es la comprobación que delata
+    // un feed mal configurado: barras de madrugada significan datos extendidos
+    // o un timeframe que no es el pedido.
+    const fuera = candles.filter((c) => !stocks.enSesion(c.openTime)).length;
+    if (fuera > 0) {
+      console.log(`  AVISO ${fuera} de ${candles.length} velas caen fuera de la sesión regular (¿feed con horario extendido?)`);
+    }
+
+    const cotiz = await alpaca.fetchQuote({ symbol: 'AAPL' });
+    const horquilla = ((cotiz.ask - cotiz.bid) / cotiz.price) * 100;
+    console.log(`  OK    Precio AAPL: ${formatPrice(cotiz.price)} (horquilla ${num(horquilla, 3)}%, feed ${cotiz.feed})`);
+
+    // Y el mismo análisis que en cripto, sobre velas de bolsa.
+    const ruptura = analyzeBreakout(candles, { interval: '1h' });
+    if (!ruptura.ok) {
+      console.log(`  FALLO Ruptura sobre acciones: ${ruptura.reason}`);
+      return false;
+    }
+    console.log(`  OK    Ruptura: ${ruptura.explanation[1]}`);
+    return true;
+  } catch (err) {
+    console.log(`  FALLO Alpaca: ${trunc(err.message)}`);
+    return false;
+  }
+}
+
 async function main() {
   const preciosOk = await comprobarPrecios();
   console.log('');
   const mercadoOk = await comprobarMercado();
+  console.log('');
+  console.log('Consultando Alpaca (acciones)...\n');
+  const accionesOk = await comprobarAcciones();
   console.log('');
   console.log('Consultando Polymarket, Robinhood/Kalshi y Manifold...\n');
 
@@ -325,6 +387,17 @@ async function main() {
       console.log('\nAviso: Binance no responde; el gráfico y el análisis de ruptura no funcionarán.');
     } else {
       console.error('\nBinance no está utilizable: el gráfico y el análisis de ruptura no funcionarán.');
+      process.exit(1);
+    }
+  }
+
+  // Sin clave no se ha probado nada, así que no se falla por ello: la página
+  // de acciones sigue arrancando con datos de ejemplo.
+  if (accionesOk === false) {
+    if (TOLERANTE) {
+      console.log('\nAviso: Alpaca no responde; /acciones.html caerá a datos de ejemplo.');
+    } else {
+      console.error('\nAlpaca no está utilizable: revisa ALPACA_KEY_ID y ALPACA_SECRET_KEY.');
       process.exit(1);
     }
   }
