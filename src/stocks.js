@@ -209,7 +209,10 @@ async function getStockCandles({ symbol, interval = '1h', limit = 400, demo = fa
     };
   }
 
-  return alpaca.fetchCandles({ symbol: sym, interval: tf, limit, now });
+  // Se le pasa nuestro calendario: el adaptador no sabe cuándo abre la bolsa,
+  // y las barras de horario extendido del feed gratuito son demasiado finas
+  // para meterlas en un ATR.
+  return alpaca.fetchCandles({ symbol: sym, interval: tf, limit, now, soloSesion: enSesion });
 }
 
 const SIN_CLAVE =
@@ -238,10 +241,35 @@ async function getStockQuote({ symbol, demo = false, now = Date.now() } = {}) {
     };
   }
 
-  return alpaca.fetchQuote({ symbol: sym });
+  // Con la bolsa cerrada no se pregunta al libro: fuera de sesión el feed
+  // gratuito devuelve puntas de sesiones distintas, y el punto medio de eso no
+  // es un precio. Se usa el cierre de la última vela, que es el último precio
+  // que existió de verdad.
+  const abierto = enSesion(now);
+  if (abierto) {
+    try {
+      return { ...(await alpaca.fetchQuote({ symbol: sym })), sesion: true, fuente: 'libro' };
+    } catch (err) {
+      // Una horquilla imposible tampoco se cuela por estar el mercado abierto:
+      // se cae al cierre igual, diciendo por qué.
+      return { ...(await cierreDeLaUltimaVela(sym, now)), sesion: true, motivo: err.message };
+    }
+  }
+
+  return { ...(await cierreDeLaUltimaVela(sym, now)), sesion: false, motivo: 'mercado cerrado: el libro fuera de sesión no es un precio' };
+}
+
+// El último precio que existió: el cierre de la última vela de un minuto
+// dentro de sesión. Una llamada más, y sólo cuando el libro no sirve.
+async function cierreDeLaUltimaVela(symbol, now) {
+  const { candles } = await alpaca.fetchCandles({ symbol, interval: '1m', limit: 1, now, soloSesion: enSesion });
+  const vela = candles[candles.length - 1];
+  if (!vela) throw new Error(`No hay ninguna vela reciente de ${symbol} con la que fechar un precio`);
+
+  return { symbol, price: vela.close, bid: null, ask: null, at: vela.closeTime, feed: alpaca.FEED, fuente: 'cierre' };
 }
 
 module.exports = {
-  CATALOG, SIN_CLAVE, listStocks, stockGroups, parseTicker,
+  CATALOG, SIN_CLAVE, cierreDeLaUltimaVela, listStocks, stockGroups, parseTicker,
   enSesion, horaNuevaYork, relojDemo, getClock, getStockCandles, getStockQuote, velasDemo,
 };

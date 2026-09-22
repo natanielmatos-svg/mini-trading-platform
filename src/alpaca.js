@@ -39,6 +39,19 @@ const SECRET = process.env.ALPACA_SECRET_KEY || '';
 // iex: gratis, un solo mercado. sip: la cinta consolidada, de pago.
 const FEED = process.env.ALPACA_FEED || 'iex';
 
+// Horquilla máxima que se acepta como libro real, en tanto por uno.
+//
+// Medido en vivo: con la bolsa cerrada, el feed de IEX devolvió para AAPL una
+// horquilla del 10% y un punto medio de 340,04 cuando la última vela había
+// cerrado en 309,27. Eso no es un precio, es un libro de nadie —una punta de
+// una sesión y otra de otra— y colarlo tiene consecuencias: la resistencia
+// estaba en 309,91, así que el análisis habría cantado "nivel superado" y
+// podido abrir una compra sobre un número inventado.
+//
+// Un valor del catálogo que cotiza con más de un 2% de horquilla no está
+// cotizando de verdad.
+const HORQUILLA_MAX = Number(process.env.ALPACA_SPREAD_MAX || 0.02);
+
 // Nuestros intervalos a los suyos. Alpaca acepta [1-59]Min, [1-23]Hour, 1Day,
 // 1Week y [1-12]Month.
 const TIMEFRAMES = {
@@ -115,7 +128,7 @@ function usable(c) {
  * rango holgado porque la bolsa cierra y un día natural no trae un día de
  * barras.
  */
-async function fetchCandles({ symbol, interval = '1h', limit = 400, timeoutMs = 10_000, now = Date.now() }) {
+async function fetchCandles({ symbol, interval = '1h', limit = 400, timeoutMs = 10_000, now = Date.now(), soloSesion = null }) {
   exigirClave('las velas');
 
   const sym = parseSymbol(symbol);
@@ -142,8 +155,25 @@ async function fetchCandles({ symbol, interval = '1h', limit = 400, timeoutMs = 
     throw new Error(`Alpaca no devolvió barras para ${sym} (¿ticker inexistente o sin datos en ese feed?)`);
   }
 
-  const candles = bruto.map((b) => toCandle(b, tf, now)).filter(usable);
-  return { symbol: sym, interval: tf, source: `alpaca:${FEED}`, fetchedAt: now, candles: candles.slice(-limit) };
+  let candles = bruto.map((b) => toCandle(b, tf, now)).filter(usable);
+
+  // Alpaca devuelve también las barras de horario extendido, y en el feed
+  // gratuito ésas son finísimas: medido en vivo, 55 de 205 barras de una hora
+  // caían fuera de sesión. Un rango ancho con cuatro operaciones infla el ATR
+  // y coloca pivotes donde no hubo mercado. `soloSesion` las quita; lo decide
+  // quien llama, porque este módulo no sabe de calendarios.
+  let fuera = 0;
+  if (typeof soloSesion === 'function' && intervalMinutes(tf) < 1440) {
+    const dentro = candles.filter((c) => soloSesion(c.openTime));
+    fuera = candles.length - dentro.length;
+    candles = dentro;
+  }
+
+  return {
+    symbol: sym, interval: tf, source: `alpaca:${FEED}`, fetchedAt: now,
+    candles: candles.slice(-limit),
+    fueraDeSesion: fuera,
+  };
 }
 
 // Mejor compra y venta ahora mismo. Se prefiere el libro a la última
@@ -168,7 +198,19 @@ async function fetchQuote({ symbol, timeoutMs = 6_000 }) {
     throw new Error(`Alpaca no devolvió libro utilizable para ${sym}`);
   }
 
-  return { symbol: sym, price: (bid + ask) / 2, bid, ask, at: q.t ? Date.parse(q.t) : Date.now(), feed: FEED };
+  const price = (bid + ask) / 2;
+  const horquilla = (ask - bid) / price;
+
+  if (horquilla > HORQUILLA_MAX) {
+    const err = new Error(
+      `Alpaca: horquilla del ${(horquilla * 100).toFixed(2)}% en ${sym} (${bid}–${ask}); ` +
+        'eso no es un libro utilizable, normalmente es el mercado cerrado'
+    );
+    err.horquilla = horquilla;
+    throw err;
+  }
+
+  return { symbol: sym, price, bid, ask, horquilla, at: q.t ? Date.parse(q.t) : Date.now(), feed: FEED };
 }
 
 // Reloj del mercado. Esto es lo que evita mantener un calendario de festivos:
@@ -221,7 +263,7 @@ async function fetchClock({ timeoutMs = 6_000 } = {}) {
 }
 
 module.exports = {
-  TIMEFRAMES, FEED, TRADING_APIS, hayClave, parseSymbol, parseInterval, intervalMinutes,
+  TIMEFRAMES, FEED, TRADING_APIS, HORQUILLA_MAX, hayClave, parseSymbol, parseInterval, intervalMinutes,
   toCandle, fetchCandles, fetchQuote, fetchClock, _relojCache: relojCache,
   _olvidarTradingApi: () => { tradingApiBueno = null; },
 };

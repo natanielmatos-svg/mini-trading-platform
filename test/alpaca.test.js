@@ -204,3 +204,80 @@ test('si el reloj falla se sirve el último bueno antes que quedarse sin saber',
   const viejo = await alpaca.fetchClock();
   assert.deepStrictEqual(viejo, bueno);
 });
+
+// --- Libros que no son libros ----------------------------------------------
+
+test('una horquilla imposible no se acepta como precio', () => {
+  // Caso real, medido en vivo con la bolsa cerrada: el feed de IEX devolvió
+  // para AAPL una horquilla del 10% y un punto medio de 340,04 cuando la
+  // última vela había cerrado en 309,27. Eso no es un precio: son dos puntas
+  // de sesiones distintas.
+  //
+  // Importaba porque la resistencia estaba en 309,91, así que el análisis
+  // habría cantado "nivel superado" y podido abrir una compra sobre un número
+  // que no existió nunca.
+  // Estas puntas reproducen la medición: punto medio 340,04 y 10,03%.
+  estado.quotes = { body: { quotes: { AAPL: { bp: 322.99, ap: 357.09, bs: 1, as: 1, t: '2026-09-22T02:00:00Z' } } } };
+
+  return assert.rejects(
+    () => alpaca.fetchQuote({ symbol: 'AAPL' }),
+    (err) => {
+      assert.match(err.message, /horquilla del 10,0|horquilla del 10\.0/);
+      assert.ok(err.horquilla > 0.09 && err.horquilla < 0.11, `el dato viaja con el error: ${err.horquilla}`);
+      assert.match(err.message, /mercado cerrado/, 'y dice la causa más probable');
+      return true;
+    }
+  );
+});
+
+test('una horquilla normal sigue pasando', async () => {
+  estado.quotes = { body: { quotes: { AAPL: { bp: 309.2, ap: 309.3, bs: 5, as: 5, t: '2026-09-22T15:00:00Z' } } } };
+  const q = await alpaca.fetchQuote({ symbol: 'AAPL' });
+
+  assert.ok(Math.abs(q.price - 309.25) < 1e-9);
+  assert.ok(q.horquilla < 0.001, `horquilla ${q.horquilla}`);
+});
+
+test('el límite de horquilla está donde separa un libro real de uno roto', () => {
+  // Un valor del catálogo que cotiza con más de un 2% de horquilla no está
+  // cotizando: ni las megacaps ni los ETF de índices se acercan a eso.
+  assert.ok(alpaca.HORQUILLA_MAX > 0.001, 'ni tan estrecho que rechace un libro normal');
+  assert.ok(alpaca.HORQUILLA_MAX < 0.05, 'ni tan ancho que acepte el de tu caso');
+});
+
+test('las barras de horario extendido se pueden recortar a la sesión', async () => {
+  // Medido en vivo: 55 de 205 barras de una hora caían fuera de sesión. Un
+  // rango ancho con cuatro operaciones infla el ATR y coloca pivotes donde no
+  // hubo mercado.
+  const dentro = (ms) => new Date(ms).getUTCHours() >= 14 && new Date(ms).getUTCHours() < 20;
+  const barra = (iso, p) => ({ t: iso, o: p, h: p * 1.001, l: p * 0.999, c: p, v: 1000, n: 50 });
+
+  estado.bars = {
+    body: {
+      bars: {
+        AAPL: [
+          barra('2026-09-21T09:00:00Z', 300), // premarket
+          barra('2026-09-21T14:30:00Z', 301), // sesión
+          barra('2026-09-21T15:30:00Z', 302), // sesión
+          barra('2026-09-21T23:00:00Z', 303), // after hours
+        ],
+      },
+    },
+  };
+
+  const sin = await alpaca.fetchCandles({ symbol: 'AAPL', interval: '1h', limit: 10, now: Date.UTC(2026, 8, 22) });
+  assert.equal(sin.candles.length, 4, 'sin filtro vienen todas');
+  assert.equal(sin.fueraDeSesion, 0);
+
+  const con = await alpaca.fetchCandles({ symbol: 'AAPL', interval: '1h', limit: 10, now: Date.UTC(2026, 8, 22), soloSesion: dentro });
+  assert.equal(con.candles.length, 2, 'con filtro sólo las de sesión');
+  assert.equal(con.fueraDeSesion, 2, 'y se dice cuántas se quitaron');
+});
+
+test('las velas diarias no se filtran: una sesión entera no está fuera de sesión', async () => {
+  const nunca = () => false;
+  estado.bars = { body: { bars: { AAPL: [{ t: '2026-09-21T04:00:00Z', o: 300, h: 301, l: 299, c: 300.5, v: 1e6, n: 1e4 }] } } };
+
+  const r = await alpaca.fetchCandles({ symbol: 'AAPL', interval: '1d', limit: 5, now: Date.UTC(2026, 8, 22), soloSesion: nunca });
+  assert.equal(r.candles.length, 1, 'el filtro no se aplica a marcos de un día o más');
+});

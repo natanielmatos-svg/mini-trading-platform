@@ -470,6 +470,20 @@ npm start
 el mercado está abierto. No imprime el secreto. Lo que ya esté en el entorno
 manda sobre el `.env`, así que `PORT=3999 npm start` sigue funcionando.
 
+**Fuera de sesión no se pregunta al libro.** Medido en vivo con la bolsa
+cerrada, el feed gratuito de IEX devolvió para AAPL una horquilla del 10% y un
+punto medio de 340,04 cuando la última vela había cerrado en 309,27: dos puntas
+de sesiones distintas, no un precio. La resistencia estaba en 309,91, así que
+colarlo habría hecho que el análisis cantara «nivel superado» y pudiera abrir
+una compra sobre un número que no existió. Ahora una horquilla por encima del
+2% se rechaza —ningún valor del catálogo cotiza así— y con el mercado cerrado
+se usa directamente el cierre de la última vela de sesión.
+
+**Las barras de horario extendido se descartan** en los marcos intradía. Alpaca
+las devuelve mezcladas y en el feed gratuito son finísimas: 55 de 205 barras de
+una hora, medido en vivo. Un rango ancho con cuatro operaciones infla el ATR y
+coloca pivotes donde no hubo mercado.
+
 Sirven tanto las claves de la cuenta real como las de papel: no son
 intercambiables —una clave de papel contra el host real devuelve un 403 tan
 seco como no mandar credenciales— pero de la API de trading aquí sólo se usa el
@@ -894,6 +908,7 @@ públicos de mercado, y no acepta ninguna escritura.
 | `CFBENCHMARKS_API` | API pública | Endpoint del índice |
 | `CFBENCHMARKS_API_KEY` | — | Sólo si tu acceso al índice la necesita |
 | `ALPACA_KEY_ID` / `ALPACA_SECRET_KEY` | — | Precios de bolsa de verdad. Sin ellas `/acciones.html` funciona con datos de ejemplo y lo dice |
+| `ALPACA_SPREAD_MAX` | `0.02` | Horquilla máxima que se acepta como libro real |
 | `ALPACA_FEED` | `iex` | `iex` es gratis y de un solo mercado; `sip` es la cinta consolidada, de pago |
 | `ALPACA_DATA_API` | API de datos de Alpaca | Para apuntar a un mock |
 | `ALPACA_API` | real y papel, en ese orden | Hosts de trading a probar, separados por comas. Sólo se usa para el reloj del mercado |
@@ -952,5 +967,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  325 tests, sin red
+test/                  330 tests, sin red
 ```

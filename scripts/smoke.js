@@ -280,7 +280,9 @@ async function comprobarAcciones() {
     );
 
     const inicio = Date.now();
-    const { candles, source } = await alpaca.fetchCandles({ symbol: 'AAPL', interval: '1h', limit: 400 });
+    const { candles, source, fueraDeSesion } = await alpaca.fetchCandles({
+      symbol: 'AAPL', interval: '1h', limit: 400, soloSesion: stocks.enSesion,
+    });
     const elapsed = Date.now() - inicio;
 
     if (candles.length < 60) {
@@ -291,17 +293,20 @@ async function comprobarAcciones() {
     const ultima = candles[candles.length - 1];
     console.log(`  OK    ${source}: ${candles.length} velas de 1h en ${elapsed} ms (AAPL a ${formatPrice(ultima.close)})`);
 
-    // Que las velas caigan dentro de la sesión es la comprobación que delata
-    // un feed mal configurado: barras de madrugada significan datos extendidos
-    // o un timeframe que no es el pedido.
-    const fuera = candles.filter((c) => !stocks.enSesion(c.openTime)).length;
-    if (fuera > 0) {
-      console.log(`  AVISO ${fuera} de ${candles.length} velas caen fuera de la sesión regular (¿feed con horario extendido?)`);
+    if (fueraDeSesion > 0) {
+      console.log(`  INFO  ${fueraDeSesion} barras de horario extendido descartadas (quedan ${candles.length} de sesión)`);
     }
 
-    const cotiz = await alpaca.fetchQuote({ symbol: 'AAPL' });
-    const horquilla = ((cotiz.ask - cotiz.bid) / cotiz.price) * 100;
-    console.log(`  OK    Precio AAPL: ${formatPrice(cotiz.price)} (horquilla ${num(horquilla, 3)}%, feed ${cotiz.feed})`);
+    // El libro se pide igual aunque esté cerrado: es justo cuando devuelve
+    // basura, y lo que se comprueba aquí es que la basura NO pase.
+    try {
+      const cotiz = await alpaca.fetchQuote({ symbol: 'AAPL' });
+      console.log(`  OK    Precio AAPL: ${formatPrice(cotiz.price)} (horquilla ${num(cotiz.horquilla * 100, 3)}%, feed ${cotiz.feed})`);
+    } catch (err) {
+      console.log(`  OK    Libro rechazado, como debe: ${trunc(err.message, 95)}`);
+      const q = await stocks.getStockQuote({ symbol: 'AAPL' });
+      console.log(`        Se usa el cierre: ${formatPrice(q.price)} de ${new Date(q.at).toISOString()}`);
+    }
 
     // Y el mismo análisis que en cripto, sobre velas de bolsa.
     const ruptura = analyzeBreakout(candles, { interval: '1h' });
