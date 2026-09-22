@@ -323,6 +323,24 @@ rendimientos estandarizados se centran en su mediana, y los cuantiles conformes
 también. Sin lo segundo, un tramo de entrenamiento con tendencia metía esa
 tendencia en la banda central por la puerta de atrás.
 
+#### Dónde se ve
+
+En el **gráfico**, como abanico a la derecha de la última vela: cada horizonte
+pone su punto y la forma sale de los números calculados, no de una curva
+supuesta. La parte oscura es el 50% de las veces; la clara, el 90%. La línea
+central va discontinua porque **es el precio de ahora prolongado**, no una
+predicción de dirección.
+
+Y en una línea dentro del bloque de tiempo, que es la primera tarjeta y no hay
+que bajar para verla: «en 1 h, la mitad de las veces entre 60.053 y 60.383 ·
+acierta 91% de 90%».
+
+El abanico tiene su propio margen para estirar la escala, y muy estrecho: la
+banda del 90% a un día llega un 5% más arriba que cualquier vela, y dejarla
+mandar aplastaba el histórico hasta que la rejilla se quedaba en una sola
+línea. Lo que no cabe se recorta contra el borde, que además es la lectura
+correcta.
+
 #### La columna que hace esto comprobable
 
 `src/calibracion.js` recorre el histórico prediciendo hacia delante —**sólo con

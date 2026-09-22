@@ -298,3 +298,15 @@ button.small { font-size: 11px; padding: 3px 8px; }
 .pred-nota.bull { color: var(--up); }
 .pred-nota.bear { color: var(--down); }
 .pred-nota.flat { color: var(--muted); }
+
+/* Resumen de la predicción dentro del bloque de tiempo, que va el primero */
+.pred-linea {
+  margin: 9px 0 0; padding-top: 8px; border-top: 1px solid var(--line);
+  font-size: 11px; color: var(--muted); line-height: 1.5; font-variant-numeric: tabular-nums;
+}
+.pred-linea:empty { display: none; }
+.pred-linea strong { color: var(--text); font-weight: 600; }
+.pred-linea .nota { font-weight: 600; }
+.pred-linea .nota.bull { color: var(--up); }
+.pred-linea .nota.bear { color: var(--down); }
+.pred-linea .nota.flat { color: var(--muted); }

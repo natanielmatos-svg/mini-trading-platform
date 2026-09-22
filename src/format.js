@@ -50,7 +50,10 @@ function formatDuration(ms) {
   const rest = mins % 60;
   if (hours < 24) return rest ? `${hours} h ${rest} min` : `${hours} h`;
   const days = Math.floor(hours / 24);
-  return `${days} d ${hours % 24} h`;
+  // Sin las horas cuando son cero: "1 d 0 h" no lo dice nadie, y aparece justo
+  // en el caso más habitual de todos, el de un día redondo.
+  const resto = hours % 24;
+  return resto ? `${days} d ${resto} h` : `${days} d`;
 }
 
 // Cuenta atrás mm:ss o h:mm:ss.

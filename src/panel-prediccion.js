@@ -105,7 +105,36 @@ function render(contenedor, datos, interval) {
     <p class="disclaimer">Distribución estimada sobre datos públicos. No es una recomendación de inversión.</p>`;
 }
 
-const API = { render, nota, MS };
+/**
+ * El resumen de una línea, para la tarjeta que está siempre a la vista.
+ *
+ * Coge el horizonte más corto, que es el mejor calibrado y el único al que
+ * alguien va a reaccionar de verdad. Los plazos largos viven en la tabla.
+ */
+function renderLinea(contenedor, datos, interval) {
+  if (!contenedor) return;
+  if (!datos || !Array.isArray(datos.horizontes)) {
+    contenedor.innerHTML = '';
+    return;
+  }
+
+  const h = datos.horizontes.find((x) => x.ok);
+  if (!h) {
+    contenedor.innerHTML = '';
+    return;
+  }
+
+  const lo = h.bandas.find((b) => b.q === 0.25);
+  const hi = h.bandas.find((b) => b.q === 0.75);
+  const n = nota(h.calibracion);
+  const cuando = formatDuration(h.bloques * (MS[interval] || 3600e3));
+
+  contenedor.innerHTML =
+    `en ${cuando}, la mitad de las veces entre <strong>${formatPrice(lo.price)}</strong> y ` +
+    `<strong>${formatPrice(hi.price)}</strong> · <span class="nota ${n.clase}" title="${n.detalle.replace(/"/g, '&quot;')}">acierta ${n.texto}</span>`;
+}
+
+const API = { render, renderLinea, nota, MS };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
 else globalThis.PanelPrediccion = API;

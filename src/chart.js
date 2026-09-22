@@ -23,6 +23,20 @@ const { emaSeries } = I;
 const PAD = { top: 14, right: 66, bottom: 26, left: 10 };
 const VOLUME_RATIO = 0.18;
 
+// Qué parte del ancho se reserva a la derecha para la proyección, cuando la
+// hay. Sin proyección el gráfico ocupa todo, exactamente igual que antes.
+const PROY_RATIO = 0.22;
+
+// Cuánto puede estirar la escala el abanico, sobre el rango de las velas.
+//
+// Tiene margen propio, y muy estrecho, porque su naturaleza es la contraria a
+// la de un nivel: la banda del 90% a un día llega un 5% más arriba que
+// cualquier vela, y dejarla mandar aplastaba el histórico hasta que la rejilla
+// saltaba de 2.000 a 5.000 y se quedaba una sola línea. Lo que se sale se
+// recorta contra el borde, que además es la lectura correcta: ese horizonte
+// llega más lejos de lo que cabe en pantalla.
+const PROY_MARGEN = 0.04;
+
 const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
 
 function fmtTimeAxis(ms, interval) {
@@ -66,11 +80,19 @@ function niceStep(range, targetLines) {
  * @param canvas   el <canvas>
  * @param opciones { candles, interval, emaFast, emaSlow, levels, hover }
  *   levels: [{ price, color, tag, dense }] — resistencias, stop, objetivo…
+ *   proyeccion: { horizontes: [{ bloques, bandas }], etiqueta } — el abanico.
+ *     Se dibuja a la derecha de la última vela, en espacio reservado: hacia
+ *     donde PUEDE ir el precio, no hacia dónde va. La banda central es el
+ *     precio actual a propósito.
  */
-function draw(canvas, { candles = [], interval = '1h', emaFast = null, emaSlow = null, levels = [], hover = null } = {}) {
+function draw(canvas, { candles = [], interval = '1h', emaFast = null, emaSlow = null, levels = [], hover = null, proyeccion = null } = {}) {
   const ctx = canvas.getContext('2d');
-  const { w, h, plotW, plotH, volumeH, volumeTop } = geometry(canvas);
+  const { w, h, plotW: plotTotal, plotH, volumeH, volumeTop } = geometry(canvas);
   if (w <= 0 || h <= 0) return;
+
+  const hayProy = Boolean(proyeccion && Array.isArray(proyeccion.horizontes) && proyeccion.horizontes.length);
+  const plotW = hayProy ? plotTotal * (1 - PROY_RATIO) : plotTotal;
+  const proyW = plotTotal - plotW;
 
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = '#020617';
@@ -96,6 +118,30 @@ function draw(canvas, { candles = [], interval = '1h', emaFast = null, emaSlow =
     }
   }
 
+  // El cono entra en la escala: una banda que se sale por arriba no se ve, y
+  // es justo la que dice cuánto puede subir esto.
+  // Con el mismo margen que los niveles, y por el mismo motivo al revés: la
+  // banda de un día llega mucho más lejos que el rango de las velas, y dejarla
+  // estirar la escala aplastaba el histórico hasta dejar una sola línea de
+  // rejilla. Los horizontes que no caben se dibujan igual y se recortan
+  // contra el borde, que es la lectura correcta: se salen de lo que se ve.
+  if (hayProy) {
+    // El límite se fija ANTES del bucle. Calcularlo dentro lo convertía en una
+    // cascada: cada banda admitida subía el techo para la siguiente, así que
+    // un margen del 4% acababa dejando pasar el 9% y la escala se estiraba
+    // igual. La rejilla saltaba a un paso de 5.000 y quedaba una sola línea.
+    const techo = maxPrice * (1 + PROY_MARGEN);
+    const suelo = minPrice * (1 - PROY_MARGEN);
+
+    for (const h of proyeccion.horizontes) {
+      for (const b of h.bandas || []) {
+        if (!Number.isFinite(b.price)) continue;
+        if (b.price < techo) maxPrice = Math.max(maxPrice, b.price);
+        if (b.price > suelo) minPrice = Math.min(minPrice, b.price);
+      }
+    }
+  }
+
   const margin = (maxPrice - minPrice) * 0.06 || maxPrice * 0.01;
   maxPrice += margin;
   minPrice -= margin;
@@ -115,11 +161,11 @@ function draw(canvas, { candles = [], interval = '1h', emaFast = null, emaSlow =
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(PAD.left, y);
-    ctx.lineTo(PAD.left + plotW, y);
+    ctx.lineTo(PAD.left + plotTotal, y);
     ctx.stroke();
     ctx.fillStyle = '#64748b';
     ctx.textAlign = 'left';
-    ctx.fillText(formatPrice(price), PAD.left + plotW + 6, y);
+    ctx.fillText(formatPrice(price), PAD.left + plotTotal + 6, y);
   }
 
   // Eje de tiempo: unas seis marcas, alineadas a velas reales.
@@ -185,8 +231,19 @@ function draw(canvas, { candles = [], interval = '1h', emaFast = null, emaSlow =
     if (nivel) linea(ctx, nivel.price, nivel.color, nivel.tag, yFor, plotW, nivel.dense);
   }
 
+  if (hayProy) {
+    // Recortado al área de dibujo: sin esto, un horizonte que se sale pinta
+    // sobre el eje de precios y sobre el bloque de volumen.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(PAD.left, PAD.top, plotTotal, plotH);
+    ctx.clip();
+    abanico(ctx, proyeccion, PAD.left + plotW, proyW, yFor, plotH);
+    ctx.restore();
+  }
+
   const last = candles[candles.length - 1];
-  etiquetaPrecio(ctx, last.close, last.close >= last.open ? '#22c55e' : '#ef4444', plotW, yFor);
+  etiquetaPrecio(ctx, last.close, last.close >= last.open ? '#22c55e' : '#ef4444', plotTotal, yFor);
 
   if (hover !== null && candles[hover]) {
     const x = xFor(hover);
@@ -198,6 +255,88 @@ function draw(canvas, { candles = [], interval = '1h', emaFast = null, emaSlow =
     ctx.lineTo(x, PAD.top + plotH);
     ctx.stroke();
     ctx.restore();
+  }
+}
+
+// El abanico de predicción: todos los horizontes a la vez.
+//
+// Al principio dibujaba un solo horizonte interpolando por raíz del tiempo, y
+// salía un hilo de dos píxeles: la incertidumbre de UNA vela es minúscula al
+// lado de trescientas de histórico. Y eso es verdad, así que la respuesta no
+// era exagerarla sino enseñar el abanico entero, donde cada horizonte pone su
+// punto y la forma sale de los números calculados, no de una curva supuesta.
+//
+// Se lee de un vistazo: cuanto más a la derecha, más lejos en el tiempo y más
+// ancho el rango. La parte oscura es el 50% de las veces; la clara, el 90%.
+function abanico(ctx, { horizontes, etiqueta }, x0, ancho, yFor, plotH) {
+  const utiles = (horizontes || []).filter((h) => h && Array.isArray(h.bandas) && h.bandas.length);
+  if (!utiles.length) return;
+
+  const maxBloques = Math.max(...utiles.map((h) => h.bloques));
+  if (!(maxBloques > 0)) return;
+
+  const precioDe = (h, q) => {
+    const b = h.bandas.find((x) => Math.abs(x.q - q) < 1e-9);
+    return b ? b.price : null;
+  };
+
+  const p50 = precioDe(utiles[0], 0.5);
+  if (!Number.isFinite(p50)) return;
+
+  // Del más cercano al más lejano, que es como se recorre el eje.
+  const orden = [...utiles].sort((a, b) => a.bloques - b.bloques);
+  const xDe = (h) => x0 + (ancho * h.bloques) / maxBloques;
+
+  for (const [qLo, qHi, color] of [[0.05, 0.95, 'rgba(56,189,248,0.10)'], [0.25, 0.75, 'rgba(56,189,248,0.22)']]) {
+    const arriba = [];
+    const abajo = [];
+    for (const h of orden) {
+      const hi = precioDe(h, qHi);
+      const lo = precioDe(h, qLo);
+      if (!Number.isFinite(hi) || !Number.isFinite(lo)) continue;
+      arriba.push([xDe(h), yFor(hi)]);
+      abajo.push([xDe(h), yFor(lo)]);
+    }
+    if (arriba.length < 2) continue;
+
+    ctx.beginPath();
+    // Arranca en el precio de ahora: a tiempo cero no hay incertidumbre.
+    ctx.moveTo(x0, yFor(p50));
+    for (const [x, y] of arriba) ctx.lineTo(x, y);
+    for (let i = abajo.length - 1; i >= 0; i--) ctx.lineTo(abajo[i][0], abajo[i][1]);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+
+  // La línea central, discontinua: recuerda que no es una predicción de
+  // dirección sino el precio de ahora prolongado.
+  ctx.save();
+  ctx.setLineDash([3, 4]);
+  ctx.strokeStyle = 'rgba(148,163,184,0.7)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x0, yFor(p50));
+  ctx.lineTo(x0 + ancho, yFor(p50));
+  ctx.stroke();
+
+  // Separador entre lo que pasó y lo que puede pasar.
+  ctx.setLineDash([2, 3]);
+  ctx.strokeStyle = 'rgba(148,163,184,0.45)';
+  ctx.beginPath();
+  ctx.moveTo(x0, PAD.top);
+  ctx.lineTo(x0, PAD.top + plotH);
+  ctx.stroke();
+  ctx.restore();
+
+  if (etiqueta) {
+    ctx.fillStyle = '#64748b';
+    ctx.font = '10px system-ui, sans-serif';
+    // Anclada a la derecha: centrada se salía del área y se cortaba a media
+    // palabra, que es peor que no ponerla.
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'top';
+    ctx.fillText(etiqueta, x0 + ancho - 2, PAD.top + 2);
   }
 }
 
@@ -261,16 +400,22 @@ function etiquetaPrecio(ctx, price, color, plotW, yFor) {
 }
 
 // Qué vela hay bajo el cursor, o null si está fuera.
-function indexAt(canvas, clientX, candles) {
+//
+// `conProyeccion` no es opcional por capricho: con el cono dibujado, las velas
+// ocupan menos ancho, y sin decírselo el tooltip señalaría una vela y
+// resaltaría otra. Es el tipo de desajuste que nadie reporta y todo el mundo
+// nota.
+function indexAt(canvas, clientX, candles, { conProyeccion = false } = {}) {
   const rect = canvas.getBoundingClientRect();
   const x = clientX - rect.left;
   const { plotW } = geometry(canvas);
-  const xStep = plotW / Math.max(candles.length, 1);
+  const ancho = conProyeccion ? plotW * (1 - PROY_RATIO) : plotW;
+  const xStep = ancho / Math.max(candles.length, 1);
   const i = Math.floor((x - PAD.left) / xStep);
   return i >= 0 && i < candles.length ? i : null;
 }
 
-const API = { draw, resize, geometry, niceStep, indexAt, fmtTimeAxis, PAD, clamp };
+const API = { draw, resize, geometry, niceStep, indexAt, fmtTimeAxis, PAD, clamp, PROY_RATIO };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
 else globalThis.Chart = API;

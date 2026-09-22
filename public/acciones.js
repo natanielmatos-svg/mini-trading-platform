@@ -63,6 +63,7 @@ const el = {
   status: $('statusText'),
   breakout: $('breakoutPanel'),
   forecast: $('forecastPanel'),
+  predLinea: $('predLinea'),
   market: $('marketState'),
   marketLabel: $('marketLabel'),
   aviso: $('avisoClave'),
@@ -333,10 +334,12 @@ async function loadForecast() {
     state.forecast = { error: `No se pudo predecir: ${err.message}` };
   }
   renderForecast();
+  drawChart(); // el cono vive en el gráfico
 }
 
 function renderForecast() {
   if (el.forecast) PanelPrediccion.render(el.forecast, state.forecast, state.interval);
+  PanelPrediccion.renderLinea(el.predLinea, state.forecast, state.interval);
 }
 
 // ---------------------------------------------------------------------------
@@ -506,6 +509,24 @@ function nivelesDelGrafico() {
   return niveles;
 }
 
+// El primer horizonte de la predicción, dibujado como cono a la derecha del
+// gráfico. Ahí se ve sin bajar la página, que es donde se mira.
+function proyeccionDelGrafico() {
+  const f = state.forecast;
+  if (!f || !Array.isArray(f.horizontes)) return null;
+
+  const utiles = f.horizontes.filter((x) => x.ok && Array.isArray(x.bandas));
+  if (!utiles.length) return null;
+
+  const lejano = utiles[utiles.length - 1];
+  const paso = PanelPrediccion.MS[state.interval] || 3600e3;
+
+  return {
+    horizontes: utiles.map((h) => ({ bloques: h.bloques, bandas: h.bandas })),
+    etiqueta: `próximas ${formatDuration(lejano.bloques * paso)} · 50% y 90%`,
+  };
+}
+
 function drawChart() {
   const { fast, slow } = emaLengths();
   Chart.draw(el.canvas, {
@@ -515,11 +536,12 @@ function drawChart() {
     emaSlow: slow,
     levels: nivelesDelGrafico(),
     hover: state.hover,
+    proyeccion: proyeccionDelGrafico(),
   });
 }
 
 function onCanvasMove(event) {
-  const index = Chart.indexAt(el.canvas, event.clientX, state.candles);
+  const index = Chart.indexAt(el.canvas, event.clientX, state.candles, { conProyeccion: Boolean(proyeccionDelGrafico()) });
   if (index === null) {
     hideTooltip();
     return;
