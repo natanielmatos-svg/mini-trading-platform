@@ -85,6 +85,50 @@ operación a cada cliente es tráfico que nadie puede leer, así que el servidor
 las **agrupa a diez por segundo**. Lo que se descarta son los precios
 intermedios, nunca el más reciente.
 
+### Por qué el precio no tiembla
+
+Al principio el titular se repintaba con cada tick y parecía agitadísimo
+aunque el mercado estuviera parado. El problema no era la latencia sino la
+**resolución**: con BTC a 85.763,2 el último dígito vale 0,1 $ —un 0,00012%—
+y a eso lo mueve cualquier operación suelta. Peor, lo que llega por
+`@aggTrade` es el precio de *cada operación ejecutada*, que rebota entre la
+compra y la venta del libro aunque nadie mueva el precio.
+
+Kalshi se ve quieto por lo contrario: cotiza de 0 a 100 ¢ con tick de 1 ¢, un
+1% del rango. Sencillamente no puede enseñar ruido más fino. Nuestra pantalla
+tenía ocho mil veces más resolución que la suya.
+
+`src/precio-vivo.js` hace lo mismo a la escala que toca, con dos piezas:
+
+- **El escalón** decide cuántos dígitos se enseñan: se redondea a entre el
+  0,001% y el 0,01% del precio, que es el orden de la horquilla del libro.
+- **La banda** decide cuándo se repinta: el número no se mueve hasta que el
+  precio se aleja de lo que está puesto más de un 0,05%.
+
+Las dos hacen falta, y eso salió de medirlo. Con sólo el escalón, un mercado
+quieto seguía repintando 173 veces por minuto: el rebote entre compra y venta
+es **más ancho que el escalón**, así que cruzaba la frontera de redondeo en
+cada tick. Redondear no quita un rebote que salta por encima del redondeo; la
+histéresis sí, porque mide contra lo que se está enseñando y no contra una
+rejilla fija.
+
+Medido sobre 600 ticks en un minuto (10/s):
+
+| Régimen | Sin calmar | Sólo escalón | Con histéresis |
+|---|---|---|---|
+| Muy quieto (0,002%/s) | 600 | 158 | **1** |
+| Quieto (0,01%/s) | 600 | 183 | **1** |
+| Normal (0,04%/s) | 600 | 194 | **14** |
+| Movido (0,2%/s) | 600 | 200 | **129** |
+
+Se queda quieto cuando no pasa nada y sigue el precio cuando sí. Y hay un
+tope de un repintado cada 250 ms, porque el destello de color necesita tiempo
+para verse.
+
+**Esto es sólo de pantalla.** La distancia al nivel de ruptura, el ATR y las
+señales siguen con el precio crudo, tick a tick. Suavizar el número del que
+depende una señal de compra sería mentir sobre lo cerca que está de romper.
+
 ### Precio consolidado de tres mercados
 
 El titular no es el precio de un solo exchange: es la **mediana de Binance,
@@ -809,6 +853,7 @@ src/
   format.js            formato de precios y porcentajes — servidor Y navegador
   signals.js           compras y ventas — servidor Y navegador
   chart.js             el gráfico de velas — las DOS páginas
+  precio-vivo.js       calma el titular sin tocar el precio del análisis
   panel-ruptura.js     el panel «¿Rompe esta vela?» — las DOS páginas
   avisos.js            sonido, ventana emergente y seguimiento — las DOS páginas
   tabla-mtf.js         la tabla de tendencia — las DOS páginas
@@ -841,5 +886,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  268 tests, sin red
+test/                  300 tests, sin red
 ```

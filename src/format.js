@@ -23,9 +23,11 @@ function priceDecimals(price) {
   return 6;
 }
 
-function formatPrice(price) {
+// `decimales` sólo lo pasa el titular en vivo, que usa un escalón más grueso
+// que el resto de la interfaz a propósito: ver src/precio-vivo.js.
+function formatPrice(price, decimales = null) {
   if (!Number.isFinite(price)) return '—';
-  const d = priceDecimals(price);
+  const d = Number.isInteger(decimales) ? decimales : priceDecimals(price);
   return price.toLocaleString('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d });
 }
 

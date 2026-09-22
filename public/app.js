@@ -14,6 +14,7 @@ const Chart = globalThis.Chart;
 const Ruptura = globalThis.Ruptura;
 const Avisos = globalThis.Avisos;
 const TablaMtf = globalThis.TablaMtf;
+const PrecioVivo = globalThis.PrecioVivo;
 
 const MTF = ['1h', '4h', '1d', '1w'];
 const CANDLES = 300;
@@ -34,7 +35,6 @@ const state = {
   precioError: null, // por qué no hay consolidado, si lo hay
   base: 0,           // diferencia medida entre el consolidado y Binance
   priceTimer: null,
-  ultimoPintado: null,
   source: null,
   fetchedAt: null,
   loading: false,
@@ -618,35 +618,50 @@ function renderVenues() {
 // barra vaciándose. Se repinta cuatro veces por segundo —el cronómetro sólo
 // cambia cada segundo, pero la barra se mueve suave y el precio llega cuando
 // llega— y no toca el canvas, así que es barato.
+// El titular no se repinta con cada tick: ver src/precio-vivo.js. El precio
+// que usa el ANÁLISIS no pasa por aquí y sigue siendo el crudo.
+const calma = PrecioVivo.crear();
+
 function renderClock() {
-  const precio = precioTitular();
   const ventana = ventanaActual();
   if (!ventana) return;
 
   el.clockPair.textContent = `${state.symbol} · ${state.interval}`;
 
-  if (precio !== null) {
-    el.price.textContent = formatPrice(precio);
+  // `siguiente` devuelve null casi siempre: sólo habla cuando el precio se ha
+  // movido lo bastante como para que cambie algún dígito que se enseña.
+  const nuevo = calma.siguiente(precioTitular());
+  if (nuevo) {
+    el.price.textContent = formatPrice(nuevo.valor, nuevo.decimales);
 
-    // Destello al cambiar: el número parece vivo aunque el cambio sea de un
-    // céntimo, que es justo lo que se pide a un precio en tiempo real.
-    if (state.ultimoPintado !== null && precio !== state.ultimoPintado) {
+    // Destello sólo cuando el número cambia de verdad. Antes saltaba con cada
+    // tick, y a diez por segundo el ojo veía muchísimo más movimiento del que
+    // había.
+    if (nuevo.direccion) {
       el.price.classList.remove('sube', 'baja');
       void el.price.offsetWidth; // reinicia la animación
-      el.price.classList.add(precio > state.ultimoPintado ? 'sube' : 'baja');
+      el.price.classList.add(nuevo.direccion);
     }
-    state.ultimoPintado = precio;
+  }
 
-    // El cambio se mide desde que abrió ESTA vela: es de lo que va el bloque.
-    const abierta = state.candles[state.candles.length - 1];
-    const apertura = abierta && abierta.openTime === ventana.open ? abierta.open : null;
-    if (apertura > 0) {
-      const cambio = (precio - apertura) / apertura;
-      el.priceChange.textContent = `${cambio >= 0 ? '+' : ''}${formatPercent(cambio, 2)} en esta vela`;
-      el.priceChange.className = `change ${cambio >= 0 ? 'up' : 'down'}`;
-    } else {
-      el.priceChange.textContent = '';
-    }
+  // El porcentaje va FUERA del `if`: también cambia cuando se abre una vela
+  // nueva, y metido dentro se quedaba en blanco para siempre en cuanto el
+  // precio se estaba quieto —que es la mayor parte del tiempo, justo ahora
+  // que el titular ya no tiembla—.
+  //
+  // Se mide desde que abrió ESTA vela y contra el precio que se está
+  // ENSEÑANDO: si se midiera contra el crudo, el porcentaje se movería con el
+  // titular quieto y parecerían dos números distintos de la misma cosa.
+  const abierta = state.candles[state.candles.length - 1];
+  const apertura = abierta && abierta.openTime === ventana.open ? abierta.open : null;
+  const mostrado = calma.valor;
+
+  if (apertura > 0 && mostrado !== null) {
+    const cambio = (mostrado - apertura) / apertura;
+    el.priceChange.textContent = `${cambio >= 0 ? '+' : ''}${formatPercent(cambio, 2)} en esta vela`;
+    el.priceChange.className = `change ${cambio >= 0 ? 'up' : 'down'}`;
+  } else {
+    el.priceChange.textContent = '';
   }
 
   renderVenues();
@@ -786,8 +801,8 @@ function applyControls({ symbol = null } = {}) {
     state.livePrice = null;
     state.consolidado = null;
     state.base = 0;
-    state.ultimoPintado = null;
     state.breakout = null;
+    calma.reiniciar(); // par nuevo: el primer precio no se compara con el anterior
     avisos.olvidarPrimera(); // par nuevo: no se grita por lo que ya había pasado
     connectStream();
     avisos.renderHint();

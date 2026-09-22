@@ -51,11 +51,11 @@ app.use((req, res, next) => {
 // archivo que ejecuta el análisis, así que no puede haber dos versiones de la
 // misma regla. `chart.js`, `panel-ruptura.js` y `avisos.js` no los usa el
 // servidor, pero sí las dos páginas —cripto y acciones—, y viven aquí por el
-// mismo motivo: un solo gráfico, un solo panel, un solo gestor de avisos y
-// una sola tabla.
+// mismo motivo: un solo gráfico, un solo panel, un solo gestor de avisos, una
+// sola tabla y un solo modo de calmar el precio en vivo.
 // Lista blanca explícita y no `express.static('src')`: ahí dentro están
 // también los proveedores y la orquestación.
-const SHARED_MODULES = ['indicators.js', 'format.js', 'signals.js', 'chart.js', 'panel-ruptura.js', 'avisos.js', 'tabla-mtf.js'];
+const SHARED_MODULES = ['indicators.js', 'format.js', 'signals.js', 'chart.js', 'panel-ruptura.js', 'avisos.js', 'tabla-mtf.js', 'precio-vivo.js'];
 
 app.get('/lib/:file', (req, res) => {
   if (!SHARED_MODULES.includes(req.params.file)) {

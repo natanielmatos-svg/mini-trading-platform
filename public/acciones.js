@@ -25,6 +25,9 @@ const Chart = globalThis.Chart;
 const Ruptura = globalThis.Ruptura;
 const Avisos = globalThis.Avisos;
 const TablaMtf = globalThis.TablaMtf;
+const PrecioVivo = globalThis.PrecioVivo;
+
+const calma = PrecioVivo.crear();
 
 const MTF = ['1h', '4h', '1d', '1w'];
 const CANDLES = 300;
@@ -98,7 +101,6 @@ const state = {
   aviso: null,        // por qué son datos de ejemplo, si lo son
   loading: false,
   cargandoPrecio: false,
-  ultimoPintado: null,
   hover: null,
   timerVelas: null,
   timerPrecio: null,
@@ -385,8 +387,12 @@ function renderMarket() {
 // en curso se dice «en esta vela»; si el mercado lleva cerrado un rato es la
 // última que hubo, y se dice. Antes, cuando no coincidían, el hueco se quedaba
 // en blanco: el precio sin referencia no dice nada.
-function renderCambio(precio, ventana) {
+function renderCambio(ventana) {
   const ultima = state.candles[state.candles.length - 1];
+  // Contra el precio que se está ENSEÑANDO, no contra el crudo: si no, el
+  // porcentaje se movería con el titular quieto y parecerían dos números
+  // distintos de la misma cosa.
+  const precio = calma.valor !== null ? calma.valor : precioActual();
   if (!ultima || !(ultima.open > 0) || precio === null) {
     el.priceChange.textContent = '';
     return;
@@ -403,19 +409,17 @@ function renderCambio(precio, ventana) {
 // a mover, así que cuenta lo que falta para la apertura.
 function renderClock() {
   el.clockPair.textContent = `${state.symbol} · ${state.interval}`;
-  const precio = precioActual();
 
-  if (precio !== null) {
-    el.price.textContent = formatPrice(precio);
-
-    // Destello al cambiar: el número parece vivo aunque el cambio sea de un
-    // céntimo, que es justo lo que se pide a un precio en tiempo real.
-    if (state.ultimoPintado !== null && precio !== state.ultimoPintado) {
+  // El titular no se repinta con cada consulta: ver src/precio-vivo.js. El
+  // precio que usa el ANÁLISIS no pasa por aquí y sigue siendo el crudo.
+  const nuevo = calma.siguiente(precioActual());
+  if (nuevo) {
+    el.price.textContent = formatPrice(nuevo.valor, nuevo.decimales);
+    if (nuevo.direccion) {
       el.price.classList.remove('sube', 'baja');
       void el.price.offsetWidth; // reinicia la animación
-      el.price.classList.add(precio > state.ultimoPintado ? 'sube' : 'baja');
+      el.price.classList.add(nuevo.direccion);
     }
-    state.ultimoPintado = precio;
   }
 
   const ventana = ventanaActual();
@@ -435,14 +439,14 @@ function renderClock() {
       ? `abre ${horaNY(state.clock.nextOpen, { weekday: 'short' })} NY`
       : '';
 
-    renderCambio(precio, ventana);
+    renderCambio(ventana);
     return;
   }
 
   el.clockCard.classList.remove('cerrado');
   if (!ventana) return;
 
-  renderCambio(precio, ventana);
+  renderCambio(ventana);
 
   el.countdownLabel.textContent = ventana.recortada ? 'cierra la sesión en' : 'cierra en';
   el.countdownBig.textContent = formatClock(ventana.remainingMs);
@@ -566,8 +570,8 @@ function applyControls() {
   if (changed) {
     state.candles = [];
     state.quote = null;
-    state.ultimoPintado = null;
     state.breakout = null;
+    calma.reiniciar(); // valor nuevo: el primer precio no se compara con el anterior
     avisos.olvidarPrimera(); // valor nuevo: no se grita por lo que ya había pasado
     avisos.renderHint();
   }
