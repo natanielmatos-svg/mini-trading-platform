@@ -141,8 +141,17 @@ async function fetchCandles({ symbol, interval = '1h', limit = 400, timeoutMs = 
   const diasNecesarios = Math.ceil((limit * minutos) / 390) + 5;
   const desde = new Date(now - diasNecesarios * 86_400_000).toISOString();
 
+  // `sort: desc` es la diferencia entre las barras de AHORA y las de hace una
+  // semana. Alpaca devuelve ascendente desde `start`, así que cuando la
+  // ventana contiene más barras que el límite se queda con las MÁS ANTIGUAS.
+  // Con velas de una hora la ventana cabía entera y no se notaba; con las de
+  // un minuto son 1.950 barras de sesión en el rango y sólo caben 800, así que
+  // devolvía las de hace seis días y el filtro de sesión las tiraba todas.
   const data = await fetchJson(`${DATA_API}/v2/stocks/bars`, {
-    searchParams: { symbols: sym, timeframe: TIMEFRAMES[tf], start: desde, limit: limit * 2, feed: FEED, adjustment: 'split' },
+    searchParams: {
+      symbols: sym, timeframe: TIMEFRAMES[tf], start: desde,
+      limit: limit * 2, feed: FEED, adjustment: 'split', sort: 'desc',
+    },
     headers: cabeceras(),
     timeoutMs,
     retries: 2,
@@ -155,7 +164,10 @@ async function fetchCandles({ symbol, interval = '1h', limit = 400, timeoutMs = 
     throw new Error(`Alpaca no devolvió barras para ${sym} (¿ticker inexistente o sin datos en ese feed?)`);
   }
 
-  let candles = bruto.map((b) => toCandle(b, tf, now)).filter(usable);
+  // Se ordena aquí pase lo que pase: si algún día `sort` deja de existir o se
+  // ignora, esto sigue devolviendo una serie cronológica en vez de una al
+  // revés, que rompería el ATR sin decir nada.
+  let candles = bruto.map((b) => toCandle(b, tf, now)).filter(usable).sort((a, b) => a.openTime - b.openTime);
 
   // Alpaca devuelve también las barras de horario extendido, y en el feed
   // gratuito ésas son finísimas: medido en vivo, 55 de 205 barras de una hora

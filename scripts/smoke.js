@@ -304,8 +304,15 @@ async function comprobarAcciones() {
       console.log(`  OK    Precio AAPL: ${formatPrice(cotiz.price)} (horquilla ${num(cotiz.horquilla * 100, 3)}%, feed ${cotiz.feed})`);
     } catch (err) {
       console.log(`  OK    Libro rechazado, como debe: ${trunc(err.message, 95)}`);
-      const q = await stocks.getStockQuote({ symbol: 'AAPL' });
-      console.log(`        Se usa el cierre: ${formatPrice(q.price)} de ${new Date(q.at).toISOString()}`);
+      try {
+        const q = await stocks.getStockQuote({ symbol: 'AAPL' });
+        console.log(`        Se usa el cierre: ${formatPrice(q.price)} de ${new Date(q.at).toISOString()}`);
+      } catch (err2) {
+        // No invalida la clave: el reloj y las velas acaban de funcionar con
+        // ella. Decir "revisa tus credenciales" aquí manda a buscar donde no
+        // está el problema.
+        console.log(`  AVISO no se pudo fechar un precio de respaldo: ${trunc(err2.message, 90)}`);
+      }
     }
 
     // Y el mismo análisis que en cripto, sobre velas de bolsa.

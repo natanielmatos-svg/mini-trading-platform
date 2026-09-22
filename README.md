@@ -262,18 +262,30 @@ El que no puede, no contribuye, y se dice cuál. Con menos de dos mercados no
 hay mediana —sería un mercado disfrazado de consenso— así que se vuelve a
 Binance y el estado lo explica: «Binance (sin consolidar: …)».
 
-**Consolidar no es cosmético.** Medido sobre datos sintéticos con ruido por
-mercado del 0,04% por vela:
+**¿Cambia algo consolidar?** Medido con los cuatro mercados en vivo, BTCUSDT
+de 1h, 400 velas:
 
 | | Sólo Binance | Consolidado | |
 |---|---|---|---|
-| ATR(14) | 411,26 | 383,61 | **−6,7%** |
-| Volatilidad anual | 27,0% | 24,0% | **−11,0%** |
+| ATR(14) | 539,46 | 534,52 | −0,92% |
+| Nivel al alza | 86.361,2 | 86.353,1 | −0,01% |
+| Volatilidad anual | 32,7% | 32,5% | −0,57% |
+| **Probabilidad al alza** | **52,2%** | **55,1%** | **+5,6%** |
 
-La mediana cancela el ruido propio de cada casa, y el ATR es el denominador de
-toda distancia a un nivel: si baja, la misma distancia en dólares pasa a ser
-más ATR y la probabilidad cambia. La magnitud real depende del ruido real;
-`npm run smoke` la mide con mercados de verdad y lo imprime.
+Las entradas apenas se mueven —los cuatro mercados están mucho más acoplados
+de lo que parecía: la dispersión entre ellos es del 0,017%— pero **la salida sí
+se mueve, casi tres puntos**.
+
+El motivo es que la probabilidad no es una fórmula continua sino una
+**frecuencia empírica**: se cuenta cuántas de las 385 velas anteriores
+recorrieron lo que hace falta. Bajar el ATR un 0,9% baja el listón lo justo
+para que unas cuantas velas más lo crucen. Con la muestra apretada alrededor
+del umbral, un cambio pequeño en la entrada mueve la cuenta varios puntos.
+
+Que quede dicho: primero supuse que sería cosmético, luego medí en laboratorio
+−6,7% de ATR con un ruido que me inventé, y con mercados de verdad es −0,9%.
+Las dos predicciones estaban mal. Lo que aguanta es lo medido, y `npm run
+smoke` lo vuelve a medir cada vez.
 
 ### Volatilidad
 
@@ -478,6 +490,13 @@ colarlo habría hecho que el análisis cantara «nivel superado» y pudiera abri
 una compra sobre un número que no existió. Ahora una horquilla por encima del
 2% se rechaza —ningún valor del catálogo cotiza así— y con el mercado cerrado
 se usa directamente el cierre de la última vela de sesión.
+
+**Se piden las barras más recientes.** Alpaca devuelve ascendente desde
+`start`, así que cuando la ventana contiene más barras que el límite se queda
+con las **más antiguas**. Con velas de una hora la ventana cabía entera y no se
+notaba; con las de un minuto son unas 1.950 barras de sesión en el rango y sólo
+caben 800, así que devolvía las de hace seis días. Se pide `sort: desc` y se
+ordena en cliente pase lo que pase.
 
 **Las barras de horario extendido se descartan** en los marcos intradía. Alpaca
 las devuelve mezcladas y en el feed gratuito son finísimas: 55 de 205 barras de
@@ -967,5 +986,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  330 tests, sin red
+test/                  332 tests, sin red
 ```

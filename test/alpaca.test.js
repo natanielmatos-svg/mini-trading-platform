@@ -281,3 +281,41 @@ test('las velas diarias no se filtran: una sesión entera no está fuera de sesi
   const r = await alpaca.fetchCandles({ symbol: 'AAPL', interval: '1d', limit: 5, now: Date.UTC(2026, 8, 22), soloSesion: nunca });
   assert.equal(r.candles.length, 1, 'el filtro no se aplica a marcos de un día o más');
 });
+
+test('se piden las barras MÁS RECIENTES, no las más antiguas del rango', async () => {
+  // El fallo: Alpaca devuelve ascendente desde `start`, así que cuando la
+  // ventana contiene más barras que el límite se quedaba con las de hace días.
+  // Con velas de una hora la ventana cabía entera y no se notaba; con las de
+  // un minuto son ~1.950 barras de sesión en el rango y sólo caben 800.
+  estado.bars = null;
+  estado.peticiones = [];
+
+  await alpaca.fetchCandles({ symbol: 'AAPL', interval: '1m', limit: 240, now: Date.UTC(2026, 8, 22) });
+  const p = estado.peticiones.find((x) => x.path.includes('/bars'));
+  assert.equal(p.params.sort, 'desc', 'sin esto se traen las viejas');
+});
+
+test('las velas salen en orden aunque lleguen del revés', async () => {
+  // `sort: desc` las devuelve de la más nueva a la más vieja. Si se dejaran
+  // así, el ATR y los niveles se calcularían sobre una serie invertida y nadie
+  // se enteraría: los números seguirían saliendo.
+  const barra = (iso, p) => ({ t: iso, o: p, h: p * 1.001, l: p * 0.999, c: p, v: 1000, n: 10 });
+  estado.bars = {
+    body: {
+      bars: {
+        AAPL: [
+          barra('2026-09-21T17:30:00Z', 303),
+          barra('2026-09-21T16:30:00Z', 302),
+          barra('2026-09-21T15:30:00Z', 301),
+        ],
+      },
+    },
+  };
+
+  const { candles } = await alpaca.fetchCandles({ symbol: 'AAPL', interval: '1h', limit: 10, now: Date.UTC(2026, 8, 22) });
+  assert.equal(candles.length, 3);
+  for (let i = 1; i < candles.length; i++) {
+    assert.ok(candles[i].openTime > candles[i - 1].openTime, 'cronológico');
+  }
+  assert.equal(candles[candles.length - 1].close, 303, 'la última es la más reciente');
+});

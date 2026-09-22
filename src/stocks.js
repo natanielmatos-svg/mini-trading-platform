@@ -261,8 +261,16 @@ async function getStockQuote({ symbol, demo = false, now = Date.now() } = {}) {
 
 // El último precio que existió: el cierre de la última vela de un minuto
 // dentro de sesión. Una llamada más, y sólo cuando el libro no sirve.
+//
+// Se piden 240 y no una. Pedir una parecía lo lógico y era el fallo: el rango
+// se calcula a partir del límite, así que con una salía una ventana de seis
+// días de la que sólo caben dos barras —las más antiguas— y el filtro de
+// sesión las descartaba. Cuatro horas de barras garantizan que haya sesión
+// dentro incluso tras un puente.
+const VELAS_PARA_CIERRE = 240;
+
 async function cierreDeLaUltimaVela(symbol, now) {
-  const { candles } = await alpaca.fetchCandles({ symbol, interval: '1m', limit: 1, now, soloSesion: enSesion });
+  const { candles } = await alpaca.fetchCandles({ symbol, interval: '1m', limit: VELAS_PARA_CIERRE, now, soloSesion: enSesion });
   const vela = candles[candles.length - 1];
   if (!vela) throw new Error(`No hay ninguna vela reciente de ${symbol} con la que fechar un precio`);
 
