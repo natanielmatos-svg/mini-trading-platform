@@ -16,7 +16,7 @@ const { analyzeEvents } = require('../src/analyze');
 const { getKlines, BINANCE_API } = require('../src/klines');
 const { analyzeBreakout } = require('../src/breakout');
 const { evaluateSignals } = require('../src/signals');
-const { fetchAllPrices } = require('../src/venues');
+const { fetchAllPrices, VENUES } = require('../src/venues');
 const { consolidate } = require('../src/consolidated');
 const { formatPrice, num, priceDecimals } = require('../src/format');
 
@@ -177,10 +177,21 @@ function repasarSenales(candles, interval = '1h') {
 // llamada de verdad — y aquí además se ve lo único que importa del
 // consolidado: cuánto discrepan hoy.
 async function comprobarPrecios() {
-  console.log('Consultando Binance, Kraken y Coinbase...\n');
+  console.log(`Consultando ${VENUES.map((v) => v.meta.label).join(', ')}...\n`);
 
-  const quotes = await fetchAllPrices({ symbol: 'BTCUSDT', timeoutMs: 8000 });
-  const out = consolidate(quotes);
+  // Se preguntan TODAS, incluidas las que no entran en la selección por
+  // defecto: el trabajo de esta comprobación es saber si cada fuente responde,
+  // y una fuente opcional que lleva meses rota también hay que descubrirla.
+  const todas = VENUES.map((v) => v.meta.id);
+  const quotes = await fetchAllPrices({ symbol: 'BTCUSDT', timeoutMs: 8000, venues: todas });
+
+  const esOpcional = (id) => Boolean(VENUES.find((v) => v.meta.id === id).meta.optIn);
+  const porDefecto = quotes.filter((q) => !esOpcional(q.id));
+  const opcionales = quotes.filter((q) => esOpcional(q.id));
+
+  // El consolidado se calcula con las de por defecto, que es lo que hace la
+  // aplicación; las opcionales se informan aparte y no lo mueven.
+  const out = consolidate(porDefecto);
 
   for (const v of out.venues) {
     if (v.usable) {
@@ -223,6 +234,22 @@ async function comprobarPrecios() {
     console.log(`  Ojo: ${porOperacion.map((v) => v.label).join(', ')} sin libro; su precio es la última operación y puede ser viejo.`);
   }
   console.log('  Se compara el punto medio del libro de cada casa, que siempre es de ahora.');
+
+  if (opcionales.length) {
+    console.log('\n  Fuentes opcionales (no entran en el consolidado; hay que marcarlas):');
+    for (const v of opcionales) {
+      if (v.ok && v.price > 0) {
+        const dif = out.price ? ((v.price - out.price) / out.price) * 100 : null;
+        console.log(
+          `  OK    ${v.label.padEnd(9)} ${String(v.pair).padEnd(9)} ${formatPrice(v.price).padStart(12)} ` +
+            `${(dif === null ? '' : (dif >= 0 ? '+' : '') + num(dif, 4) + '%').padStart(10)}  ${String(v.source || '?').padEnd(16)} en ${v.elapsedMs} ms`
+        );
+      } else {
+        console.log(`  FALLO ${v.label.padEnd(9)} ${String(v.pair).padEnd(9)} ${trunc(v.error || 'sin precio utilizable')}`);
+      }
+    }
+    console.log('  Un fallo aquí no rompe el despliegue: son opcionales y nadie las usa si no las marca.');
+  }
 
   return out.used >= 2;
 }
