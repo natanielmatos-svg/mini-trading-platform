@@ -73,8 +73,17 @@ function consolidate(quotes = [], { now = Date.now(), staleMs = STALE_MS } = {})
     spread: round(spread, 8),
     spreadPct: round(spreadPct, 4),
     // Umbrales pensados para cripto al contado: por debajo de cinco puntos
-    // básicos los mercados están de acuerdo a efectos prácticos.
-    agreement: spreadPct < 0.05 ? 'alineados' : spreadPct < 0.2 ? 'ligera diferencia' : 'discrepan',
+    // básicos los mercados están de acuerdo a efectos prácticos. Con uno solo
+    // no hay acuerdo posible, y decir "alineados · 0%" sugeriría una
+    // confirmación que no existe.
+    agreement:
+      usados.length < 2
+        ? 'sin comparación'
+        : spreadPct < 0.05
+          ? 'alineados'
+          : spreadPct < 0.2
+            ? 'ligera diferencia'
+            : 'discrepan',
     staleMs,
   };
 }

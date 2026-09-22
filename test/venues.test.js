@@ -11,7 +11,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 
-const estado = { kraken: null, coinbase: null, binance: null, peticiones: [] };
+const estado = { kraken: null, coinbase: null, binance: null, gemini: null, peticiones: [] };
 
 function servidor(clave, porDefecto) {
   return http.createServer((req, res) => {
@@ -43,6 +43,9 @@ const COINBASE_OK = {
 const BINANCE_OK = {
   body: { symbol: 'BTCUSDT', bidPrice: '86620.00000000', bidQty: '1.5', askPrice: '86620.20000000', askQty: '0.9' },
 };
+const GEMINI_OK = {
+  body: { bid: '86647.00', ask: '86647.40', last: '86640.00', volume: { BTC: '1200', USD: '104000000', timestamp: 1790000000000 } },
+};
 
 let venues;
 let consolidated;
@@ -59,6 +62,7 @@ test.before(async () => {
   process.env.KRAKEN_API = await arrancar('kraken', KRAKEN_OK);
   process.env.COINBASE_API = await arrancar('coinbase', COINBASE_OK);
   process.env.BINANCE_API = await arrancar('binance', BINANCE_OK);
+  process.env.GEMINI_API = await arrancar('gemini', GEMINI_OK);
 
   venues = require('../src/venues');
   consolidated = require('../src/consolidated');
@@ -75,6 +79,7 @@ test.beforeEach(() => {
   estado.kraken = null;
   estado.coinbase = null;
   estado.binance = null;
+  estado.gemini = null;
   estado.peticiones = [];
 });
 
@@ -85,6 +90,8 @@ test('cada casa recibe el par en su propia notación', () => {
   assert.strictEqual(venues.kraken.pairFor('BTCUSDT'), 'BTCUSD');
   assert.strictEqual(venues.coinbase.pairFor('BTCUSDT'), 'BTC-USD');
   assert.strictEqual(venues.coinbase.pairFor('ETHUSDT'), 'ETH-USD');
+  assert.strictEqual(venues.gemini.pairFor('BTCUSDT'), 'btcusd', 'Gemini los nombra en minúsculas y sin separador');
+  assert.strictEqual(venues.gemini.pairFor('ETHUSDT'), 'ethusd');
 });
 
 // --- Kraken ----------------------------------------------------------------
@@ -147,20 +154,77 @@ test('Coinbase: un 404 se propaga como error, no como precio cero', async () => 
   await assert.rejects(() => venues.coinbase.fetchPrice({ symbol: 'NOEXISTE' }), /HTTP 404/);
 });
 
-// --- Los tres juntos -------------------------------------------------------
+// --- Gemini ----------------------------------------------------------------
 
-test('se pregunta a las tres casas y se consolida', async () => {
+test('Gemini: el precio sale del libro de su pubticker', async () => {
+  const { price, pair, source } = await venues.gemini.fetchPrice({ symbol: 'BTCUSDT' });
+  assert.strictEqual(price, 86647.2, 'punto medio de 86647,00 y 86647,40');
+  assert.strictEqual(source, 'libro');
+  assert.strictEqual(pair, 'btcusd');
+  assert.strictEqual(estado.peticiones[0].path, '/v1/pubticker/btcusd');
+});
+
+test('Gemini: un par que no existe se propaga como error', async () => {
+  estado.gemini = { status: 400, body: { result: 'error', reason: 'InvalidSymbol', message: 'Invalid symbol' } };
+  await assert.rejects(() => venues.gemini.fetchPrice({ symbol: 'NOEXISTE' }), /HTTP 400/);
+});
+
+test('Gemini: un error con 200 tampoco se cuela como precio', async () => {
+  estado.gemini = { status: 200, body: { result: 'error', reason: 'RateLimit', message: 'slow down' } };
+  await assert.rejects(() => venues.gemini.fetchPrice({ symbol: 'BTCUSDT' }), /RateLimit/);
+});
+
+// --- Las cuatro juntas -----------------------------------------------------
+
+test('se pregunta a las cuatro casas y se consolida', async () => {
   const quotes = await venues.fetchAllPrices({ symbol: 'BTCUSDT', now: 1_000 });
-  assert.strictEqual(quotes.length, 3);
+  assert.strictEqual(quotes.length, 4);
   assert.ok(quotes.every((q) => q.ok && q.price > 0));
 
   const out = consolidated.consolidate(quotes, { now: 1_000 });
-  assert.strictEqual(out.used, 3);
-  assert.strictEqual(out.price, 86644.3, 'la mediana de 86620,10 / 86644,30 / 86650');
+  assert.strictEqual(out.used, 4);
+  // 86620,10 / 86644,30 / 86647,20 / 86650 -> media de los dos de en medio
+  assert.strictEqual(out.price, 86645.75);
   assert.ok(out.spread > 0 && out.spreadPct < 0.1);
 });
 
-test('una casa caída no deja sin precio a las otras dos', async () => {
+// --- Elegir mercados -------------------------------------------------------
+
+test('se puede pedir sólo algunos mercados', async () => {
+  const quotes = await venues.fetchAllPrices({ symbol: 'BTCUSDT', venues: ['kraken', 'gemini'], now: 1_000 });
+
+  assert.deepStrictEqual(quotes.map((q) => q.id).sort(), ['gemini', 'kraken']);
+  assert.ok(!estado.peticiones.some((p) => p.clave === 'binance'), 'no se molesta a los que no se piden');
+  assert.ok(!estado.peticiones.some((p) => p.clave === 'coinbase'));
+
+  const out = consolidated.consolidate(quotes, { now: 1_000 });
+  assert.strictEqual(out.used, 2);
+  assert.strictEqual(out.method, 'media de dos');
+});
+
+test('un solo mercado elegido se consolida consigo mismo y lo dice', async () => {
+  const quotes = await venues.fetchAllPrices({ symbol: 'BTCUSDT', venues: ['gemini'], now: 1_000 });
+  const out = consolidated.consolidate(quotes, { now: 1_000 });
+
+  assert.strictEqual(out.used, 1);
+  assert.strictEqual(out.price, 86647.2);
+  assert.strictEqual(out.method, 'único mercado');
+});
+
+test('la lista de mercados pedida se sanea', () => {
+  assert.deepStrictEqual(venues.parseVenues('kraken,GEMINI'), ['kraken', 'gemini']);
+  assert.deepStrictEqual(venues.parseVenues(' coinbase , coinbase '), ['coinbase'], 'sin repetidos');
+  assert.strictEqual(venues.parseVenues('inventado'), null, 'mejor todos que ninguno');
+  assert.strictEqual(venues.parseVenues(''), null);
+  assert.strictEqual(venues.parseVenues(undefined), null);
+});
+
+test('en demo también se respeta la elección', async () => {
+  const quotes = await venues.fetchAllPrices({ symbol: 'BTCUSDT', demo: true, venues: ['binance', 'gemini'] });
+  assert.deepStrictEqual(quotes.map((q) => q.id), ['binance', 'gemini']);
+});
+
+test('una casa caída no deja sin precio a las demás', async () => {
   estado.kraken = { status: 503, body: { error: ['EService:Unavailable'] } };
 
   const quotes = await venues.fetchAllPrices({ symbol: 'BTCUSDT', now: 1_000 });
@@ -171,7 +235,7 @@ test('una casa caída no deja sin precio a las otras dos', async () => {
   assert.strictEqual(caida.pair, 'BTCUSD', 'se dice qué par se intentó');
 
   const out = consolidated.consolidate(quotes, { now: 1_000 });
-  assert.strictEqual(out.used, 2);
+  assert.strictEqual(out.used, 3, 'siguen las otras tres');
   assert.ok(out.price > 0);
 });
 
@@ -183,12 +247,12 @@ test('una respuesta sin precio utilizable cuenta como caída, no como cero', asy
   assert.match(rota.error, /sin precio utilizable/);
 });
 
-test('en demo no se llama a ninguna casa y las tres difieren un poco', async () => {
+test('en demo no se llama a ninguna casa y difieren un poco entre ellas', async () => {
   estado.peticiones = [];
   const quotes = await venues.fetchAllPrices({ symbol: 'BTCUSDT', demo: true, now: Date.now() });
 
   assert.strictEqual(estado.peticiones.length, 0, 'demo no sale a Internet');
-  assert.strictEqual(quotes.length, 3);
+  assert.strictEqual(quotes.length, 4);
   assert.ok(quotes.every((q) => q.price > 0 && q.demo && q.source === 'libro'));
 
   const out = consolidated.consolidate(quotes);

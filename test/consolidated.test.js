@@ -76,6 +76,8 @@ test('con un solo mercado se dice que es uno solo, no se finge consenso', () => 
   assert.strictEqual(out.price, 86600);
   assert.strictEqual(out.method, 'único mercado');
   assert.strictEqual(out.spread, 0);
+  // "alineados · 0%" sugeriría que algo lo confirma, y no hay nada.
+  assert.strictEqual(out.agreement, 'sin comparación');
 });
 
 test('sin ningún precio utilizable se devuelve null, no un cero', () => {

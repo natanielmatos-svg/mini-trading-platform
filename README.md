@@ -13,7 +13,7 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet (también el gráfico)
-npm test             # 195 tests, sin red
+npm test             # 202 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -24,7 +24,7 @@ Windows (PowerShell incluido). Hace falta Node 20 o superior: `node -v`.
 ### Cómo se prueba
 
 ```bash
-npm test          # 195 tests, sin red, en unos cinco segundos
+npm test          # 202 tests, sin red, en unos cinco segundos
 npm run smoke     # llama a las APIs de verdad — la única prueba que las valida
 ```
 
@@ -74,7 +74,10 @@ intermedios, nunca el más reciente.
 ### Precio consolidado de tres mercados
 
 El titular no es el precio de un solo exchange: es la **mediana de Binance,
-Kraken y Coinbase Advanced**. Con tres fuentes, una que se cuelgue con un
+Kraken, Coinbase Advanced y Gemini**, y eliges cuáles entran marcando sus
+casillas en el desglose. La elección se guarda entre sesiones y nunca puede
+quedarse vacía: sin mercados no hay precio, así que la última casilla marcada
+se bloquea. Con tres fuentes, una que se cuelgue con un
 precio viejo o devuelva una barbaridad no puede arrastrar el número, cosa que
 a una media le bastaría. Con dos, la mediana es la media; con uno, se dice que
 es uno solo en vez de fingir consenso.
@@ -97,10 +100,15 @@ apartaba era Coinbase.
 | Binance | `BTCUSDT`, API pública de datos |
 | Kraken | `BTCUSD`, `/0/public/Ticker` — devuelve sus errores con un 200 y el fallo dentro del cuerpo, así que se comprueba |
 | Coinbase Advanced | `BTC-USD`, endpoint público de mercado, sin clave |
+| Gemini | `btcusd` (en minúsculas y sin separador), `/v1/pubticker` |
 
 Un mercado que no responda se marca como caído y el consolidado sigue con los
 demás; uno cuyo precio lleve más de diez segundos parado se enseña, pero no
-cuenta. `GET /api/price` devuelve todo eso.
+cuenta. Con un solo mercado se dice «sin comparación» en vez de «alineados»:
+con uno no hay nada con lo que alinearse. `GET /api/price` devuelve todo eso y
+acepta `venues=binance,kraken` para elegir; una lista vacía o con nombres que
+no existen se ignora y se usan todos, porque un parámetro mal escrito no debe
+dejarte sin precio.
 
 **Sobre Kalshi:** esto reduce el sesgo de mirar un solo exchange, pero
 **no garantiza coincidir con Kalshi**, que liquida contra la fuente que
@@ -656,5 +664,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  195 tests, sin red
+test/                  202 tests, sin red
 ```

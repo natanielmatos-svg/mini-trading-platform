@@ -16,6 +16,7 @@ const { buildDemoCandles } = require('./klines');
 const BINANCE_API = process.env.BINANCE_API || 'https://data-api.binance.vision';
 const KRAKEN_API = process.env.KRAKEN_API || 'https://api.kraken.com';
 const COINBASE_API = process.env.COINBASE_API || 'https://api.coinbase.com';
+const GEMINI_API = process.env.GEMINI_API || 'https://api.gemini.com';
 
 // 'BTCUSDT' -> 'BTC'
 function baseAsset(symbol) {
@@ -112,7 +113,31 @@ const coinbase = {
   },
 };
 
-const VENUES = [binance, kraken, coinbase];
+// --- Gemini ----------------------------------------------------------------
+
+const gemini = {
+  meta: { id: 'gemini', label: 'Gemini', quote: 'USD' },
+  // Gemini nombra sus pares en minúsculas y sin separador.
+  pairFor: (symbol) => `${baseAsset(symbol).toLowerCase()}usd`,
+
+  async fetchPrice({ symbol, timeoutMs = 6000 }) {
+    const pair = gemini.pairFor(symbol);
+    const data = await fetchJson(`${GEMINI_API}/v1/pubticker/${encodeURIComponent(pair)}`, {
+      timeoutMs,
+      retries: 1,
+    });
+
+    // Sus errores llegan con un 4xx y fetchJson ya los convierte en excepción,
+    // pero el cuerpo también los marca: si viene, se dice por qué.
+    if (data && data.result === 'error') {
+      throw new Error(`Gemini: ${data.reason || data.message || 'error sin detalle'}`);
+    }
+
+    return { ...midOrLast({ bid: data && data.bid, ask: data && data.ask, last: data && data.last }), pair };
+  },
+};
+
+const VENUES = [binance, kraken, coinbase, gemini];
 const byId = new Map(VENUES.map((v) => [v.meta.id, v]));
 
 function listVenues() {
@@ -125,13 +150,14 @@ function listVenues() {
 // En demo cada mercado se desvía unos pocos puntos básicos del mismo precio,
 // como en la realidad: Binance algo por debajo por cotizar en USDT, y los
 // otros dos separados por el ruido normal entre libros distintos.
-const DESVIO_DEMO = { binance: -0.00018, kraken: 0.00011, coinbase: 0.00004 };
+const DESVIO_DEMO = { binance: -0.00018, kraken: 0.00011, coinbase: 0.00004, gemini: 0.00021 };
 
-function demoQuotes({ symbol, now }) {
+function demoQuotes({ symbol, now, venues = null }) {
   const [vela] = buildDemoCandles({ symbol, interval: '1m', limit: 1, now });
   const base = vela ? vela.close : null;
+  const elegidos = venues && venues.length ? VENUES.filter((v) => venues.includes(v.meta.id)) : VENUES;
 
-  return VENUES.map((venue) => {
+  return elegidos.map((venue) => {
     const desvio = DESVIO_DEMO[venue.meta.id] || 0;
     // Una pizca de ruido para que no se queden clavados unos respecto a otros.
     const ruido = Math.sin(now / 3000 + venue.meta.id.length) * 0.00003;
@@ -149,7 +175,7 @@ function demoQuotes({ symbol, now }) {
 }
 
 async function fetchAllPrices({ symbol = 'BTCUSDT', timeoutMs = 6000, venues = null, demo = false, now = Date.now() } = {}) {
-  if (demo) return demoQuotes({ symbol, now });
+  if (demo) return demoQuotes({ symbol, now, venues });
 
   const selected = venues && venues.length ? VENUES.filter((v) => venues.includes(v.meta.id)) : VENUES;
 
@@ -174,4 +200,20 @@ async function fetchAllPrices({ symbol = 'BTCUSDT', timeoutMs = 6000, venues = n
   );
 }
 
-module.exports = { VENUES, byId, listVenues, fetchAllPrices, demoQuotes, midOrLast, baseAsset, binance, kraken, coinbase };
+// Filtra una lista de identificadores pedida por el cliente: se queda con los
+// que existen y, si no queda ninguno, devuelve null para que se usen todos.
+// Mejor todos que ninguno: un parámetro mal escrito no debe dejar sin precio.
+function parseVenues(raw) {
+  const pedidos = String(raw || '')
+    .split(',')
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean);
+
+  const validos = pedidos.filter((id) => byId.has(id));
+  return validos.length ? [...new Set(validos)] : null;
+}
+
+module.exports = {
+  VENUES, byId, listVenues, fetchAllPrices, demoQuotes, midOrLast, parseVenues, baseAsset,
+  binance, kraken, coinbase, gemini,
+};

@@ -17,7 +17,7 @@ const { getKlines, parseSymbol, parseInterval, parseLimit, INTERVALS } = require
 const { analyzeBreakout } = require('./src/breakout');
 const { MarketStream, sseClient } = require('./src/stream');
 const { verifySymbols, groups } = require('./src/symbols');
-const { fetchAllPrices, listVenues } = require('./src/venues');
+const { fetchAllPrices, listVenues, parseVenues } = require('./src/venues');
 const { consolidate } = require('./src/consolidated');
 
 const app = express();
@@ -200,10 +200,11 @@ app.get('/api/symbols', async (req, res) => {
 // de que este endpoint exista.
 app.get('/api/price', async (req, res) => {
   const { symbol, demo } = marketParams(req);
+  const venues = parseVenues(req.query.venues);
 
   try {
-    const quotes = await fetchAllPrices({ symbol, demo });
-    sendJson(res, { symbol, ...consolidate(quotes), venuesSupported: listVenues() });
+    const quotes = await fetchAllPrices({ symbol, demo, venues });
+    sendJson(res, { symbol, requested: venues, ...consolidate(quotes), venuesSupported: listVenues() });
   } catch (err) {
     marketError(res, err, '/api/price');
   }

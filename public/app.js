@@ -16,6 +16,7 @@ const MTF = ['1h', '4h', '1d', '1w'];
 const CANDLES = 300;
 const EVAL_THROTTLE_MS = 1000;
 const PREFS_KEY = 'mtp.alertas';
+const MERCADOS_KEY = 'mtp.mercados';
 
 const state = {
   symbol: 'BTCUSDT',
@@ -25,7 +26,8 @@ const state = {
   breakout: null,
   live: null,        // última vela recibida
   livePrice: null,   // último precio operado en Binance, tick a tick
-  consolidado: null, // mediana de Binance, Kraken y Coinbase
+  consolidado: null, // mediana de los mercados elegidos
+  mercados: null,    // ids elegidos; null = todos los que haya
   base: 0,           // diferencia medida entre el consolidado y Binance
   priceTimer: null,
   ultimoPintado: null,
@@ -175,6 +177,25 @@ function loadPrefs() {
   }
 }
 
+function loadMercados() {
+  try {
+    const raw = localStorage.getItem(MERCADOS_KEY);
+    const lista = raw ? JSON.parse(raw) : null;
+    if (Array.isArray(lista) && lista.length) state.mercados = lista;
+  } catch {
+    /* sin persistencia se empieza con todos */
+  }
+}
+
+function saveMercados() {
+  try {
+    if (state.mercados && state.mercados.length) localStorage.setItem(MERCADOS_KEY, JSON.stringify(state.mercados));
+    else localStorage.removeItem(MERCADOS_KEY);
+  } catch {
+    /* idem */
+  }
+}
+
 function savePrefs() {
   try {
     localStorage.setItem(PREFS_KEY, JSON.stringify({
@@ -290,7 +311,8 @@ async function loadBreakout() {
 
 async function loadConsolidado() {
   try {
-    const data = await getJson(`/api/price?symbol=${encodeURIComponent(state.symbol)}`);
+    const eleccion = state.mercados && state.mercados.length ? `&venues=${state.mercados.join(',')}` : '';
+    const data = await getJson(`/api/price?symbol=${encodeURIComponent(state.symbol)}${eleccion}`);
     if (data.symbol !== state.symbol) return; // llegó tarde, ya cambiamos de par
     state.consolidado = data;
 
@@ -741,23 +763,36 @@ function renderVenues() {
     return;
   }
 
+  // Se pintan TODAS las casas soportadas, no sólo las elegidas: si no, no
+  // habría dónde volver a marcar la que acabas de quitar.
+  const soportadas = c.venuesSupported || [];
+  const porId = new Map(c.venues.map((v) => [v.id, v]));
+  const elegidos = state.mercados && state.mercados.length ? state.mercados : soportadas.map((v) => v.id);
+  const unicoElegido = elegidos.length === 1;
+
+  const filas = soportadas
+    .map((soportada) => {
+      const v = porId.get(soportada.id);
+      const activo = elegidos.includes(soportada.id);
+      const estado = !activo ? 'apagado' : !v ? '—' : !v.usable ? (v.error ? 'caído' : 'viejo') : '';
+      const diff = activo && v && v.usable && v.diff !== null
+        ? `${v.diff >= 0 ? '+' : ''}${num(v.diffPct, 3)}%`
+        : estado;
+
+      return `<label class="venue ${activo && v && v.usable ? '' : 'off'}">
+        <input type="checkbox" data-venue="${soportada.id}" ${activo ? 'checked' : ''} ${activo && unicoElegido ? 'disabled' : ''} />
+        <span class="v-name">${soportada.label}<em>${(v && v.pair) || ''}${v && v.source && v.source !== 'libro' ? ' · ' + v.source : ''}</em></span>
+        <span class="v-price">${v && v.price > 0 ? formatPrice(v.price) : '—'}</span>
+        <span class="v-diff ${v && v.diff > 0 ? 'up' : v && v.diff < 0 ? 'down' : ''}">${diff}</span>
+      </label>`;
+    })
+    .join('');
+
   el.venues.innerHTML =
     `<button class="venue-summary" id="venueToggle" aria-expanded="false">` +
-    `${c.used} mercados · ${c.agreement} · dif. ${num(c.spreadPct, 3)}%` +
+    `${c.used} de ${soportadas.length} mercados · ${c.agreement} · dif. ${num(c.spreadPct, 3)}%` +
     `</button>` +
-    `<div class="venue-list" hidden>` +
-    c.venues
-      .map((v) => {
-        const estado = !v.usable ? (v.error ? 'caído' : 'viejo') : '';
-        return `<div class="venue ${v.usable ? '' : 'off'}">
-          <span class="v-name">${v.label}<em>${v.pair}${v.source && v.source !== 'libro' ? ' · ' + v.source : ''}</em></span>
-          <span class="v-price">${v.price > 0 ? formatPrice(v.price) : '—'}</span>
-          <span class="v-diff ${v.diff > 0 ? 'up' : v.diff < 0 ? 'down' : ''}">${
-            estado || (v.diff === null ? '' : `${v.diff >= 0 ? '+' : ''}${num(v.diffPct, 3)}%`)
-          }</span>
-        </div>`;
-      })
-      .join('') +
+    `<div class="venue-list" hidden>${filas}` +
     `<p class="venue-note">Mediana del punto medio del libro de cada mercado, que siempre es de ahora — la última operación de un mercado poco activo puede ser de hace minutos. El análisis de ruptura usa el precio de Binance, que es de donde salen las velas.</p>` +
     `</div>`;
 
@@ -772,6 +807,20 @@ function renderVenues() {
     lista.hidden = !state.venuesAbierto;
     toggle.setAttribute('aria-expanded', String(state.venuesAbierto));
   });
+
+  for (const casilla of el.venues.querySelectorAll('input[data-venue]')) {
+    casilla.addEventListener('change', () => {
+      const id = casilla.dataset.venue;
+      const siguiente = casilla.checked ? [...elegidos, id] : elegidos.filter((x) => x !== id);
+
+      // Nunca se queda sin ninguno: sin mercados no hay precio.
+      if (!siguiente.length) return;
+
+      state.mercados = siguiente.length === soportadas.length ? null : siguiente;
+      saveMercados();
+      loadConsolidado();
+    });
+  }
 }
 
 // El bloque de tiempo: precio en vivo y cuánto le queda a la vela, con la
@@ -1324,6 +1373,7 @@ function applyControls({ symbol = null } = {}) {
 
 function init() {
   loadPrefs();
+  loadMercados();
   resizeCanvas();
 
   el.symbolSelect.addEventListener('change', () => {

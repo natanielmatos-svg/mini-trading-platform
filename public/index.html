@@ -166,7 +166,10 @@
     .venue-summary:hover { color: var(--accent); }
     .venue-none { color: var(--muted); }
     .venue-list { margin-top: 7px; border-top: 1px solid var(--line); padding-top: 6px; }
-    .venue { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; font-variant-numeric: tabular-nums; }
+    .venue { display: flex; align-items: center; gap: 7px; padding: 3px 0; font-variant-numeric: tabular-nums; cursor: pointer; }
+    .venue input { width: 13px; height: 13px; accent-color: var(--accent); cursor: pointer; flex: none; }
+    .venue input:disabled { cursor: default; opacity: 0.5; }
+    .v-name { flex: 1; }
     .venue.off { opacity: 0.5; }
     .v-name { color: #cbd5e1; }
     .v-name em { font-style: normal; color: var(--muted); margin-left: 5px; font-size: 10px; }
