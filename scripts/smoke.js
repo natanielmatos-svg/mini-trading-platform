@@ -18,6 +18,7 @@ const { analyzeBreakout } = require('../src/breakout');
 const { evaluateSignals } = require('../src/signals');
 const { fetchAllPrices } = require('../src/venues');
 const { consolidate } = require('../src/consolidated');
+const { formatPrice, num, priceDecimals } = require('../src/format');
 
 const TOLERANTE = process.argv.includes('--tolerante');
 
@@ -184,8 +185,8 @@ async function comprobarPrecios() {
   for (const v of out.venues) {
     if (v.usable) {
       console.log(
-        `  OK    ${v.label.padEnd(9)} ${v.pair.padEnd(9)} ${String(v.price).padEnd(11)} ` +
-          `(${v.diff >= 0 ? '+' : ''}${v.diffPct}%) ${String(v.source || '?').padEnd(17)} en ${v.elapsedMs} ms`
+        `  OK    ${v.label.padEnd(9)} ${v.pair.padEnd(9)} ${formatPrice(v.price).padStart(12)} ` +
+          `${((v.diff >= 0 ? '+' : '') + num(v.diffPct, 4) + '%').padStart(10)}  ${String(v.source || '?').padEnd(16)} en ${v.elapsedMs} ms`
       );
     } else {
       console.log(`  FALLO ${v.label.padEnd(9)} ${v.pair.padEnd(9)} ${trunc(v.error || 'sin precio utilizable')}`);
@@ -197,7 +198,10 @@ async function comprobarPrecios() {
     return false;
   }
 
-  console.log(`\n  Consolidado: ${out.price} (${out.method}, ${out.used} de ${out.venues.length}) · ${out.agreement} · diferencia ${out.spread} (${out.spreadPct}%)`);
+  console.log(
+    `\n  Consolidado: ${formatPrice(out.price)} (${out.method}, ${out.used} de ${out.venues.length}) · ` +
+      `${out.agreement} · diferencia ${num(out.spread, priceDecimals(out.price))} (${num(out.spreadPct, 4)}%)`
+  );
   if (out.used < out.venues.length) {
     console.log('  Aviso: falta algún mercado, así que el consolidado es menos robusto de lo previsto.');
   }
@@ -206,7 +210,10 @@ async function comprobarPrecios() {
 
   if (convertidos.length) {
     const s = convertidos[0].stable;
-    console.log(`  USDT/USD ${s.rate} (${s.source}): ${convertidos.map((v) => `${v.label} ${v.priceRaw} → ${v.price.toFixed(2)}`).join(', ')}`);
+    console.log(
+      `  USDT/USD ${num(s.rate, 6)} (${s.source}): ` +
+        convertidos.map((v) => `${v.label} ${formatPrice(v.priceRaw)} → ${formatPrice(v.price)}`).join(', ')
+    );
   } else if (sinConvertir.length) {
     console.log(`  Aviso: no se pudo medir el USDT/USD, así que ${sinConvertir.map((v) => v.label).join(', ')} va sin convertir y arrastra el desvío de la stablecoin.`);
   }

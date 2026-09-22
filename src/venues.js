@@ -12,6 +12,16 @@
 
 const { fetchJson } = require('./http');
 const { buildDemoCandles } = require('./klines');
+const { priceDecimals } = require('./format');
+
+// Multiplicar por el cambio deja cola de coma flotante: 85600,005 × 0,999735
+// da 85577,32099867502, y publicar eso es ruido disfrazado de precisión. Se
+// redondea a los decimales que tienen sentido para esa escala de precio.
+function redondearPrecio(price) {
+  if (!Number.isFinite(price)) return price;
+  const f = 10 ** priceDecimals(price);
+  return Math.round(price * f) / f;
+}
 
 const BINANCE_API = process.env.BINANCE_API || 'https://data-api.binance.vision';
 const KRAKEN_API = process.env.KRAKEN_API || 'https://api.kraken.com';
@@ -250,7 +260,7 @@ async function fetchAllPrices({ symbol = 'BTCUSDT', timeoutMs = 6000, venues = n
     return {
       ...q,
       priceRaw: q.price,
-      price: q.price * stable.rate,
+      price: redondearPrecio(q.price * stable.rate),
       converted: true,
       stable,
     };
@@ -294,6 +304,6 @@ function parseVenues(raw) {
 
 module.exports = {
   VENUES, byId, listVenues, fetchAllPrices, demoQuotes, midOrLast, parseVenues, baseAsset,
-  fetchStableRate, sensata,
+  fetchStableRate, sensata, redondearPrecio,
   binance, kraken, coinbase, gemini,
 };

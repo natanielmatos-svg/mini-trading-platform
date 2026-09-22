@@ -183,8 +183,9 @@ test('se pregunta a las cuatro casas y se consolida', async () => {
 
   const out = consolidated.consolidate(quotes, { now: 1_000 });
   assert.strictEqual(out.used, 4);
-  // 86620,10 / 86644,30 / 86647,20 / 86650 -> media de los dos de en medio
-  assert.strictEqual(out.price, 86645.75);
+  // 86620,10 / 86644,30 / 86647,20 / 86650 -> media de los dos de en medio,
+  // redondeada a la escala del precio
+  assert.strictEqual(out.price, 86645.8);
   assert.ok(out.spread > 0 && out.spreadPct < 0.1);
 });
 
@@ -208,7 +209,9 @@ test('el precio en USDT se pasa a dólares con el cambio medido', async () => {
 
   assert.strictEqual(b.converted, true);
   assert.strictEqual(b.priceRaw, 86620.1, 'se conserva lo que cotizó Binance');
-  assert.ok(Math.abs(b.price - 86620.1 * 0.9995) < 1e-6, 'y se publica convertido');
+  // 86620,10 × 0,9995 = 86576,79005, que se publica a la escala del precio y
+  // no con la cola binaria entera.
+  assert.strictEqual(b.price, 86576.8);
   assert.strictEqual(b.stable.rate, 0.9995);
   assert.strictEqual(b.stable.source, 'kraken');
 

@@ -93,3 +93,22 @@ test('la etiqueta de acuerdo escala con la diferencia', () => {
   assert.strictEqual(con(86600, 86660, 86700), 'ligera diferencia');
   assert.strictEqual(con(86600, 87000, 87400), 'discrepan');
 });
+
+test('el precio no arrastra cola de coma flotante', () => {
+  // 85600,005 × 0,999735 da 85577,32099867502 en binario. Publicar eso es
+  // ruido disfrazado de precisión.
+  const sucio = 85600.005 * 0.999735;
+  const out = consolidate([cita('binance', sucio), cita('kraken', 85592.55), cita('coinbase', 85578.965)], { now: ahora });
+
+  assert.ok(String(out.price).length <= 9, `precio con cola: ${out.price}`);
+  // Un decimal para cinco cifras enteras: a 85.000, la décima ya es una
+  // millonésima del precio, muy por debajo de lo que separa a los mercados.
+  assert.strictEqual(out.price, 85579);
+  assert.ok(String(out.spread).length <= 9, `diferencia con cola: ${out.spread}`);
+});
+
+test('una cripto barata conserva sus decimales', () => {
+  const out = consolidate([cita('binance', 0.00004312), cita('kraken', 0.00004318)], { now: ahora });
+  assert.ok(out.price > 0, 'no se redondea a cero');
+  assert.ok(String(out.price).includes('0.0000'), `se perdió la escala: ${out.price}`);
+});

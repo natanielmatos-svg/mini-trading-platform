@@ -13,6 +13,8 @@
 // USDT y Kraken y Coinbase contra dólares, y USDT no vale exactamente un
 // dólar.
 
+const { priceDecimals } = require('./format');
+
 const STALE_MS = 10_000;
 
 function median(values) {
@@ -62,15 +64,17 @@ function consolidate(quotes = [], { now = Date.now(), staleMs = STALE_MS } = {})
   const spreadPct = (spread / price) * 100;
 
   return {
-    price: round(price, 8),
+    // A los decimales que tienen sentido para esa escala: la mediana de dos
+    // precios convertidos arrastraba doce decimales de ruido.
+    price: round(price, priceDecimals(price)),
     method: usados.length >= 3 ? 'mediana' : usados.length === 2 ? 'media de dos' : 'único mercado',
     used: usados.length,
     venues: detalle.map((q) => ({
       ...q,
-      diff: q.price > 0 ? round(q.price - price, 8) : null,
+      diff: q.price > 0 ? round(q.price - price, priceDecimals(price)) : null,
       diffPct: q.price > 0 ? round(((q.price - price) / price) * 100, 4) : null,
     })),
-    spread: round(spread, 8),
+    spread: round(spread, priceDecimals(price)),
     spreadPct: round(spreadPct, 4),
     // Umbrales pensados para cripto al contado: por debajo de cinco puntos
     // básicos los mercados están de acuerdo a efectos prácticos. Con uno solo
