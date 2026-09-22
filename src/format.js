@@ -72,17 +72,23 @@ function formatClock(ms) {
 // Con `aperturaConocida` —la que dio Binance— se avanza desde ahí en saltos de
 // un intervalo, que es exacto incluso para las semanas, que no empiezan en el
 // epoch. Sin ella se usa el bucket del reloj, que vale para todo lo demás.
-function candleWindow(now, stepMs, aperturaConocida = null) {
+function candleWindow(now, stepMs, aperturaConocida = null, finDeSesion = null) {
   if (!(stepMs > 0)) return null;
 
   const open = Number.isFinite(aperturaConocida)
     ? aperturaConocida + Math.max(Math.floor((now - aperturaConocida) / stepMs), 0) * stepMs
     : Math.floor(now / stepMs) * stepMs;
 
-  const close = open + stepMs - 1;
-  const elapsed = Math.min(Math.max((now - open) / stepMs, 0), 1);
+  // En bolsa la última vela de la sesión se corta al cerrar el mercado: una
+  // de una hora abierta a las 15:30 no dura hasta las 16:30 si se cierra a
+  // las 16:00. En cripto no hay fin de sesión y esto no se usa.
+  const finNatural = open + stepMs - 1;
+  const close = Number.isFinite(finDeSesion) && finDeSesion < finNatural ? finDeSesion : finNatural;
 
-  return { open, close, remainingMs: Math.max(close - now + 1, 0), elapsed };
+  const duracion = Math.max(close - open + 1, 1);
+  const elapsed = Math.min(Math.max((now - open) / duracion, 0), 1);
+
+  return { open, close, remainingMs: Math.max(close - now + 1, 0), elapsed, recortada: close !== finNatural };
 }
 
 const API = { priceDecimals, formatPrice, num, formatPercent, formatDuration, formatClock, candleWindow };

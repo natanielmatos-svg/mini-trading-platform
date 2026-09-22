@@ -150,3 +150,31 @@ test('la vela recién cerrada da cero, no un número negativo', () => {
   // Y el reloj nunca imprime negativos.
   assert.strictEqual(formatClock(-5000), '00:00');
 });
+
+test('en bolsa la última vela se corta al cerrar el mercado', () => {
+  const hora = 3_600_000;
+  const apertura = Date.UTC(2026, 8, 22, 19, 30);        // 15:30 en Nueva York
+  const cierreSesion = Date.UTC(2026, 8, 22, 20, 0) - 1; // 16:00
+
+  const v = candleWindow(apertura + 600_000, hora, apertura, cierreSesion);
+  assert.strictEqual(v.close, cierreSesion, 'no dura hasta las 16:30');
+  assert.strictEqual(v.remainingMs, 1_200_000, 'quedan 20 minutos, no 50');
+  assert.strictEqual(v.recortada, true);
+  assert.ok(Math.abs(v.elapsed - 1 / 3) < 1e-9, 'el avance se mide sobre la media hora real');
+});
+
+test('sin fin de sesión la vela dura lo suyo: las criptos no cierran', () => {
+  const hora = 3_600_000;
+  const apertura = 1_700_000_000_000 - (1_700_000_000_000 % hora);
+  const v = candleWindow(apertura + 600_000, hora, apertura);
+  assert.strictEqual(v.close, apertura + hora - 1);
+  assert.strictEqual(v.recortada, false);
+});
+
+test('un fin de sesión posterior al cierre natural no recorta nada', () => {
+  const hora = 3_600_000;
+  const apertura = 0;
+  const v = candleWindow(600_000, hora, apertura, apertura + hora * 5);
+  assert.strictEqual(v.close, hora - 1);
+  assert.strictEqual(v.recortada, false);
+});

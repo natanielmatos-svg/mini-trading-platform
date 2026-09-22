@@ -676,6 +676,9 @@ públicos de mercado, y no acepta ninguna escritura.
 | `KRAKEN_API` / `COINBASE_API` / `GEMINI_API` | APIs públicas | Igual, para los otros mercados |
 | `CFBENCHMARKS_API` | API pública | Endpoint del índice |
 | `CFBENCHMARKS_API_KEY` | — | Sólo si tu acceso al índice la necesita |
+| `ALPACA_KEY_ID` / `ALPACA_SECRET_KEY` | — | **Obligatorias para acciones**: los datos de bolsa están licenciados |
+| `ALPACA_FEED` | `iex` | `iex` es gratis y de un solo mercado; `sip` es la cinta consolidada, de pago |
+| `ALPACA_DATA_API` / `ALPACA_API` | APIs de Alpaca | Para apuntar a un mock |
 | `RATE_MAX` / `RATE_WINDOW_MS` | `120` / `60000` | Límite de peticiones por IP a `/api` |
 | `TRUST_PROXY_HOPS` | `1` | Saltos de proxy de confianza para leer la IP real |
 
@@ -692,6 +695,7 @@ src/
   format.js            formato de precios y porcentajes — servidor Y navegador
   signals.js           compras y ventas — servidor Y navegador
   symbols.js           catálogo de criptomonedas del desplegable
+  alpaca.js            acciones: velas, precio y el reloj del mercado
   venues.js            un adaptador por mercado al contado: Binance, Kraken, Coinbase
   consolidated.js      mediana entre mercados y cuánto discrepan
   klines.js            velas: validación, caché por timeframe y modo demo
