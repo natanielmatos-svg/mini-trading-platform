@@ -27,6 +27,8 @@ const BINANCE_API = process.env.BINANCE_API || 'https://data-api.binance.vision'
 const KRAKEN_API = process.env.KRAKEN_API || 'https://api.kraken.com';
 const COINBASE_API = process.env.COINBASE_API || 'https://api.coinbase.com';
 const GEMINI_API = process.env.GEMINI_API || 'https://api.gemini.com';
+const CFBENCHMARKS_API = process.env.CFBENCHMARKS_API || 'https://www.cfbenchmarks.com';
+const CFBENCHMARKS_KEY = process.env.CFBENCHMARKS_API_KEY || '';
 
 // 'BTCUSDT' -> 'BTC'
 function baseAsset(symbol) {
@@ -147,7 +149,53 @@ const gemini = {
   },
 };
 
-const VENUES = [binance, kraken, coinbase, gemini];
+// --- CF Benchmarks ---------------------------------------------------------
+//
+// Esto NO es un mercado, es un índice: el BRTI agrega varios exchanges con una
+// metodología publicada y regulada. Eso trae dos consecuencias.
+//
+// La primera es que no tiene libro ni operaciones: publica un valor. Por eso
+// su `source` es "índice" y no pasa por la regla del punto medio.
+//
+// La segunda es que, si ya agrega a Coinbase y Kraken, meterlo en la misma
+// mediana que ellos los cuenta dos veces. Por eso viene marcado `optIn`: no
+// entra en la selección por defecto. Si lo que quieres es seguir el índice,
+// lo lógico es marcarlo a él y desmarcar los exchanges que agrega.
+//
+// Sólo cubre los activos para los que publica índice en tiempo real.
+
+const CF_INDICES = { BTC: 'BRTI', ETH: 'ETHUSD_RTI' };
+
+const cfbenchmarks = {
+  meta: { id: 'cfbenchmarks', label: 'CF Benchmarks', quote: 'USD', optIn: true, kind: 'índice' },
+  pairFor: (symbol) => CF_INDICES[baseAsset(symbol)] || null,
+
+  async fetchPrice({ symbol, timeoutMs = 6000 }) {
+    const pair = cfbenchmarks.pairFor(symbol);
+    if (!pair) throw new Error(`CF Benchmarks no publica índice en tiempo real para ${baseAsset(symbol)}`);
+
+    const data = await fetchJson(`${CFBENCHMARKS_API}/api/v1/values/latest`, {
+      searchParams: { id: pair },
+      headers: CFBENCHMARKS_KEY ? { authorization: `Bearer ${CFBENCHMARKS_KEY}` } : {},
+      timeoutMs,
+      retries: 1,
+    });
+
+    const entrada = data && Array.isArray(data.payload) ? data.payload[0] : data;
+    const valor = toNum(entrada && (entrada.value !== undefined ? entrada.value : entrada.price));
+
+    // Un índice no tiene libro: o hay valor o no hay nada que promediar.
+    return { price: valor, source: valor ? 'índice' : null, pair };
+  },
+};
+
+const VENUES = [binance, kraken, coinbase, gemini, cfbenchmarks];
+
+// Los mercados que entran cuando no se pide nada en concreto: todos menos los
+// marcados `optIn`, que hay que elegir a propósito.
+function defaultVenues() {
+  return VENUES.filter((v) => !v.meta.optIn);
+}
 
 // --- USDT contra dólares ---------------------------------------------------
 //
@@ -216,12 +264,12 @@ function listVenues() {
 // En demo cada mercado se desvía unos pocos puntos básicos del mismo precio,
 // como en la realidad: Binance algo por debajo por cotizar en USDT, y los
 // otros dos separados por el ruido normal entre libros distintos.
-const DESVIO_DEMO = { binance: -0.00018, kraken: 0.00011, coinbase: 0.00004, gemini: 0.00021 };
+const DESVIO_DEMO = { binance: -0.00018, kraken: 0.00011, coinbase: 0.00004, gemini: 0.00021, cfbenchmarks: 0.00002 };
 
 function demoQuotes({ symbol, now, venues = null }) {
   const [vela] = buildDemoCandles({ symbol, interval: '1m', limit: 1, now });
   const base = vela ? vela.close : null;
-  const elegidos = venues && venues.length ? VENUES.filter((v) => venues.includes(v.meta.id)) : VENUES;
+  const elegidos = venues && venues.length ? VENUES.filter((v) => venues.includes(v.meta.id)) : defaultVenues();
 
   return elegidos.map((venue) => {
     const desvio = DESVIO_DEMO[venue.meta.id] || 0;
@@ -231,7 +279,7 @@ function demoQuotes({ symbol, now, venues = null }) {
       ...venue.meta,
       ok: base !== null,
       price: base === null ? null : base * (1 + desvio + ruido),
-      source: 'libro',
+      source: venue.meta.kind === 'índice' ? 'índice' : 'libro',
       pair: venue.pairFor(symbol),
       at: now,
       elapsedMs: 0,
@@ -243,7 +291,7 @@ function demoQuotes({ symbol, now, venues = null }) {
 async function fetchAllPrices({ symbol = 'BTCUSDT', timeoutMs = 6000, venues = null, demo = false, now = Date.now() } = {}) {
   if (demo) return demoQuotes({ symbol, now, venues });
 
-  const selected = venues && venues.length ? VENUES.filter((v) => venues.includes(v.meta.id)) : VENUES;
+  const selected = venues && venues.length ? VENUES.filter((v) => venues.includes(v.meta.id)) : defaultVenues();
   const hayUsdt = selected.some((v) => v.meta.quote === 'USDT');
 
   // El cambio se pide a la vez que los precios, no después: si no, el
@@ -304,6 +352,6 @@ function parseVenues(raw) {
 
 module.exports = {
   VENUES, byId, listVenues, fetchAllPrices, demoQuotes, midOrLast, parseVenues, baseAsset,
-  fetchStableRate, sensata, redondearPrecio,
-  binance, kraken, coinbase, gemini,
+  fetchStableRate, sensata, redondearPrecio, defaultVenues,
+  binance, kraken, coinbase, gemini, cfbenchmarks,
 };

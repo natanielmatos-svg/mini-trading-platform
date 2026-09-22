@@ -11,12 +11,14 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 
-const estado = { kraken: null, coinbase: null, binance: null, gemini: null, peticiones: [] };
+const estado = { kraken: null, coinbase: null, binance: null, gemini: null, cf: null, peticiones: [] };
 
 function servidor(clave, porDefecto) {
   return http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
-    estado.peticiones.push({ clave, path: url.pathname, params: Object.fromEntries(url.searchParams) });
+    estado.peticiones.push({
+      clave, path: url.pathname, params: Object.fromEntries(url.searchParams), headers: req.headers,
+    });
 
     const respuesta = estado[clave] || porDefecto;
     const { status = 200, body } = typeof respuesta === 'function' ? respuesta(url) : respuesta;
@@ -43,6 +45,7 @@ const COINBASE_OK = {
 const BINANCE_OK = {
   body: { symbol: 'BTCUSDT', bidPrice: '86620.00000000', bidQty: '1.5', askPrice: '86620.20000000', askQty: '0.9' },
 };
+const CF_OK = { body: { payload: [{ id: 'BRTI', value: '86646.51', time: 1790000000 }] } };
 const GEMINI_OK = {
   body: { bid: '86647.00', ask: '86647.40', last: '86640.00', volume: { BTC: '1200', USD: '104000000', timestamp: 1790000000000 } },
 };
@@ -63,6 +66,7 @@ test.before(async () => {
   process.env.COINBASE_API = await arrancar('coinbase', COINBASE_OK);
   process.env.BINANCE_API = await arrancar('binance', BINANCE_OK);
   process.env.GEMINI_API = await arrancar('gemini', GEMINI_OK);
+  process.env.CFBENCHMARKS_API = await arrancar('cf', CF_OK);
 
   venues = require('../src/venues');
   consolidated = require('../src/consolidated');
@@ -80,6 +84,7 @@ test.beforeEach(() => {
   estado.coinbase = null;
   estado.binance = null;
   estado.gemini = null;
+  estado.cf = null;
   estado.peticiones = [];
 });
 
@@ -178,7 +183,7 @@ test('Gemini: un error con 200 tampoco se cuela como precio', async () => {
 
 test('se pregunta a las cuatro casas y se consolida', async () => {
   const quotes = await venues.fetchAllPrices({ symbol: 'BTCUSDT', now: 1_000 });
-  assert.strictEqual(quotes.length, 4);
+  assert.strictEqual(quotes.length, 4, 'las cuatro de por defecto; el índice va aparte');
   assert.ok(quotes.every((q) => q.ok && q.price > 0));
 
   const out = consolidated.consolidate(quotes, { now: 1_000 });
@@ -187,6 +192,71 @@ test('se pregunta a las cuatro casas y se consolida', async () => {
   // redondeada a la escala del precio
   assert.strictEqual(out.price, 86645.8);
   assert.ok(out.spread > 0 && out.spreadPct < 0.1);
+});
+
+// --- CF Benchmarks ---------------------------------------------------------
+
+test('CF Benchmarks: el índice se lee del payload y se marca como índice', async () => {
+  const { price, pair, source } = await venues.cfbenchmarks.fetchPrice({ symbol: 'BTCUSDT' });
+
+  assert.strictEqual(price, 86646.51);
+  assert.strictEqual(pair, 'BRTI');
+  assert.strictEqual(source, 'índice', 'no es libro ni operación: es un valor publicado');
+  assert.strictEqual(estado.peticiones[0].path, '/api/v1/values/latest');
+  assert.strictEqual(estado.peticiones[0].params.id, 'BRTI');
+});
+
+test('CF Benchmarks: cada activo tiene su índice, y no todos tienen', async () => {
+  assert.strictEqual(venues.cfbenchmarks.pairFor('BTCUSDT'), 'BRTI');
+  assert.strictEqual(venues.cfbenchmarks.pairFor('ETHUSDT'), 'ETHUSD_RTI');
+  assert.strictEqual(venues.cfbenchmarks.pairFor('SOLUSDT'), null);
+
+  // Y pedir uno sin cobertura falla diciendo por qué, no con un error opaco.
+  await assert.rejects(
+    () => venues.cfbenchmarks.fetchPrice({ symbol: 'SOLUSDT' }),
+    /no publica índice en tiempo real para SOL/
+  );
+});
+
+test('CF Benchmarks no entra en la selección por defecto', async () => {
+  // Si el índice ya agrega a Coinbase y Kraken, meterlo en la misma mediana
+  // que ellos los cuenta dos veces. Hay que pedirlo a propósito.
+  assert.ok(venues.cfbenchmarks.meta.optIn);
+  assert.ok(!venues.defaultVenues().some((v) => v.meta.id === 'cfbenchmarks'));
+
+  const porDefecto = await venues.fetchAllPrices({ symbol: 'BTCUSDT', now: 1_000 });
+  assert.ok(!porDefecto.some((q) => q.id === 'cfbenchmarks'));
+
+  const pedido = await venues.fetchAllPrices({ symbol: 'BTCUSDT', venues: ['kraken', 'cfbenchmarks'], now: 1_000 });
+  assert.deepStrictEqual(pedido.map((q) => q.id).sort(), ['cfbenchmarks', 'kraken']);
+});
+
+test('CF Benchmarks: se puede seguir sólo el índice', async () => {
+  const quotes = await venues.fetchAllPrices({ symbol: 'BTCUSDT', venues: ['cfbenchmarks'], now: 1_000 });
+  const out = consolidated.consolidate(quotes, { now: 1_000 });
+
+  assert.strictEqual(quotes[0].price, 86646.51, 'el índice se guarda tal cual lo publica');
+  assert.strictEqual(out.price, 86646.5, 'y el consolidado sale a la escala del precio');
+  assert.strictEqual(out.method, 'único mercado');
+  assert.strictEqual(out.agreement, 'sin comparación');
+});
+
+test('CF Benchmarks: la clave de API viaja si está configurada', async () => {
+  const sinClave = estado.peticiones.length;
+  await venues.cfbenchmarks.fetchPrice({ symbol: 'BTCUSDT' });
+  assert.strictEqual(estado.peticiones[sinClave].headers.authorization, undefined, 'sin clave no se manda cabecera');
+});
+
+test('CF Benchmarks: un 401 se propaga, no se cuela como precio', async () => {
+  estado.cf = { status: 401, body: { message: 'unauthorized' } };
+  await assert.rejects(() => venues.cfbenchmarks.fetchPrice({ symbol: 'BTCUSDT' }), /HTTP 401/);
+});
+
+test('CF Benchmarks: una respuesta sin valor no produce precio', async () => {
+  estado.cf = { status: 200, body: { payload: [] } };
+  const { price, source } = await venues.cfbenchmarks.fetchPrice({ symbol: 'BTCUSDT' });
+  assert.strictEqual(price, null);
+  assert.strictEqual(source, null);
 });
 
 // --- USDT contra dólares ---------------------------------------------------

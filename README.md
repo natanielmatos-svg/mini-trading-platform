@@ -13,7 +13,7 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet (también el gráfico)
-npm test             # 208 tests, sin red
+npm test             # 217 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -24,7 +24,7 @@ Windows (PowerShell incluido). Hace falta Node 20 o superior: `node -v`.
 ### Cómo se prueba
 
 ```bash
-npm test          # 208 tests, sin red, en unos cinco segundos
+npm test          # 217 tests, sin red, en unos cinco segundos
 npm run smoke     # llama a las APIs de verdad — la única prueba que las valida
 ```
 
@@ -108,6 +108,7 @@ cotización, es un error de lectura.
 | Kraken | `BTCUSD`, `/0/public/Ticker` — devuelve sus errores con un 200 y el fallo dentro del cuerpo, así que se comprueba |
 | Coinbase Advanced | `BTC-USD`, endpoint público de mercado, sin clave |
 | Gemini | `btcusd` (en minúsculas y sin separador), `/v1/pubticker` |
+| CF Benchmarks | `BRTI` / `ETHUSD_RTI` — **un índice, no un mercado**; no entra por defecto |
 
 Un mercado que no responda se marca como caído y el consolidado sigue con los
 demás; uno cuyo precio lleve más de diez segundos parado se enseña, pero no
@@ -117,11 +118,30 @@ acepta `venues=binance,kraken` para elegir; una lista vacía o con nombres que
 no existen se ignora y se usan todos, porque un parámetro mal escrito no debe
 dejarte sin precio.
 
+#### CF Benchmarks: un índice, no un mercado
+
+El BRTI agrega varios exchanges con una metodología publicada y regulada, así
+que como referencia vale más que otra casa suelta. Pero eso mismo trae dos
+consecuencias:
+
+- **No tiene libro ni operaciones**: publica un valor, y por eso su fuente
+  aparece como «índice» en vez de pasar por la regla del punto medio.
+- **Si ya agrega a Coinbase y Kraken, meterlo en la misma mediana que ellos
+  los cuenta dos veces.** Por eso viene desmarcado: hay que elegirlo a
+  propósito. Si lo que quieres es seguir el índice, lo coherente es marcarlo
+  a él y desmarcar los exchanges que agrega.
+
+Sólo cubre los activos para los que publica índice en tiempo real (BTC y ETH);
+pedirle otro dice que no lo cubre en vez de fallar con un error opaco. Si tu
+acceso necesita clave, se pone en `CFBENCHMARKS_API_KEY` y viaja como
+`Authorization: Bearer`.
+
 **Sobre Kalshi:** esto reduce el sesgo de mirar un solo exchange, pero
 **no garantiza coincidir con Kalshi**, que liquida contra la fuente que
 declara en las reglas de cada mercado. Si quieres cuadrar exactamente con un
-mercado suyo, mira su regla de liquidación y se añade esa fuente como un
-adaptador más en `src/venues.js`.
+mercado suyo, mira su regla de liquidación: si la fuente que nombra es una de
+éstas, márcala sola; si es otra, se añade como un adaptador más en
+`src/venues.js`.
 
 El consolidado se consulta cada dos segundos. Entre consulta y consulta el
 titular se mueve con el tick de Binance manteniendo la diferencia medida con
@@ -632,7 +652,9 @@ públicos de mercado, y no acepta ninguna escritura.
 | `KLINES_FETCH_LIMIT` | `500` | Velas pedidas a Binance por ciclo (y tope del `limit` del cliente) |
 | `MAX_STREAMS_PER_IP` | `6` | Conexiones de precio en vivo simultáneas por IP |
 | `BINANCE_API` / `BINANCE_WS` | APIs públicas | Para apuntar a un mirror o a un mock |
-| `KRAKEN_API` / `COINBASE_API` | APIs públicas | Igual, para los otros dos mercados |
+| `KRAKEN_API` / `COINBASE_API` / `GEMINI_API` | APIs públicas | Igual, para los otros mercados |
+| `CFBENCHMARKS_API` | API pública | Endpoint del índice |
+| `CFBENCHMARKS_API_KEY` | — | Sólo si tu acceso al índice la necesita |
 | `RATE_MAX` / `RATE_WINDOW_MS` | `120` / `60000` | Límite de peticiones por IP a `/api` |
 | `TRUST_PROXY_HOPS` | `1` | Saltos de proxy de confianza para leer la IP real |
 
@@ -671,5 +693,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  208 tests, sin red
+test/                  217 tests, sin red
 ```

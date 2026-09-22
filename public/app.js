@@ -767,7 +767,11 @@ function renderVenues() {
   // habría dónde volver a marcar la que acabas de quitar.
   const soportadas = c.venuesSupported || [];
   const porId = new Map(c.venues.map((v) => [v.id, v]));
-  const elegidos = state.mercados && state.mercados.length ? state.mercados : soportadas.map((v) => v.id);
+  // Sin elección guardada entran los de por defecto: los `optIn` —índices que
+  // ya agregan a otros de la lista— hay que marcarlos a propósito.
+  const elegidos = state.mercados && state.mercados.length
+    ? state.mercados
+    : soportadas.filter((v) => !v.optIn).map((v) => v.id);
   const unicoElegido = elegidos.length === 1;
 
   const filas = soportadas
@@ -775,15 +779,20 @@ function renderVenues() {
       const v = porId.get(soportada.id);
       const activo = elegidos.includes(soportada.id);
       const estado = !activo ? 'apagado' : !v ? '—' : !v.usable ? (v.error ? 'caído' : 'viejo') : '';
+      const etiqueta = soportada.kind === 'índice' ? ' <b class="v-kind">índice</b>' : '';
       const diff = activo && v && v.usable && v.diff !== null
         ? `${v.diff >= 0 ? '+' : ''}${num(v.diffPct, 3)}%`
         : estado;
 
       return `<label class="venue ${activo && v && v.usable ? '' : 'off'}">
         <input type="checkbox" data-venue="${soportada.id}" ${activo ? 'checked' : ''} ${activo && unicoElegido ? 'disabled' : ''} />
-        <span class="v-name">${soportada.label}<em>${(v && v.pair) || ''}${
+        <span class="v-name">${soportada.label}${etiqueta}<em>${(v && v.pair) || ''}${
           v && v.converted ? ` · ${formatPrice(v.priceRaw)} USDT` : ''
-        }${v && v.source && v.source !== 'libro' ? ' · ' + v.source : ''}</em></span>
+        }${
+          // El sufijo de fuente sólo aporta cuando no es lo esperado de esa
+          // casa: en un índice repetiría la etiqueta que ya lleva al lado.
+          v && v.source && v.source !== 'libro' && v.source !== soportada.kind ? ' · ' + v.source : ''
+        }</em></span>
         <span class="v-price">${v && v.price > 0 ? formatPrice(v.price) : '—'}</span>
         <span class="v-diff ${v && v.diff > 0 ? 'up' : v && v.diff < 0 ? 'down' : ''}">${diff}</span>
       </label>`;
@@ -821,7 +830,12 @@ function renderVenues() {
       // Nunca se queda sin ninguno: sin mercados no hay precio.
       if (!siguiente.length) return;
 
-      state.mercados = siguiente.length === soportadas.length ? null : siguiente;
+      // Se guarda null sólo si coincide con la selección por defecto; si no,
+      // la lista explícita, para que un índice marcado no se pierda.
+      const porDefecto = soportadas.filter((v) => !v.optIn).map((v) => v.id);
+      const igualQueDefecto =
+        siguiente.length === porDefecto.length && porDefecto.every((id) => siguiente.includes(id));
+      state.mercados = igualQueDefecto ? null : siguiente;
       saveMercados();
       loadConsolidado();
     });
