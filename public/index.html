@@ -139,6 +139,71 @@
     .factors li.lean-baja::marker { color: var(--down); }
     .disclaimer { font-size: 10.5px; color: var(--muted); margin: 10px 0 0; font-style: italic; }
 
+    /* Bloque de tiempo: precio en vivo y cuenta atrás */
+    .clock-card { padding: 14px 16px; }
+    .clock-head { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--muted); letter-spacing: 0.04em; }
+    .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--up); animation: latido 2s ease-in-out infinite; }
+    @keyframes latido { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+    @media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
+
+    .clock-price { display: flex; align-items: baseline; gap: 10px; margin: 6px 0 12px; flex-wrap: wrap; }
+    #bigPrice {
+      font-size: 30px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.01em;
+      transition: color 0.45s ease-out;
+    }
+    #bigPrice.sube { color: var(--up); }
+    #bigPrice.baja { color: var(--down); }
+    .clock-price .change { font-size: 12px; font-variant-numeric: tabular-nums; }
+
+    .venue-box { margin: -4px 0 10px; font-size: 11px; }
+    .venue-summary {
+      background: none; border: none; padding: 0; cursor: pointer;
+      color: var(--muted); font-size: 11px; font-family: inherit; text-decoration: underline dotted;
+    }
+    .venue-summary:hover { color: var(--accent); }
+    .venue-none { color: var(--muted); }
+    .venue-list { margin-top: 7px; border-top: 1px solid var(--line); padding-top: 6px; }
+    .venue { display: flex; align-items: center; gap: 7px; padding: 3px 0; font-variant-numeric: tabular-nums; cursor: pointer; }
+    .venue input { width: 13px; height: 13px; accent-color: var(--accent); cursor: pointer; flex: none; }
+    .venue input:disabled { cursor: default; opacity: 0.5; }
+    .v-name { flex: 1; }
+    .venue.off { opacity: 0.5; }
+    .v-name { color: #cbd5e1; }
+    .v-name em { font-style: normal; color: var(--muted); margin-left: 5px; font-size: 10px; }
+    .v-kind { font-weight: 600; font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em;
+              color: var(--accent); border: 1px solid var(--accent); border-radius: 3px; padding: 0 3px; margin-left: 4px; }
+    .v-diff { min-width: 62px; text-align: right; color: var(--muted); }
+    .venue-note { color: var(--muted); font-size: 10px; line-height: 1.45; margin: 6px 0 0; }
+
+    .clock-count { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+    .clock-count .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+    .clock-count .time {
+      font-size: 34px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.02em;
+      color: var(--text);
+    }
+    .clock-count .time.cerca { color: #f59e0b; }
+    .clock-count .time.urgente { color: var(--down); animation: parpadeo 1s steps(2, start) infinite; }
+    @keyframes parpadeo { 50% { opacity: 0.45; } }
+    @media (prefers-reduced-motion: reduce) { .clock-count .time.urgente { animation: none; } }
+
+    .clock-bar { height: 5px; background: #111c33; border-radius: 3px; overflow: hidden; margin-top: 8px; }
+    .clock-bar span {
+      display: block;
+      height: 100%;
+      background: var(--accent);
+      border-radius: 3px;
+      transition: width 0.25s linear;
+    }
+    .clock-bar span.cerca { background: #f59e0b; }
+    .clock-bar span.urgente { background: var(--down); }
+    .clock-foot { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
+
     /* Avisos */
     .alert-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .mode { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); margin-top: 8px; }
@@ -219,11 +284,7 @@
   <header>
     <h1>Mini Plataforma de Trading</h1>
 
-    <div class="price-block">
-      <span class="value" id="livePrice">—</span>
-      <span class="change" id="priceChange"></span>
-      <span class="stream"><span class="dot" id="streamDot"></span><span id="streamLabel">desconectado</span></span>
-    </div>
+    <span class="stream"><span class="dot" id="streamDot"></span><span id="streamLabel">desconectado</span></span>
 
     <div class="controls">
       <label>Cripto
@@ -255,8 +316,29 @@
     </div>
 
     <div class="side-panel">
+      <div class="card clock-card">
+        <div class="clock-head">
+          <span id="clockPair">—</span>
+          <span class="live-dot"></span>
+        </div>
+        <div class="clock-price">
+          <span id="bigPrice">—</span>
+          <span class="change" id="bigChange"></span>
+        </div>
+        <div id="venueBox" class="venue-box"></div>
+        <div class="clock-count">
+          <span class="label">cierra en</span>
+          <span class="time" id="bigCountdown">--:--</span>
+        </div>
+        <div class="clock-bar"><span id="clockBar"></span></div>
+        <div class="clock-foot">
+          <span id="clockOpen"></span>
+          <span id="clockClose"></span>
+        </div>
+      </div>
+
       <div class="card">
-        <h2>¿Rompe esta vela? <small id="countdown"></small></h2>
+        <h2>¿Rompe esta vela?</h2>
         <div id="breakoutPanel"><p class="muted">Calculando…</p></div>
       </div>
 

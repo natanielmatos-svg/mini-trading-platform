@@ -62,7 +62,30 @@ function formatClock(ms) {
   return h ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
 }
 
-const API = { priceDecimals, formatPrice, num, formatPercent, formatDuration, formatClock };
+// Ventana de la vela en curso: cuándo abrió, cuándo cierra y cuánto le queda.
+//
+// Antes la cuenta atrás salía del análisis de ruptura, que se refresca cada
+// uno o dos minutos: al cerrar una vela el resto se volvía negativo y el
+// cronómetro se quedaba clavado en 00:00 hasta el siguiente refresco. Esto se
+// calcula del reloj, así que nunca se queda viejo.
+//
+// Con `aperturaConocida` —la que dio Binance— se avanza desde ahí en saltos de
+// un intervalo, que es exacto incluso para las semanas, que no empiezan en el
+// epoch. Sin ella se usa el bucket del reloj, que vale para todo lo demás.
+function candleWindow(now, stepMs, aperturaConocida = null) {
+  if (!(stepMs > 0)) return null;
+
+  const open = Number.isFinite(aperturaConocida)
+    ? aperturaConocida + Math.max(Math.floor((now - aperturaConocida) / stepMs), 0) * stepMs
+    : Math.floor(now / stepMs) * stepMs;
+
+  const close = open + stepMs - 1;
+  const elapsed = Math.min(Math.max((now - open) / stepMs, 0), 1);
+
+  return { open, close, remainingMs: Math.max(close - now + 1, 0), elapsed };
+}
+
+const API = { priceDecimals, formatPrice, num, formatPercent, formatDuration, formatClock, candleWindow };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
 else globalThis.Format = API;

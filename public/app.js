@@ -9,13 +9,14 @@
 
 (function () {
 const { emaSeries, ema, shareAtLeast, requiredExcursion } = globalThis.Indicators;
-const { formatPrice, num, formatPercent, formatClock } = globalThis.Format;
+const { formatPrice, num, formatPercent, formatClock, candleWindow } = globalThis.Format;
 const { evaluateSignals } = globalThis.Signals;
 
 const MTF = ['1h', '4h', '1d', '1w'];
 const CANDLES = 300;
 const EVAL_THROTTLE_MS = 1000;
 const PREFS_KEY = 'mtp.alertas';
+const MERCADOS_KEY = 'mtp.mercados';
 
 const state = {
   symbol: 'BTCUSDT',
@@ -23,7 +24,13 @@ const state = {
   candles: [],
   mtf: {},
   breakout: null,
-  live: null,
+  live: null,        // última vela recibida
+  livePrice: null,   // último precio operado en Binance, tick a tick
+  consolidado: null, // mediana de los mercados elegidos
+  mercados: null,    // ids elegidos; null = todos los que haya
+  base: 0,           // diferencia medida entre el consolidado y Binance
+  priceTimer: null,
+  ultimoPintado: null,
   source: null,
   fetchedAt: null,
   loading: false,
@@ -59,13 +66,18 @@ const el = {
   emaSlow: $('emaSlow'),
   emaWarning: $('emaWarning'),
   status: $('statusText'),
-  price: $('livePrice'),
-  priceChange: $('priceChange'),
+  price: $('bigPrice'),
+  priceChange: $('bigChange'),
+  clockPair: $('clockPair'),
+  countdownBig: $('bigCountdown'),
+  clockBar: $('clockBar'),
+  clockOpen: $('clockOpen'),
+  clockClose: $('clockClose'),
+  venues: $('venueBox'),
   streamDot: $('streamDot'),
   streamLabel: $('streamLabel'),
   tooltip: $('tooltip'),
   breakout: $('breakoutPanel'),
-  countdown: $('countdown'),
   alertToggle: $('alertToggle'),
   alertTest: $('alertTest'),
   alertMode: $('alertMode'),
@@ -81,6 +93,37 @@ const ctx = el.canvas.getContext('2d');
 
 const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
 const pairKey = () => `${state.symbol}|${state.interval}`;
+
+// Precio de Binance: el que usa el ANÁLISIS. Los niveles y el ATR salen de
+// las velas de Binance, así que medir la distancia a un nivel con el precio de
+// otra casa haría que "faltan 0,87% hasta el nivel" fuera sutilmente falso.
+function precioActual() {
+  if (state.livePrice && state.livePrice.price > 0) return state.livePrice.price;
+  const ultima = state.candles[state.candles.length - 1];
+  return ultima ? ultima.close : null;
+}
+
+// Precio del TITULAR: la mediana de los tres mercados.
+//
+// El consolidado se consulta cada dos segundos, pero el titular no puede
+// quedarse quieto dos segundos entre actualizaciones. Entre consulta y
+// consulta se mueve con el tick de Binance manteniendo la diferencia medida
+// con los otros dos, que cambia despacio; cada consulta la vuelve a medir.
+function precioTitular() {
+  const binance = precioActual();
+  if (state.consolidado && state.consolidado.price > 0) {
+    if (binance === null) return state.consolidado.price;
+    // Sin base utilizable, manda el consolidado: no se inventa un número.
+    return state.base === 0 ? state.consolidado.price : binance + state.base;
+  }
+  return binance;
+}
+
+// Ventana de la vela en curso, anclada a la apertura que dio Binance.
+function ventanaActual(now = Date.now()) {
+  const ultima = state.candles[state.candles.length - 1];
+  return candleWindow(now, intervalToMs(state.interval), ultima ? ultima.openTime : null);
+}
 
 function fmtTimeAxis(ms, interval) {
   const d = new Date(ms);
@@ -131,6 +174,25 @@ function loadPrefs() {
     state.alerts.positions = saved.positions && typeof saved.positions === 'object' ? saved.positions : {};
   } catch {
     /* sin persistencia se sigue funcionando, sólo se olvida entre recargas */
+  }
+}
+
+function loadMercados() {
+  try {
+    const raw = localStorage.getItem(MERCADOS_KEY);
+    const lista = raw ? JSON.parse(raw) : null;
+    if (Array.isArray(lista) && lista.length) state.mercados = lista;
+  } catch {
+    /* sin persistencia se empieza con todos */
+  }
+}
+
+function saveMercados() {
+  try {
+    if (state.mercados && state.mercados.length) localStorage.setItem(MERCADOS_KEY, JSON.stringify(state.mercados));
+    else localStorage.removeItem(MERCADOS_KEY);
+  } catch {
+    /* idem */
   }
 }
 
@@ -225,7 +287,7 @@ async function loadAll({ silent = false } = {}) {
 
     await loadBreakout();
     evaluateAlerts();
-    render();
+    render({ force: true });
     setStatus('');
   } catch (err) {
     state.failures += 1;
@@ -245,6 +307,40 @@ async function loadBreakout() {
   } catch (err) {
     state.breakout = { ok: false, reason: `No se pudo calcular: ${err.message}` };
   }
+}
+
+async function loadConsolidado() {
+  try {
+    const eleccion = state.mercados && state.mercados.length ? `&venues=${state.mercados.join(',')}` : '';
+    const data = await getJson(`/api/price?symbol=${encodeURIComponent(state.symbol)}${eleccion}`);
+    if (data.symbol !== state.symbol) return; // llegó tarde, ya cambiamos de par
+    state.consolidado = data;
+
+    // La diferencia se mide contra el precio de Binance del mismo instante.
+    const binance = data.venues.find((v) => v.id === 'binance');
+    const referencia = binance && binance.usable ? binance.price : precioActual();
+    const base = data.price > 0 && referencia > 0 ? data.price - referencia : 0;
+
+    // Tope: entre mercados al contado del mismo activo la diferencia son unos
+    // pocos puntos básicos. Media unidad porcentual ya no es una base, es que
+    // algo no cuadra —una consulta vieja, un par equivocado—, y arrastrar el
+    // titular con eso sería peor que no corregirlo. En ese caso se enseña el
+    // consolidado tal cual.
+    state.base = Math.abs(base) <= data.price * 0.005 ? base : 0;
+
+    renderClock();
+  } catch {
+    // Sin consolidado se sigue enseñando el de Binance; se nota en el detalle.
+    state.consolidado = null;
+    state.base = 0;
+  }
+}
+
+function programarConsolidado() {
+  clearInterval(state.priceTimer);
+  state.priceTimer = setInterval(() => {
+    if (!document.hidden) loadConsolidado();
+  }, 2000);
 }
 
 // Reintentos con espera creciente: si el servidor está caído, insistir cada
@@ -278,6 +374,20 @@ function connectStream() {
       onTick(JSON.parse(event.data));
     } catch {
       /* mensaje ilegible: se ignora, el siguiente llegará bien */
+    }
+  });
+
+  sse.addEventListener('price', (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.symbol !== state.symbol || !(data.price > 0)) return;
+      state.livePrice = data;
+      renderClock();
+      // La probabilidad de ruptura se mueve con el precio, así que el panel
+      // se repinta también; es sólo texto, no toca el gráfico.
+      renderBreakout();
+    } catch {
+      /* un mensaje ilegible no debe romper el flujo */
     }
   });
 
@@ -619,15 +729,15 @@ function requestRender() {
   });
 }
 
-function render() {
+function render({ force = false } = {}) {
   const { warning } = emaLengths();
   el.emaWarning.textContent = warning;
   el.emaWarning.style.display = warning ? 'block' : 'none';
 
   drawChart();
   renderTable();
-  renderPrice();
-  renderBreakout();
+  renderClock();
+  renderBreakout({ force });
   renderAlerts();
 }
 
@@ -642,16 +752,143 @@ function setStatus(text, isError = false) {
   el.status.classList.toggle('error', isError);
 }
 
-function renderPrice() {
-  const candles = state.candles;
-  if (!candles.length) return;
-  const last = candles[candles.length - 1];
-  const reference = candles.length > 1 ? candles[candles.length - 2].close : last.open;
-  const change = (last.close - reference) / reference;
+// El desglose por mercado. Lo interesante no es el número consolidado sino
+// ver cuánto discrepan: parte de esa diferencia ni siquiera es desacuerdo
+// sobre el activo, es que Binance cotiza en USDT y los otros dos en dólares.
+function renderVenues() {
+  const c = state.consolidado;
 
-  el.price.textContent = formatPrice(last.close);
-  el.priceChange.textContent = `${change >= 0 ? '+' : ''}${formatPercent(change, 2)}`;
-  el.priceChange.className = `change ${change >= 0 ? 'up' : 'down'}`;
+  if (!c || !(c.price > 0)) {
+    el.venues.innerHTML = '<span class="venue-none">sólo Binance · consolidando…</span>';
+    return;
+  }
+
+  // Se pintan TODAS las casas soportadas, no sólo las elegidas: si no, no
+  // habría dónde volver a marcar la que acabas de quitar.
+  const soportadas = c.venuesSupported || [];
+  const porId = new Map(c.venues.map((v) => [v.id, v]));
+  // Sin elección guardada entran los de por defecto: los `optIn` —índices que
+  // ya agregan a otros de la lista— hay que marcarlos a propósito.
+  const elegidos = state.mercados && state.mercados.length
+    ? state.mercados
+    : soportadas.filter((v) => !v.optIn).map((v) => v.id);
+  const unicoElegido = elegidos.length === 1;
+
+  const filas = soportadas
+    .map((soportada) => {
+      const v = porId.get(soportada.id);
+      const activo = elegidos.includes(soportada.id);
+      const estado = !activo ? 'apagado' : !v ? '—' : !v.usable ? (v.error ? 'caído' : 'viejo') : '';
+      const etiqueta = soportada.kind === 'índice' ? ' <b class="v-kind">índice</b>' : '';
+      const diff = activo && v && v.usable && v.diff !== null
+        ? `${v.diff >= 0 ? '+' : ''}${num(v.diffPct, 3)}%`
+        : estado;
+
+      return `<label class="venue ${activo && v && v.usable ? '' : 'off'}">
+        <input type="checkbox" data-venue="${soportada.id}" ${activo ? 'checked' : ''} ${activo && unicoElegido ? 'disabled' : ''} />
+        <span class="v-name">${soportada.label}${etiqueta}<em>${(v && v.pair) || ''}${
+          v && v.converted ? ` · ${formatPrice(v.priceRaw)} USDT` : ''
+        }${
+          // El sufijo de fuente sólo aporta cuando no es lo esperado de esa
+          // casa: en un índice repetiría la etiqueta que ya lleva al lado.
+          v && v.source && v.source !== 'libro' && v.source !== soportada.kind ? ' · ' + v.source : ''
+        }</em></span>
+        <span class="v-price">${v && v.price > 0 ? formatPrice(v.price) : '—'}</span>
+        <span class="v-diff ${v && v.diff > 0 ? 'up' : v && v.diff < 0 ? 'down' : ''}">${diff}</span>
+      </label>`;
+    })
+    .join('');
+
+  el.venues.innerHTML =
+    `<button class="venue-summary" id="venueToggle" aria-expanded="false">` +
+    `${c.used} de ${soportadas.length} mercados · ${c.agreement} · dif. ${num(c.spreadPct, 3)}%` +
+    `</button>` +
+    `<div class="venue-list" hidden>${filas}` +
+    (c.venues.some((v) => v.converted)
+      ? `<p class="venue-note">Los precios en USDT se pasan a dólares al cambio de ${num(c.venues.find((v) => v.converted).stable.rate, 4)} (${c.venues.find((v) => v.converted).stable.source}): si no, el desvío de la stablecoin se colaría en la mediana como si fuera precio del activo.</p>`
+      : '') +
+    `<p class="venue-note">Mediana del punto medio del libro de cada mercado, que siempre es de ahora — la última operación de un mercado poco activo puede ser de hace minutos. El análisis de ruptura usa el precio de Binance, que es de donde salen las velas.</p>` +
+    `</div>`;
+
+  const toggle = $('venueToggle');
+  const lista = el.venues.querySelector('.venue-list');
+  if (state.venuesAbierto) {
+    lista.hidden = false;
+    toggle.setAttribute('aria-expanded', 'true');
+  }
+  toggle.addEventListener('click', () => {
+    state.venuesAbierto = !state.venuesAbierto;
+    lista.hidden = !state.venuesAbierto;
+    toggle.setAttribute('aria-expanded', String(state.venuesAbierto));
+  });
+
+  for (const casilla of el.venues.querySelectorAll('input[data-venue]')) {
+    casilla.addEventListener('change', () => {
+      const id = casilla.dataset.venue;
+      const siguiente = casilla.checked ? [...elegidos, id] : elegidos.filter((x) => x !== id);
+
+      // Nunca se queda sin ninguno: sin mercados no hay precio.
+      if (!siguiente.length) return;
+
+      // Se guarda null sólo si coincide con la selección por defecto; si no,
+      // la lista explícita, para que un índice marcado no se pierda.
+      const porDefecto = soportadas.filter((v) => !v.optIn).map((v) => v.id);
+      const igualQueDefecto =
+        siguiente.length === porDefecto.length && porDefecto.every((id) => siguiente.includes(id));
+      state.mercados = igualQueDefecto ? null : siguiente;
+      saveMercados();
+      loadConsolidado();
+    });
+  }
+}
+
+// El bloque de tiempo: precio en vivo y cuánto le queda a la vela, con la
+// barra vaciándose. Se repinta cuatro veces por segundo —el cronómetro sólo
+// cambia cada segundo, pero la barra se mueve suave y el precio llega cuando
+// llega— y no toca el canvas, así que es barato.
+function renderClock() {
+  const precio = precioTitular();
+  const ventana = ventanaActual();
+  if (!ventana) return;
+
+  el.clockPair.textContent = `${state.symbol} · ${state.interval}`;
+
+  if (precio !== null) {
+    el.price.textContent = formatPrice(precio);
+
+    // Destello al cambiar: el número parece vivo aunque el cambio sea de un
+    // céntimo, que es justo lo que se pide a un precio en tiempo real.
+    if (state.ultimoPintado !== null && precio !== state.ultimoPintado) {
+      el.price.classList.remove('sube', 'baja');
+      void el.price.offsetWidth; // reinicia la animación
+      el.price.classList.add(precio > state.ultimoPintado ? 'sube' : 'baja');
+    }
+    state.ultimoPintado = precio;
+
+    // El cambio se mide desde que abrió ESTA vela: es de lo que va el bloque.
+    const abierta = state.candles[state.candles.length - 1];
+    const apertura = abierta && abierta.openTime === ventana.open ? abierta.open : null;
+    if (apertura > 0) {
+      const cambio = (precio - apertura) / apertura;
+      el.priceChange.textContent = `${cambio >= 0 ? '+' : ''}${formatPercent(cambio, 2)} en esta vela`;
+      el.priceChange.className = `change ${cambio >= 0 ? 'up' : 'down'}`;
+    } else {
+      el.priceChange.textContent = '';
+    }
+  }
+
+  renderVenues();
+  el.countdownBig.textContent = formatClock(ventana.remainingMs);
+
+  // Urgencia en el último cuarto, y roja en el último 10%.
+  const restante = 1 - ventana.elapsed;
+  el.countdownBig.className = `time ${restante < 0.1 ? 'urgente' : restante < 0.25 ? 'cerca' : ''}`;
+  el.clockBar.style.width = `${clamp(restante * 100, 0, 100)}%`;
+  el.clockBar.className = restante < 0.1 ? 'urgente' : restante < 0.25 ? 'cerca' : '';
+
+  const hora = (ms) => new Date(ms).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  el.clockOpen.textContent = `abrió ${hora(ventana.open)}`;
+  el.clockClose.textContent = `cierra ${hora(ventana.close + 1)}`;
 }
 
 // --- Gráfico ---------------------------------------------------------------
@@ -1003,46 +1240,72 @@ function liveSide(side, sample, price, atr, remaining) {
   };
 }
 
-function renderBreakout() {
+// El panel se reconstruye entero en cada repintado, y eso cerraba de golpe el
+// desplegable que el usuario acabara de abrir: con el precio en vivo llegando
+// varias veces por segundo, «Contexto» era imposible de leer. Se apunta qué
+// estaba abierto y se restaura.
+function seccionesAbiertas() {
+  const previos = el.breakout.querySelectorAll('details[data-k]');
+  return {
+    primera: previos.length === 0,
+    claves: new Set([...previos].filter((d) => d.open).map((d) => d.dataset.k)),
+  };
+}
+
+function restaurarSecciones({ primera, claves }) {
+  if (primera) return; // la primera vez mandan los `open` del marcado
+  for (const d of el.breakout.querySelectorAll('details[data-k]')) d.open = claves.has(d.dataset.k);
+}
+
+let ultimoBreakout = 0;
+
+function renderBreakout({ force = false } = {}) {
   const b = state.breakout;
+
+  // Reconstruir este panel es caro y llegan hasta diez precios por segundo;
+  // tres repintados por segundo ya se ven fluidos.
+  const ahora = Date.now();
+  if (!force && b && b.ok && ahora - ultimoBreakout < 330) return;
+  ultimoBreakout = ahora;
 
   if (!b || !b.ok) {
     el.breakout.innerHTML = `<p class="muted">${b ? b.reason : 'Calculando…'}</p>`;
-    el.countdown.textContent = '';
     return;
   }
 
-  const price = state.live ? state.live.close : b.price;
+  const price = precioActual() || b.price;
   const now = Date.now();
-  const total = b.candle.closeTime - b.candle.openTime + 1;
-  const remaining = clamp((b.candle.closeTime - now) / total, 0.01, 1);
+  // El reloj manda sobre el payload, que puede tener uno o dos minutos.
+  const ventana = ventanaActual(now);
+  const remaining = ventana ? clamp(ventana.remainingMs / intervalToMs(state.interval), 0.01, 1) : 0.01;
 
   const up = liveSide(b.up, b.sample.up, price, b.atr, remaining);
   const down = liveSide(b.down, b.sample.down, price, b.atr, remaining);
 
-  el.countdown.textContent = `cierra en ${formatClock(b.candle.closeTime - now)}`;
-
   const bias = verdictFor(up, down, remaining);
+  const abiertas = seccionesAbiertas();
 
   el.breakout.innerHTML = `
     <div class="verdict ${bias.cls}">${bias.text}</div>
     ${sideHtml(up, 'Ruptura al alza', 'up')}
     ${sideHtml(down, 'Ruptura a la baja', 'down')}
-    <details class="method" open>
+    <details class="method" data-k="porque" open>
       <summary>Por qué</summary>
       ${b.explanation.map((line) => `<p>${line}</p>`).join('')}
     </details>
-    <details class="method">
+    <details class="method" data-k="contexto">
       <summary>Contexto (${b.context.length} señales)</summary>
       <ul class="factors">
         ${b.context.map((f) => `<li class="lean-${f.lean}"><strong>${f.label}:</strong> ${f.text}</li>`).join('')}
       </ul>
     </details>
-    <details class="method">
+    <details class="method" data-k="confirmar">
       <summary>Cómo confirmar la ruptura</summary>
       ${[b.trigger.up, b.trigger.down].filter(Boolean).map((t) => `<p>${t.text}<br><em>${t.invalidation}</em></p>`).join('')}
     </details>
     <p class="disclaimer">${b.disclaimer}</p>`;
+
+  restaurarSecciones(abiertas);
 }
 
 // El veredicto tiene que distinguir dos cosas que se parecen en el número y no
@@ -1115,6 +1378,10 @@ function applyControls({ symbol = null } = {}) {
   if (changed) {
     state.candles = [];
     state.live = null;
+    state.livePrice = null;
+    state.consolidado = null;
+    state.base = 0;
+    state.ultimoPintado = null;
     state.breakout = null;
     state.alerts.primed = false; // par nuevo: no se grita por lo que ya había pasado
     connectStream();
@@ -1125,6 +1392,7 @@ function applyControls({ symbol = null } = {}) {
 
 function init() {
   loadPrefs();
+  loadMercados();
   resizeCanvas();
 
   el.symbolSelect.addEventListener('change', () => {
@@ -1187,10 +1455,14 @@ function init() {
     loadAll({ silent: true });
   });
 
-  // El reloj de la vela corre aunque no lleguen ticks.
+  // El cronómetro corre del reloj del navegador, así que sigue bajando aunque
+  // no llegue un solo tick. Cuatro veces por segundo para que la barra no dé
+  // saltos.
   setInterval(() => {
-    if (!document.hidden && state.breakout && state.breakout.ok) renderBreakout();
-  }, 1000);
+    if (document.hidden) return;
+    renderClock();
+    if (state.breakout && state.breakout.ok) renderBreakout();
+  }, 250);
 
   el.alertToggle.checked = state.alerts.enabled;
   el.alertMode.value = state.alerts.operativa;
@@ -1205,6 +1477,8 @@ function init() {
   loadSymbols();
   connectStream();
   loadAll();
+  loadConsolidado();
+  programarConsolidado();
 }
 
 document.addEventListener('DOMContentLoaded', init);

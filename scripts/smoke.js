@@ -16,6 +16,9 @@ const { analyzeEvents } = require('../src/analyze');
 const { getKlines, BINANCE_API } = require('../src/klines');
 const { analyzeBreakout } = require('../src/breakout');
 const { evaluateSignals } = require('../src/signals');
+const { fetchAllPrices } = require('../src/venues');
+const { consolidate } = require('../src/consolidated');
+const { formatPrice, num, priceDecimals } = require('../src/format');
 
 const TOLERANTE = process.argv.includes('--tolerante');
 
@@ -169,7 +172,64 @@ function repasarSenales(candles, interval = '1h') {
   console.log('        Los stops se miran contra el mínimo y el máximo de cada vela, y ante la duda pierde.');
 }
 
+// Los tres mercados al contado. Sus formatos se prueban con servidores
+// locales que los imitan, pero que sigan respondiendo eso sólo lo dice una
+// llamada de verdad — y aquí además se ve lo único que importa del
+// consolidado: cuánto discrepan hoy.
+async function comprobarPrecios() {
+  console.log('Consultando Binance, Kraken y Coinbase...\n');
+
+  const quotes = await fetchAllPrices({ symbol: 'BTCUSDT', timeoutMs: 8000 });
+  const out = consolidate(quotes);
+
+  for (const v of out.venues) {
+    if (v.usable) {
+      console.log(
+        `  OK    ${v.label.padEnd(9)} ${v.pair.padEnd(9)} ${formatPrice(v.price).padStart(12)} ` +
+          `${((v.diff >= 0 ? '+' : '') + num(v.diffPct, 4) + '%').padStart(10)}  ${String(v.source || '?').padEnd(16)} en ${v.elapsedMs} ms`
+      );
+    } else {
+      console.log(`  FALLO ${v.label.padEnd(9)} ${v.pair.padEnd(9)} ${trunc(v.error || 'sin precio utilizable')}`);
+    }
+  }
+
+  if (out.price === null) {
+    console.log('\n  Ningún mercado al contado responde: el precio consolidado no se puede calcular.');
+    return false;
+  }
+
+  console.log(
+    `\n  Consolidado: ${formatPrice(out.price)} (${out.method}, ${out.used} de ${out.venues.length}) · ` +
+      `${out.agreement} · diferencia ${num(out.spread, priceDecimals(out.price))} (${num(out.spreadPct, 4)}%)`
+  );
+  if (out.used < out.venues.length) {
+    console.log('  Aviso: falta algún mercado, así que el consolidado es menos robusto de lo previsto.');
+  }
+  const convertidos = out.venues.filter((v) => v.converted);
+  const sinConvertir = out.venues.filter((v) => v.quote === 'USDT' && v.usable && !v.converted);
+
+  if (convertidos.length) {
+    const s = convertidos[0].stable;
+    console.log(
+      `  USDT/USD ${num(s.rate, 6)} (${s.source}): ` +
+        convertidos.map((v) => `${v.label} ${formatPrice(v.priceRaw)} → ${formatPrice(v.price)}`).join(', ')
+    );
+  } else if (sinConvertir.length) {
+    console.log(`  Aviso: no se pudo medir el USDT/USD, así que ${sinConvertir.map((v) => v.label).join(', ')} va sin convertir y arrastra el desvío de la stablecoin.`);
+  }
+
+  const porOperacion = out.venues.filter((v) => v.usable && v.source !== 'libro');
+  if (porOperacion.length) {
+    console.log(`  Ojo: ${porOperacion.map((v) => v.label).join(', ')} sin libro; su precio es la última operación y puede ser viejo.`);
+  }
+  console.log('  Se compara el punto medio del libro de cada casa, que siempre es de ahora.');
+
+  return out.used >= 2;
+}
+
 async function main() {
+  const preciosOk = await comprobarPrecios();
+  console.log('');
   const mercadoOk = await comprobarMercado();
   console.log('');
   console.log('Consultando Polymarket, Robinhood/Kalshi y Manifold...\n');
@@ -218,6 +278,17 @@ async function main() {
   if (falloTotal) {
     console.error(`\n${caidas} de ${sources.length} fuentes no están utilizables.`);
     process.exit(1);
+  }
+
+  // El consolidado aguanta con dos de tres; con menos, el titular se queda en
+  // un solo mercado y deja de cumplir su función.
+  if (!preciosOk) {
+    if (TOLERANTE) {
+      console.log('\nAviso: menos de dos mercados al contado disponibles; el precio no será consolidado.');
+    } else {
+      console.error('\nMenos de dos mercados al contado disponibles: el precio consolidado no es fiable.');
+      process.exit(1);
+    }
   }
 
   // Binance alimenta la mitad de la aplicación: si falla, el despliegue está

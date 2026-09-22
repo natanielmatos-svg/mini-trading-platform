@@ -17,6 +17,8 @@ const { getKlines, parseSymbol, parseInterval, parseLimit, INTERVALS } = require
 const { analyzeBreakout } = require('./src/breakout');
 const { MarketStream, sseClient } = require('./src/stream');
 const { verifySymbols, groups } = require('./src/symbols');
+const { fetchAllPrices, listVenues, parseVenues } = require('./src/venues');
+const { consolidate } = require('./src/consolidated');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -191,6 +193,21 @@ app.get('/api/symbols', async (req, res) => {
         .filter((s) => s.available),
     })),
   });
+});
+
+// Precio consolidado de los mercados al contado. Devuelve el número y, sobre
+// todo, el detalle: cuánto se separa cada mercado. Esa diferencia es la razón
+// de que este endpoint exista.
+app.get('/api/price', async (req, res) => {
+  const { symbol, demo } = marketParams(req);
+  const venues = parseVenues(req.query.venues);
+
+  try {
+    const quotes = await fetchAllPrices({ symbol, demo, venues });
+    sendJson(res, { symbol, requested: venues, ...consolidate(quotes), venuesSupported: listVenues() });
+  } catch (err) {
+    marketError(res, err, '/api/price');
+  }
 });
 
 // Análisis de ruptura de la vela en curso: niveles, distancia en ATR y la
