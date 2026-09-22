@@ -351,15 +351,24 @@ formato sino de cómo funciona la bolsa.
 los datos de bolsa están licenciados. Con una cuenta gratuita de
 [Alpaca](https://alpaca.markets/) se consigue tiempo real de IEX:
 
+Lo más cómodo es un archivo `.env` junto a `package.json` —no se sube, está en
+`.gitignore`— porque la sintaxis para exportar variables cambia con el shell y
+se pierde al cerrar la ventana:
+
+```
+ALPACA_KEY_ID=TU_CLAVE
+ALPACA_SECRET_KEY=TU_SECRETO
+```
+
 ```bash
-export ALPACA_KEY_ID=...
-export ALPACA_SECRET_KEY=...
-npm run alpaca   # comprueba la clave en dos segundos
+cp .env.example .env     # y rellenarlo
+npm run alpaca           # comprueba la clave en dos segundos
 npm start
 ```
 
-`npm run alpaca` dice si la clave sirve, de qué cuenta es y si el mercado está
-abierto. No imprime el secreto.
+`npm run alpaca` dice si la clave sirve, de qué cuenta es —papel o real— y si
+el mercado está abierto. No imprime el secreto. Lo que ya esté en el entorno
+manda sobre el `.env`, así que `PORT=3999 npm start` sigue funcionando.
 
 Sirven tanto las claves de la cuenta real como las de papel: no son
 intercambiables —una clave de papel contra el host real devuelve un 403 tan
@@ -795,6 +804,7 @@ agrupan en una sola llamada, para no chocar con los rate limits.
 ```
 server.js              rutas HTTP
 src/
+  env.js               lee el .env, si lo hay, antes que nada
   indicators.js        EMA, ATR, RSI, pivotes, niveles — servidor Y navegador
   format.js            formato de precios y porcentajes — servidor Y navegador
   signals.js           compras y ventas — servidor Y navegador

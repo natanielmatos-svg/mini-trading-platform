@@ -11,6 +11,7 @@
 // sólo falla si caen TODAS las fuentes, que es el criterio razonable para un
 // reinicio automático: el agregador funciona con las que respondan.
 
+require('../src/env'); // un .env, si lo hay, antes que los módulos que leen process.env
 const providers = require('../src/providers');
 const { analyzeEvents } = require('../src/analyze');
 const { getKlines, BINANCE_API } = require('../src/klines');

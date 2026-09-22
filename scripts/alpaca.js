@@ -12,6 +12,7 @@
 // Nunca imprime el secreto. Del identificador sólo salen los primeros
 // caracteres: bastan para ver si se ha pegado el que era.
 
+require('../src/env'); // un .env, si lo hay, antes que los módulos que leen process.env
 const alpaca = require('../src/alpaca');
 const stocks = require('../src/stocks');
 const { formatPrice, num } = require('../src/format');
@@ -44,19 +45,37 @@ async function main() {
   const secreto = process.env.ALPACA_SECRET_KEY || '';
 
   if (!id || !secreto) {
-    console.error('Faltan variables de entorno:');
-    if (!id) console.error('  ALPACA_KEY_ID');
-    if (!secreto) console.error('  ALPACA_SECRET_KEY');
-    console.error('\nSe sacan de https://app.alpaca.markets/ → API Keys. La cuenta gratuita sirve.');
-    console.error('El secreto sólo se enseña al crear la clave: si no lo tienes, genera otra.');
-    console.error('\n  export ALPACA_KEY_ID=...');
-    console.error('  export ALPACA_SECRET_KEY=...');
-    console.error('  npm run alpaca');
+    console.error(`Falta ${!id && !secreto ? 'la clave' : !id ? 'ALPACA_KEY_ID' : 'ALPACA_SECRET_KEY'}.`);
+    console.error('\nSe saca de https://app.alpaca.markets/ → API Keys. La cuenta gratuita sirve, y');
+    console.error('valen tanto las de papel como las reales. El secreto sólo se enseña al crear la');
+    console.error('clave: si no lo guardaste, genera otra.');
+
+    // La sintaxis para exportar una variable cambia con el shell, y depurar el
+    // shell en vez de la aplicación es una pérdida de tiempo garantizada. Con
+    // un archivo se escribe una vez y funciona en los tres.
+    console.error(`\nLo más cómodo es un archivo .env junto a package.json (no se sube, está`);
+    console.error('en .gitignore). Copia .env.example, o créalo con estas dos líneas:');
+    console.error('\n  ALPACA_KEY_ID=TU_CLAVE');
+    console.error('  ALPACA_SECRET_KEY=TU_SECRETO');
+    console.error('\nY vuelve a ejecutar `npm run alpaca`. Si prefieres variables de entorno,');
+    console.error('la sintaxis depende del shell:');
+    console.error('\n  PowerShell   $env:ALPACA_KEY_ID = "TU_CLAVE"');
+    console.error('  cmd          set ALPACA_KEY_ID=TU_CLAVE');
+    console.error('  bash / zsh   export ALPACA_KEY_ID=TU_CLAVE');
+
+    const env = require('../src/env');
+    if (!env.cargado && env.motivo && env.motivo !== 'no hay .env') {
+      console.error(`\nAviso: ${env.motivo}`);
+    }
     process.exit(1);
   }
 
   // Del identificador, lo justo para reconocerlo. El secreto, nunca.
-  console.log(`Clave ${id.slice(0, 6)}… (${id.length} caracteres), feed ${alpaca.FEED}.\n`);
+  const env = require('../src/env');
+  console.log(
+    `Clave ${id.slice(0, 6)}… (${id.length} caracteres), feed ${alpaca.FEED}` +
+      `${env.cargado ? ', leída de .env' : ''}.\n`
+  );
 
   try {
     const reloj = await alpaca.fetchClock();

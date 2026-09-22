@@ -9,6 +9,10 @@
 // - Expone /api/predictions*: analizador de mercados de predicción que agrega
 //   Polymarket, Robinhood/Kalshi y Manifold y dice qué opción es más probable
 
+// Antes que nada: los módulos de abajo leen process.env al cargarse, así que
+// un .env que llegue después no serviría de nada.
+const env = require('./src/env');
+
 const express = require('express');
 const path = require('path');
 
@@ -452,8 +456,19 @@ function start(port = PORT) {
   const server = app.listen(port, () => {
     const address = server.address();
     console.log(`Servidor escuchando en http://localhost:${address.port}`);
-    console.log('Trading:      /index.html');
-    console.log('Predicciones: /predicciones.html');
+    console.log('Criptomonedas: /index.html');
+    console.log('Acciones:      /acciones.html');
+    console.log('Predicciones:  /predicciones.html');
+
+    if (env.cargado) console.log(`\nConfiguración leída de ${env.RUTA}`);
+    else if (env.motivo && env.motivo !== 'no hay .env') console.log(`\nAviso: ${env.motivo}`);
+
+    // Sin clave de Alpaca la página de acciones arranca igual, pero con datos
+    // de ejemplo: mejor decirlo aquí que dejar que se descubra mirando un
+    // gráfico que no es de nadie.
+    if (!alpaca.hayClave()) {
+      console.log('Sin clave de Alpaca: /acciones.html usará datos de ejemplo. `npm run alpaca` explica cómo ponerla.');
+    }
     if (DEMO_ALWAYS) console.log('MODO DEMO activo: datos de ejemplo, no precios reales.');
   });
 
