@@ -20,7 +20,20 @@ const { fetchJson } = require('./http');
 const { TtlCache } = require('./cache');
 
 const DATA_API = process.env.ALPACA_DATA_API || 'https://data.alpaca.markets';
-const TRADING_API = process.env.ALPACA_API || 'https://api.alpaca.markets';
+
+// Alpaca tiene dos cuentas con claves DISTINTAS —real y papel— y no son
+// intercambiables: una clave de papel contra el host real devuelve un 403 tan
+// seco como no mandar credenciales. De la API de trading sólo se usa el reloj
+// del mercado, que es idéntico en las dos, así que en vez de obligar a
+// configurar cuál es se prueban las dos y se recuerda la que funcionó. El
+// mercado abre a la misma hora para todos.
+// `ALPACA_API` admite varios separados por comas, que es la forma que ya tiene
+// el valor por defecto: así configurarlo y no configurarlo se comportan igual.
+const TRADING_APIS = (process.env.ALPACA_API || 'https://api.alpaca.markets,https://paper-api.alpaca.markets')
+  .split(',')
+  .map((u) => u.trim().replace(/\/$/, ''))
+  .filter(Boolean);
+let tradingApiBueno = null;
 const KEY_ID = process.env.ALPACA_KEY_ID || '';
 const SECRET = process.env.ALPACA_SECRET_KEY || '';
 // iex: gratis, un solo mercado. sip: la cinta consolidada, de pago.
@@ -166,18 +179,41 @@ async function fetchClock({ timeoutMs = 6_000 } = {}) {
   return relojCache.wrap(
     'clock',
     async () => {
-      const data = await fetchJson(`${TRADING_API}/v2/clock`, {
-        headers: cabeceras(),
-        timeoutMs,
-        retries: 1,
-      });
+      const candidatos = tradingApiBueno ? [tradingApiBueno] : TRADING_APIS;
+      let ultimoError = null;
 
-      return {
-        isOpen: Boolean(data.is_open),
-        now: data.timestamp ? Date.parse(data.timestamp) : Date.now(),
-        nextOpen: data.next_open ? Date.parse(data.next_open) : null,
-        nextClose: data.next_close ? Date.parse(data.next_close) : null,
-      };
+      for (const base of candidatos) {
+        try {
+          const data = await fetchJson(`${base}/v2/clock`, {
+            headers: cabeceras(),
+            timeoutMs,
+            retries: 1,
+          });
+
+          tradingApiBueno = base;
+          return {
+            isOpen: Boolean(data.is_open),
+            now: data.timestamp ? Date.parse(data.timestamp) : Date.now(),
+            nextOpen: data.next_open ? Date.parse(data.next_open) : null,
+            nextClose: data.next_close ? Date.parse(data.next_close) : null,
+            api: base,
+          };
+        } catch (err) {
+          ultimoError = err;
+          // Sólo se prueba el otro host si el fallo es de credenciales. Un
+          // 500 o un timeout no significan que la clave sea del otro tipo, y
+          // repetir la petición contra otro sitio sólo añade espera.
+          if (err.status !== 401 && err.status !== 403) throw err;
+        }
+      }
+
+      if (candidatos.length > 1) {
+        throw new Error(
+          `Alpaca rechazó la clave en ${candidatos.join(' y ')} (${ultimoError.message}). ` +
+            'Revisa ALPACA_KEY_ID y ALPACA_SECRET_KEY: las de papel y las reales son distintas.'
+        );
+      }
+      throw ultimoError;
     },
     30_000,
     { serveStaleOnError: true }
@@ -185,6 +221,7 @@ async function fetchClock({ timeoutMs = 6_000 } = {}) {
 }
 
 module.exports = {
-  TIMEFRAMES, FEED, hayClave, parseSymbol, parseInterval, intervalMinutes,
+  TIMEFRAMES, FEED, TRADING_APIS, hayClave, parseSymbol, parseInterval, intervalMinutes,
   toCandle, fetchCandles, fetchQuote, fetchClock, _relojCache: relojCache,
+  _olvidarTradingApi: () => { tradingApiBueno = null; },
 };

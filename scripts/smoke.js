@@ -270,8 +270,9 @@ async function comprobarAcciones() {
   try {
     const reloj = await alpaca.fetchClock();
     const cuando = reloj.isOpen ? reloj.nextClose : reloj.nextOpen;
+    const cuenta = /paper-api/.test(reloj.api || '') ? 'papel' : 'real';
     console.log(
-      `  OK    Reloj del mercado: ${reloj.isOpen ? 'abierto' : 'cerrado'}` +
+      `  OK    Reloj del mercado (cuenta de ${cuenta}): ${reloj.isOpen ? 'abierto' : 'cerrado'}` +
         (cuando ? ` · ${reloj.isOpen ? 'cierra' : 'abre'} ${new Date(cuando).toISOString()}` : '')
     );
 

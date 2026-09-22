@@ -357,6 +357,12 @@ export ALPACA_SECRET_KEY=...
 npm start
 ```
 
+Sirven tanto las claves de la cuenta real como las de papel: no son
+intercambiables —una clave de papel contra el host real devuelve un 403 tan
+seco como no mandar credenciales— pero de la API de trading aquí sólo se usa el
+reloj del mercado, que es el mismo para las dos, así que se prueban los dos
+hosts y se recuerda el que responde. No hay que configurar cuál es.
+
 Sin clave la página **funciona igual con velas de ejemplo** y lo dice en una
 banda arriba, en vez de quedarse en blanco. IEX es un solo mercado con poca
 cuota, así que su precio puede separarse unos céntimos del consolidado oficial;
@@ -769,7 +775,8 @@ públicos de mercado, y no acepta ninguna escritura.
 | `CFBENCHMARKS_API_KEY` | — | Sólo si tu acceso al índice la necesita |
 | `ALPACA_KEY_ID` / `ALPACA_SECRET_KEY` | — | Precios de bolsa de verdad. Sin ellas `/acciones.html` funciona con datos de ejemplo y lo dice |
 | `ALPACA_FEED` | `iex` | `iex` es gratis y de un solo mercado; `sip` es la cinta consolidada, de pago |
-| `ALPACA_DATA_API` / `ALPACA_API` | APIs de Alpaca | Para apuntar a un mock |
+| `ALPACA_DATA_API` | API de datos de Alpaca | Para apuntar a un mock |
+| `ALPACA_API` | real y papel, en ese orden | Hosts de trading a probar, separados por comas. Sólo se usa para el reloj del mercado |
 | `RATE_MAX` / `RATE_WINDOW_MS` | `120` / `60000` | Límite de peticiones por IP a `/api` |
 | `TRUST_PROXY_HOPS` | `1` | Saltos de proxy de confianza para leer la IP real |
 
