@@ -24,7 +24,10 @@ const state = {
   mtf: {},
   breakout: null,
   live: null,        // última vela recibida
-  livePrice: null,   // último precio operado, que llega mucho más a menudo
+  livePrice: null,   // último precio operado en Binance, tick a tick
+  consolidado: null, // mediana de Binance, Kraken y Coinbase
+  base: 0,           // diferencia medida entre el consolidado y Binance
+  priceTimer: null,
   ultimoPintado: null,
   source: null,
   fetchedAt: null,
@@ -68,6 +71,7 @@ const el = {
   clockBar: $('clockBar'),
   clockOpen: $('clockOpen'),
   clockClose: $('clockClose'),
+  venues: $('venueBox'),
   streamDot: $('streamDot'),
   streamLabel: $('streamLabel'),
   tooltip: $('tooltip'),
@@ -88,12 +92,29 @@ const ctx = el.canvas.getContext('2d');
 const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
 const pairKey = () => `${state.symbol}|${state.interval}`;
 
-// El precio de referencia en toda la interfaz: la última operación si la hay,
-// y si no el cierre de la vela en curso.
+// Precio de Binance: el que usa el ANÁLISIS. Los niveles y el ATR salen de
+// las velas de Binance, así que medir la distancia a un nivel con el precio de
+// otra casa haría que "faltan 0,87% hasta el nivel" fuera sutilmente falso.
 function precioActual() {
   if (state.livePrice && state.livePrice.price > 0) return state.livePrice.price;
   const ultima = state.candles[state.candles.length - 1];
   return ultima ? ultima.close : null;
+}
+
+// Precio del TITULAR: la mediana de los tres mercados.
+//
+// El consolidado se consulta cada dos segundos, pero el titular no puede
+// quedarse quieto dos segundos entre actualizaciones. Entre consulta y
+// consulta se mueve con el tick de Binance manteniendo la diferencia medida
+// con los otros dos, que cambia despacio; cada consulta la vuelve a medir.
+function precioTitular() {
+  const binance = precioActual();
+  if (state.consolidado && state.consolidado.price > 0) {
+    if (binance === null) return state.consolidado.price;
+    // Sin base utilizable, manda el consolidado: no se inventa un número.
+    return state.base === 0 ? state.consolidado.price : binance + state.base;
+  }
+  return binance;
 }
 
 // Ventana de la vela en curso, anclada a la apertura que dio Binance.
@@ -265,6 +286,39 @@ async function loadBreakout() {
   } catch (err) {
     state.breakout = { ok: false, reason: `No se pudo calcular: ${err.message}` };
   }
+}
+
+async function loadConsolidado() {
+  try {
+    const data = await getJson(`/api/price?symbol=${encodeURIComponent(state.symbol)}`);
+    if (data.symbol !== state.symbol) return; // llegó tarde, ya cambiamos de par
+    state.consolidado = data;
+
+    // La diferencia se mide contra el precio de Binance del mismo instante.
+    const binance = data.venues.find((v) => v.id === 'binance');
+    const referencia = binance && binance.usable ? binance.price : precioActual();
+    const base = data.price > 0 && referencia > 0 ? data.price - referencia : 0;
+
+    // Tope: entre mercados al contado del mismo activo la diferencia son unos
+    // pocos puntos básicos. Media unidad porcentual ya no es una base, es que
+    // algo no cuadra —una consulta vieja, un par equivocado—, y arrastrar el
+    // titular con eso sería peor que no corregirlo. En ese caso se enseña el
+    // consolidado tal cual.
+    state.base = Math.abs(base) <= data.price * 0.005 ? base : 0;
+
+    renderClock();
+  } catch {
+    // Sin consolidado se sigue enseñando el de Binance; se nota en el detalle.
+    state.consolidado = null;
+    state.base = 0;
+  }
+}
+
+function programarConsolidado() {
+  clearInterval(state.priceTimer);
+  state.priceTimer = setInterval(() => {
+    if (!document.hidden) loadConsolidado();
+  }, 2000);
 }
 
 // Reintentos con espera creciente: si el servidor está caído, insistir cada
@@ -676,12 +730,56 @@ function setStatus(text, isError = false) {
   el.status.classList.toggle('error', isError);
 }
 
+// El desglose por mercado. Lo interesante no es el número consolidado sino
+// ver cuánto discrepan: parte de esa diferencia ni siquiera es desacuerdo
+// sobre el activo, es que Binance cotiza en USDT y los otros dos en dólares.
+function renderVenues() {
+  const c = state.consolidado;
+
+  if (!c || !(c.price > 0)) {
+    el.venues.innerHTML = '<span class="venue-none">sólo Binance · consolidando…</span>';
+    return;
+  }
+
+  el.venues.innerHTML =
+    `<button class="venue-summary" id="venueToggle" aria-expanded="false">` +
+    `${c.used} mercados · ${c.agreement} · dif. ${num(c.spreadPct, 3)}%` +
+    `</button>` +
+    `<div class="venue-list" hidden>` +
+    c.venues
+      .map((v) => {
+        const estado = !v.usable ? (v.error ? 'caído' : 'viejo') : '';
+        return `<div class="venue ${v.usable ? '' : 'off'}">
+          <span class="v-name">${v.label}<em>${v.pair}</em></span>
+          <span class="v-price">${v.price > 0 ? formatPrice(v.price) : '—'}</span>
+          <span class="v-diff ${v.diff > 0 ? 'up' : v.diff < 0 ? 'down' : ''}">${
+            estado || (v.diff === null ? '' : `${v.diff >= 0 ? '+' : ''}${num(v.diffPct, 3)}%`)
+          }</span>
+        </div>`;
+      })
+      .join('') +
+    `<p class="venue-note">Mediana de los mercados frescos. El análisis de ruptura usa el precio de Binance, que es de donde salen las velas.</p>` +
+    `</div>`;
+
+  const toggle = $('venueToggle');
+  const lista = el.venues.querySelector('.venue-list');
+  if (state.venuesAbierto) {
+    lista.hidden = false;
+    toggle.setAttribute('aria-expanded', 'true');
+  }
+  toggle.addEventListener('click', () => {
+    state.venuesAbierto = !state.venuesAbierto;
+    lista.hidden = !state.venuesAbierto;
+    toggle.setAttribute('aria-expanded', String(state.venuesAbierto));
+  });
+}
+
 // El bloque de tiempo: precio en vivo y cuánto le queda a la vela, con la
 // barra vaciándose. Se repinta cuatro veces por segundo —el cronómetro sólo
 // cambia cada segundo, pero la barra se mueve suave y el precio llega cuando
 // llega— y no toca el canvas, así que es barato.
 function renderClock() {
-  const precio = precioActual();
+  const precio = precioTitular();
   const ventana = ventanaActual();
   if (!ventana) return;
 
@@ -711,6 +809,7 @@ function renderClock() {
     }
   }
 
+  renderVenues();
   el.countdownBig.textContent = formatClock(ventana.remainingMs);
 
   // Urgencia en el último cuarto, y roja en el último 10%.
@@ -1212,6 +1311,8 @@ function applyControls({ symbol = null } = {}) {
     state.candles = [];
     state.live = null;
     state.livePrice = null;
+    state.consolidado = null;
+    state.base = 0;
     state.ultimoPintado = null;
     state.breakout = null;
     state.alerts.primed = false; // par nuevo: no se grita por lo que ya había pasado
@@ -1307,6 +1408,8 @@ function init() {
   loadSymbols();
   connectStream();
   loadAll();
+  loadConsolidado();
+  programarConsolidado();
 }
 
 document.addEventListener('DOMContentLoaded', init);

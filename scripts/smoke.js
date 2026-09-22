@@ -16,6 +16,8 @@ const { analyzeEvents } = require('../src/analyze');
 const { getKlines, BINANCE_API } = require('../src/klines');
 const { analyzeBreakout } = require('../src/breakout');
 const { evaluateSignals } = require('../src/signals');
+const { fetchAllPrices } = require('../src/venues');
+const { consolidate } = require('../src/consolidated');
 
 const TOLERANTE = process.argv.includes('--tolerante');
 
@@ -169,7 +171,41 @@ function repasarSenales(candles, interval = '1h') {
   console.log('        Los stops se miran contra el mínimo y el máximo de cada vela, y ante la duda pierde.');
 }
 
+// Los tres mercados al contado. Sus formatos se prueban con servidores
+// locales que los imitan, pero que sigan respondiendo eso sólo lo dice una
+// llamada de verdad — y aquí además se ve lo único que importa del
+// consolidado: cuánto discrepan hoy.
+async function comprobarPrecios() {
+  console.log('Consultando Binance, Kraken y Coinbase...\n');
+
+  const quotes = await fetchAllPrices({ symbol: 'BTCUSDT', timeoutMs: 8000 });
+  const out = consolidate(quotes);
+
+  for (const v of out.venues) {
+    if (v.usable) {
+      console.log(`  OK    ${v.label.padEnd(9)} ${v.pair.padEnd(9)} ${v.price} (${v.diff >= 0 ? '+' : ''}${v.diffPct}%) en ${v.elapsedMs} ms`);
+    } else {
+      console.log(`  FALLO ${v.label.padEnd(9)} ${v.pair.padEnd(9)} ${trunc(v.error || 'sin precio utilizable')}`);
+    }
+  }
+
+  if (out.price === null) {
+    console.log('\n  Ningún mercado al contado responde: el precio consolidado no se puede calcular.');
+    return false;
+  }
+
+  console.log(`\n  Consolidado: ${out.price} (${out.method}, ${out.used} de ${out.venues.length}) · ${out.agreement} · diferencia ${out.spread} (${out.spreadPct}%)`);
+  if (out.used < out.venues.length) {
+    console.log('  Aviso: falta algún mercado, así que el consolidado es menos robusto de lo previsto.');
+  }
+  console.log('  Parte de esa diferencia es que Binance cotiza en USDT y los otros dos en dólares.');
+
+  return out.used >= 2;
+}
+
 async function main() {
+  const preciosOk = await comprobarPrecios();
+  console.log('');
   const mercadoOk = await comprobarMercado();
   console.log('');
   console.log('Consultando Polymarket, Robinhood/Kalshi y Manifold...\n');
@@ -218,6 +254,17 @@ async function main() {
   if (falloTotal) {
     console.error(`\n${caidas} de ${sources.length} fuentes no están utilizables.`);
     process.exit(1);
+  }
+
+  // El consolidado aguanta con dos de tres; con menos, el titular se queda en
+  // un solo mercado y deja de cumplir su función.
+  if (!preciosOk) {
+    if (TOLERANTE) {
+      console.log('\nAviso: menos de dos mercados al contado disponibles; el precio no será consolidado.');
+    } else {
+      console.error('\nMenos de dos mercados al contado disponibles: el precio consolidado no es fiable.');
+      process.exit(1);
+    }
   }
 
   // Binance alimenta la mitad de la aplicación: si falla, el despliegue está

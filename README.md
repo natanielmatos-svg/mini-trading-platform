@@ -13,7 +13,7 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet (también el gráfico)
-npm test             # 173 tests, sin red
+npm test             # 193 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -24,7 +24,7 @@ Windows (PowerShell incluido). Hace falta Node 20 o superior: `node -v`.
 ### Cómo se prueba
 
 ```bash
-npm test          # 173 tests, sin red, en unos cinco segundos
+npm test          # 193 tests, sin red, en unos cinco segundos
 npm run smoke     # llama a las APIs de verdad — la única prueba que las valida
 ```
 
@@ -70,6 +70,46 @@ BTCUSDT puede operar decenas de veces por segundo, y retransmitir cada
 operación a cada cliente es tráfico que nadie puede leer, así que el servidor
 las **agrupa a diez por segundo**. Lo que se descarta son los precios
 intermedios, nunca el más reciente.
+
+### Precio consolidado de tres mercados
+
+El titular no es el precio de un solo exchange: es la **mediana de Binance,
+Kraken y Coinbase Advanced**. Con tres fuentes, una que se cuelgue con un
+precio viejo o devuelva una barbaridad no puede arrastrar el número, cosa que
+a una media le bastaría. Con dos, la mediana es la media; con uno, se dice que
+es uno solo en vez de fingir consenso.
+
+Lo más útil del panel no es el número sino **el desglose**: cada mercado con
+su par y su diferencia respecto al consolidado. Y una advertencia que va en la
+propia interfaz: **parte de esa diferencia no es desacuerdo sobre el activo**,
+es que Binance cotiza contra USDT y Kraken y Coinbase contra dólares, y USDT
+no vale exactamente un dólar. Esconder eso detrás de una media daría una falsa
+sensación de precisión.
+
+| | |
+|---|---|
+| Binance | `BTCUSDT`, API pública de datos |
+| Kraken | `BTCUSD`, `/0/public/Ticker` — devuelve sus errores con un 200 y el fallo dentro del cuerpo, así que se comprueba |
+| Coinbase Advanced | `BTC-USD`, endpoint público de mercado, sin clave |
+
+Un mercado que no responda se marca como caído y el consolidado sigue con los
+demás; uno cuyo precio lleve más de diez segundos parado se enseña, pero no
+cuenta. `GET /api/price` devuelve todo eso.
+
+**Sobre Kalshi:** esto reduce el sesgo de mirar un solo exchange, pero
+**no garantiza coincidir con Kalshi**, que liquida contra la fuente que
+declara en las reglas de cada mercado. Si quieres cuadrar exactamente con un
+mercado suyo, mira su regla de liquidación y se añade esa fuente como un
+adaptador más en `src/venues.js`.
+
+El consolidado se consulta cada dos segundos. Entre consulta y consulta el
+titular se mueve con el tick de Binance manteniendo la diferencia medida con
+los otros dos, que cambia despacio; si esa diferencia se dispara por encima
+del 0,5% —una consulta vieja, un par equivocado— se descarta y se enseña el
+consolidado tal cual. El **análisis de ruptura sigue usando el precio de
+Binance**, que es de donde salen las velas y los niveles: medir la distancia a
+un nivel con el precio de otra casa haría que «faltan 0,87% hasta el nivel»
+fuera sutilmente falso.
 
 **El bloque de tiempo** es la tarjeta de arriba del panel: el precio en vivo
 —que destella verde o rojo al moverse— y una cuenta atrás hasta que cierre la
@@ -409,6 +449,23 @@ Análisis de ruptura de la vela en curso. Parámetros: `symbol`, `interval`,
 }
 ```
 
+### `GET /api/price`
+
+Precio consolidado y el detalle por mercado. Parámetro: `symbol`.
+
+```jsonc
+{
+  "symbol": "BTCUSDT", "price": 86644.32, "method": "mediana", "used": 3,
+  "spread": 29.9, "spreadPct": 0.0345, "agreement": "alineados",
+  "venues": [
+    { "id": "binance", "label": "Binance", "pair": "BTCUSDT", "quote": "USDT",
+      "price": 86620.1, "diff": -24.22, "diffPct": -0.028, "usable": true, "ageMs": 0 },
+    { "id": "kraken", "label": "Kraken", "pair": "BTCUSD", "quote": "USD", "price": 86650, "…": "…" },
+    { "id": "coinbase", "label": "Coinbase", "pair": "BTC-USD", "quote": "USD", "price": 86644.32, "…": "…" }
+  ]
+}
+```
+
 ### `GET /api/symbols`
 
 Catálogo de criptomonedas para el desplegable, agrupado. `verified` dice si se
@@ -554,6 +611,7 @@ públicos de mercado, y no acepta ninguna escritura.
 | `KLINES_FETCH_LIMIT` | `500` | Velas pedidas a Binance por ciclo (y tope del `limit` del cliente) |
 | `MAX_STREAMS_PER_IP` | `6` | Conexiones de precio en vivo simultáneas por IP |
 | `BINANCE_API` / `BINANCE_WS` | APIs públicas | Para apuntar a un mirror o a un mock |
+| `KRAKEN_API` / `COINBASE_API` | APIs públicas | Igual, para los otros dos mercados |
 | `RATE_MAX` / `RATE_WINDOW_MS` | `120` / `60000` | Límite de peticiones por IP a `/api` |
 | `TRUST_PROXY_HOPS` | `1` | Saltos de proxy de confianza para leer la IP real |
 
@@ -570,6 +628,8 @@ src/
   format.js            formato de precios y porcentajes — servidor Y navegador
   signals.js           compras y ventas — servidor Y navegador
   symbols.js           catálogo de criptomonedas del desplegable
+  venues.js            un adaptador por mercado al contado: Binance, Kraken, Coinbase
+  consolidated.js      mediana entre mercados y cuánto discrepan
   klines.js            velas: validación, caché por timeframe y modo demo
   breakout.js          niveles, distancia en ATR y frecuencia histórica
   stream.js            WebSocket compartido hacia Binance → SSE a los clientes
@@ -590,5 +650,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  173 tests, sin red
+test/                  193 tests, sin red
 ```

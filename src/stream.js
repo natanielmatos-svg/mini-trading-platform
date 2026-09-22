@@ -217,9 +217,16 @@ class MarketStream {
     };
 
     // El precio se mueve entre vela y vela, como en el mercado: pequeñas
-    // sacudidas alrededor del cierre que lleva la vela en curso.
+    // sacudidas alrededor del precio al contado.
+    //
+    // Se ancla a la vela de un minuto y NO a la del timeframe elegido: el
+    // precio al contado es uno solo, no depende de con qué lupa lo mires. Con
+    // la del timeframe, el titular y el consolidado de /api/price —que usa la
+    // de un minuto— se separaban hasta un 0,15%, mucho más que la diferencia
+    // real entre mercados que este panel quiere enseñar.
     const emitPrecio = () => {
-      const base = room.lastTick ? room.lastTick.close : null;
+      const [contado] = buildDemoCandles({ symbol: room.symbol, interval: '1m', limit: 1, now: Date.now() });
+      const base = contado ? contado.close : null;
       if (!base) return;
       const sacudida = (Math.random() - 0.5) * base * 0.0004;
       this.broadcastPrice(room, { price: base + sacudida, quantity: Math.random() * 2, at: Date.now() });

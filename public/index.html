@@ -158,6 +158,21 @@
     #bigPrice.baja { color: var(--down); }
     .clock-price .change { font-size: 12px; font-variant-numeric: tabular-nums; }
 
+    .venue-box { margin: -4px 0 10px; font-size: 11px; }
+    .venue-summary {
+      background: none; border: none; padding: 0; cursor: pointer;
+      color: var(--muted); font-size: 11px; font-family: inherit; text-decoration: underline dotted;
+    }
+    .venue-summary:hover { color: var(--accent); }
+    .venue-none { color: var(--muted); }
+    .venue-list { margin-top: 7px; border-top: 1px solid var(--line); padding-top: 6px; }
+    .venue { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; font-variant-numeric: tabular-nums; }
+    .venue.off { opacity: 0.5; }
+    .v-name { color: #cbd5e1; }
+    .v-name em { font-style: normal; color: var(--muted); margin-left: 5px; font-size: 10px; }
+    .v-diff { min-width: 62px; text-align: right; color: var(--muted); }
+    .venue-note { color: var(--muted); font-size: 10px; line-height: 1.45; margin: 6px 0 0; }
+
     .clock-count { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
     .clock-count .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
     .clock-count .time {
@@ -305,6 +320,7 @@
           <span id="bigPrice">—</span>
           <span class="change" id="bigChange"></span>
         </div>
+        <div id="venueBox" class="venue-box"></div>
         <div class="clock-count">
           <span class="label">cierra en</span>
           <span class="time" id="bigCountdown">--:--</span>
