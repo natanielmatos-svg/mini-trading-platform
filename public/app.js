@@ -8,14 +8,14 @@
 // servidor: no puede haber dos versiones de la misma regla.
 
 (function () {
-const { ema, shareAtLeast, requiredExcursion } = globalThis.Indicators;
+const { ema } = globalThis.Indicators;
 const { formatPrice, num, formatPercent, formatClock, candleWindow } = globalThis.Format;
-const { evaluateSignals } = globalThis.Signals;
 const Chart = globalThis.Chart;
+const Ruptura = globalThis.Ruptura;
+const Avisos = globalThis.Avisos;
 
 const MTF = ['1h', '4h', '1d', '1w'];
 const CANDLES = 300;
-const EVAL_THROTTLE_MS = 1000;
 const PREFS_KEY = 'mtp.alertas';
 const MERCADOS_KEY = 'mtp.mercados';
 
@@ -41,20 +41,6 @@ const state = {
   sse: null,
   refreshTimer: null,
   hover: null,
-  lastEval: 0,
-  alerts: {
-    enabled: false,
-    operativa: 'contado',   // 'contado' (comprar/vender) | 'ambos' (además, cortos)
-    // Apagado por defecto: medido sobre histórico, el aviso previo salta unas
-    // dos o tres veces al día. Quien quiera vigilar la aproximación lo
-    // enciende; quien sólo quiera saber cuándo comprar y vender, no.
-    avisosPrevios: false,
-    primed: false,          // la primera evaluación no suena: sería una alerta de algo ya pasado
-    seen: new Set(),
-    history: [],
-    positions: {},          // 'BTCUSDT|1h' -> seguimiento en papel
-    audio: null,
-  },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -158,20 +144,6 @@ function emaLengths() {
 // Preferencias (localStorage es opcional: en modo privado lanza excepción)
 // ---------------------------------------------------------------------------
 
-function loadPrefs() {
-  try {
-    const raw = localStorage.getItem(PREFS_KEY);
-    if (!raw) return;
-    const saved = JSON.parse(raw);
-    state.alerts.enabled = Boolean(saved.enabled);
-    if (saved.operativa === 'ambos' || saved.operativa === 'contado') state.alerts.operativa = saved.operativa;
-    state.alerts.avisosPrevios = Boolean(saved.avisosPrevios);
-    state.alerts.positions = saved.positions && typeof saved.positions === 'object' ? saved.positions : {};
-  } catch {
-    /* sin persistencia se sigue funcionando, sólo se olvida entre recargas */
-  }
-}
-
 function loadMercados() {
   try {
     const raw = localStorage.getItem(MERCADOS_KEY);
@@ -186,19 +158,6 @@ function saveMercados() {
   try {
     if (state.mercados && state.mercados.length) localStorage.setItem(MERCADOS_KEY, JSON.stringify(state.mercados));
     else localStorage.removeItem(MERCADOS_KEY);
-  } catch {
-    /* idem */
-  }
-}
-
-function savePrefs() {
-  try {
-    localStorage.setItem(PREFS_KEY, JSON.stringify({
-      enabled: state.alerts.enabled,
-      operativa: state.alerts.operativa,
-      avisosPrevios: state.alerts.avisosPrevios,
-      positions: state.alerts.positions,
-    }));
   } catch {
     /* idem */
   }
@@ -281,7 +240,7 @@ async function loadAll({ silent = false } = {}) {
     state.failures = 0;
 
     await loadBreakout();
-    evaluateAlerts();
+    avisos.evaluar();
     render({ force: true });
     setStatus('');
   } catch (err) {
@@ -367,7 +326,7 @@ function scheduleRefresh() {
   clearTimeout(state.refreshTimer);
   // Con los avisos encendidos la pestaña oculta sigue trabajando: para eso
   // están los avisos, para enterarte cuando no estás mirando.
-  if (document.hidden && !state.alerts.enabled) return;
+  if (document.hidden && !avisos.enabled) return;
 
   const base = clamp(intervalToMs(state.interval) / 20, 20_000, 120_000);
   const delay = state.failures ? Math.min(base * 2 ** state.failures, 600_000) : base;
@@ -460,7 +419,7 @@ function onTick(tick) {
     loadBreakout().then(render);
   }
 
-  evaluateAlerts();
+  avisos.evaluar();
   requestRender();
 }
 
@@ -472,265 +431,34 @@ function setStreamState(label) {
 // ---------------------------------------------------------------------------
 // Avisos de entrada y salida
 // ---------------------------------------------------------------------------
+//
+// El gestor está en /lib/avisos.js, compartido con la página de acciones.
+// Aquí sólo se le dice de dónde sacar el estado del momento.
 
-// El sonido se sintetiza: dos notas ascendentes para comprar, dos descendentes
-// para vender, dos iguales para el aviso previo. Sin archivos que cargar, y se
-// distinguen sin mirar la pantalla, que es el sentido de que suene.
-const PATTERNS = {
-  compra: [{ freq: 660, at: 0, dur: 0.12 }, { freq: 990, at: 0.13, dur: 0.22 }],
-  venta: [{ freq: 780, at: 0, dur: 0.12 }, { freq: 440, at: 0.13, dur: 0.28 }],
-  aviso: [{ freq: 880, at: 0, dur: 0.09 }, { freq: 880, at: 0.16, dur: 0.09 }],
-};
-
-const ETIQUETA = { compra: 'COMPRAR', venta: 'VENDER', aviso: 'AVISO' };
-
-// El navegador no deja sonar sin un gesto previo del usuario. El contexto se
-// puede crear en cualquier momento, pero nace suspendido y hay que reanudarlo
-// desde un gesto. Al volver a la página con los avisos ya encendidos no hay
-// ningún gesto todavía, así que se deja armado un `resume` para el primer
-// clic o tecla que llegue: sin esto, quien dejó los avisos puestos ayer se
-// encontraba hoy con alertas mudas.
-function unlockAudio() {
-  if (!state.alerts.audio) {
-    const Ctor = window.AudioContext || window.webkitAudioContext;
-    if (!Ctor) return;
-    try {
-      state.alerts.audio = new Ctor();
-    } catch {
-      return; // sin audio los avisos siguen saliendo en pantalla
-    }
-  }
-  if (state.alerts.audio.state === 'suspended') {
-    state.alerts.audio.resume().then(renderAlertHint).catch(() => {});
-  }
-}
-
-function armarAudioConPrimerGesto() {
-  const activar = () => {
-    unlockAudio();
-    renderAlertHint();
-  };
-  document.addEventListener('pointerdown', activar, { once: true });
-  document.addEventListener('keydown', activar, { once: true });
-}
-
-function playSound(kind) {
-  if (!state.alerts.audio) unlockAudio();
-  const audio = state.alerts.audio;
-  if (!audio || audio.state === 'closed') return;
-  if (audio.state === 'suspended') audio.resume();
-
-  const now = audio.currentTime;
-  for (const note of PATTERNS[kind] || PATTERNS.aviso) {
-    const osc = audio.createOscillator();
-    const gain = audio.createGain();
-    osc.type = 'sine';
-    osc.frequency.value = note.freq;
-    // Ataque y caída suaves: un oscilador cortado en seco chasquea.
-    gain.gain.setValueAtTime(0.0001, now + note.at);
-    gain.gain.exponentialRampToValueAtTime(0.22, now + note.at + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + note.at + note.dur);
-    osc.connect(gain).connect(audio.destination);
-    osc.start(now + note.at);
-    osc.stop(now + note.at + note.dur + 0.02);
-  }
-}
-
-function notify(signal) {
-  if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  try {
-    // `tag` con el id de la señal: si llega dos veces, el sistema la sustituye
-    // en vez de apilar dos globos iguales.
-    new Notification(signal.title, { body: `${signal.message}\n${signal.detail}`, tag: signal.id });
-  } catch {
-    /* algunos navegadores exigen service worker; el popout de la página queda */
-  }
-}
-
-function showModal(signal) {
-  const clase = signal.type === 'compra' ? 'bull' : signal.type === 'venta' ? 'bear' : 'warn';
-
-  el.modalCard.className = `alert-card ${clase}`;
-  el.modalCard.innerHTML = `
-    <div class="alert-kind">${ETIQUETA[signal.type] || 'AVISO'}</div>
-    <h3>${signal.title}</h3>
-    <p>${signal.message}</p>
-    <p class="alert-detail">${signal.detail}</p>
-    <p class="alert-time">${fmtHora(signal.at)} · ${formatPrice(signal.price)}</p>
-    <div class="alert-actions">
-      <button id="alertOk">Entendido</button>
-      <button id="alertMute" class="ghost">Silenciar avisos</button>
-    </div>
-    <p class="disclaimer">Análisis técnico automático sobre datos públicos. No es una recomendación de inversión.</p>`;
-
-  el.modal.classList.add('open');
-  $('alertOk').addEventListener('click', hideModal);
-  $('alertMute').addEventListener('click', () => {
-    setAlerts(false);
-    hideModal();
-  });
-  $('alertOk').focus();
-}
-
-function hideModal() {
-  el.modal.classList.remove('open');
-}
-
-function pushSignal(signal, { silent = false } = {}) {
-  state.alerts.seen.add(signal.id);
-  state.alerts.history.unshift({ ...signal, silent });
-  state.alerts.history = state.alerts.history.slice(0, 20);
-
-  if (!silent && state.alerts.enabled) {
-    playSound(signal.sound);
-    notify(signal);
-    showModal(signal);
-  }
-  renderAlerts();
-}
-
-// Se evalúa con cada tick, así que se limita a una vez por segundo: buscar
-// pivotes sobre 300 velas diez veces por segundo no aporta nada.
-function evaluateAlerts({ force = false } = {}) {
-  const now = Date.now();
-  if (!force && now - state.lastEval < EVAL_THROTTLE_MS) return;
-  state.lastEval = now;
-
-  if (!state.candles.length) return;
-
-  const key = pairKey();
-  const { signals, position } = evaluateSignals({
+const avisos = Avisos.crearAvisos({
+  elementos: {
+    toggle: el.alertToggle,
+    test: el.alertTest,
+    mode: el.alertMode,
+    avisoToggle: el.avisoToggle,
+    hint: el.alertHint,
+    position: el.position,
+    history: el.history,
+    modal: el.modal,
+    modalCard: el.modalCard,
+  },
+  claveAlmacen: PREFS_KEY,
+  datos: () => ({
     candles: state.candles,
     breakout: state.breakout,
-    position: state.alerts.positions[key] || null,
     price: state.live ? state.live.close : null,
     symbol: state.symbol,
     interval: state.interval,
-    now,
-    options: { operativa: state.alerts.operativa, avisosPrevios: state.alerts.avisosPrevios },
-  });
-
-  if (position) state.alerts.positions[key] = position;
-  else delete state.alerts.positions[key];
-
-  // La primera evaluación tras cargar la página no suena: avisar a gritos de
-  // una ruptura que ocurrió antes de abrir el navegador es ruido, no una
-  // alerta. Queda en el historial marcada como anterior.
-  const primera = !state.alerts.primed;
-  state.alerts.primed = true;
-
-  for (const signal of signals) {
-    if (state.alerts.seen.has(signal.id)) continue;
-    pushSignal(signal, { silent: primera });
-  }
-
-  if (signals.length || primera) savePrefs();
-  renderAlerts();
-}
-
-function setAlerts(enabled) {
-  state.alerts.enabled = enabled;
-  el.alertToggle.checked = enabled;
-
-  if (enabled) {
-    unlockAudio();
-    if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission().then(renderAlertHint);
-    }
-  }
-
-  savePrefs();
-  renderAlertHint();
-  scheduleRefresh();
-}
-
-function renderAlertHint() {
-  if (!state.alerts.enabled) {
-    el.alertHint.textContent = 'Apagados. Sin sonido ni ventana emergente.';
-    return;
-  }
-  const permiso = 'Notification' in window ? Notification.permission : 'no soportado';
-  const fuera =
-    permiso === 'granted'
-      ? 'También avisa fuera de la pestaña.'
-      : permiso === 'denied'
-        ? 'El navegador bloqueó las notificaciones: sólo avisa con la pestaña abierta.'
-        : 'Acepta las notificaciones para que avise fuera de la pestaña.';
-
-  const audio = state.alerts.audio;
-  const sonido = !audio
-    ? ' Sonido sin inicializar.'
-    : audio.state === 'suspended'
-      ? ' El navegador espera un clic tuyo para poder sonar.'
-      : '';
-
-  const modo = state.alerts.operativa === 'ambos' ? 'compra, venta y cortos' : 'compra y venta';
-  el.alertHint.textContent = `Encendidos para ${state.symbol} ${state.interval} (${modo}). ${fuera}${sonido}`;
-}
-
-function renderAlerts() {
-  const position = state.alerts.positions[pairKey()];
-
-  if (!position) {
-    el.position.innerHTML = '<p class="muted">Nada comprado ahora mismo. El seguimiento se abre solo cuando una vela confirma la señal de compra.</p>';
-  } else {
-    const largo = position.side === 'larga';
-    const price = state.live ? state.live.close : state.candles.length ? state.candles[state.candles.length - 1].close : position.entry;
-    const cambio = largo
-      ? (price - position.entry) / position.entry
-      : (position.entry - price) / position.entry;
-
-    el.position.innerHTML = `
-      <div class="position ${largo ? 'bull' : 'bear'}">
-        <header>
-          <span>${largo ? 'Comprado' : 'Vendido en corto'} · ${position.symbol} ${position.interval}</span>
-          <strong class="${cambio >= 0 ? 'up' : 'down'}">${cambio >= 0 ? '+' : ''}${formatPercent(cambio, 2)}</strong>
-        </header>
-        <div class="detail">
-          ${largo ? 'Comprado a' : 'Abierto a'} ${formatPrice(position.entry)} ·
-          ${largo ? 'vender' : 'recomprar'} si ${largo ? 'baja de' : 'sube de'} ${formatPrice(position.stop)}
-          o al llegar a ${formatPrice(position.target)}
-          ${position.rewardRisk ? ` · ratio ${num(position.rewardRisk)}:1` : ''}
-        </div>
-        <button class="ghost small" id="positionDrop">Descartar seguimiento</button>
-      </div>`;
-
-    $('positionDrop').addEventListener('click', () => {
-      delete state.alerts.positions[pairKey()];
-      savePrefs();
-      renderAlerts();
-    });
-  }
-
-  el.history.innerHTML = state.alerts.history.length
-    ? state.alerts.history
-        .map(
-          (s) => `<li class="sig ${s.type}${s.silent ? ' silent' : ''}">
-            <span class="when">${fmtHora(s.at)}</span>
-            <span class="what">${s.title}</span>
-            <span class="why">${s.message}${s.silent ? ' <em>(ocurrió antes de abrir la página)</em>' : ''}</span>
-          </li>`
-        )
-        .join('')
-    : '<li class="muted">Todavía no ha saltado ninguna señal.</li>';
-}
-
-// Alerta de prueba: sirve para comprobar que el sonido y el permiso de
-// notificaciones funcionan antes de fiarse de ellos.
-function testAlert() {
-  unlockAudio();
-  const price = state.live ? state.live.close : 0;
-  showModal({
-    type: 'compra',
-    at: Date.now(),
-    price,
-    title: `Prueba de aviso · ${state.symbol} ${state.interval}`,
-    message: 'Si has oído dos notas ascendentes y ves esta ventana, los avisos funcionan.',
-    detail: 'Las compras suenan ascendentes, las ventas descendentes y los avisos previos son dos notas iguales.',
-  });
-  playSound('compra');
-  notify({ id: 'prueba', title: 'Prueba de aviso', message: 'Los avisos funcionan.', detail: '' });
-}
+  }),
+  // Con avisos encendidos interesa refrescar más a menudo aunque la pestaña
+  // esté en segundo plano.
+  onCambio: () => scheduleRefresh(),
+});
 
 // ---------------------------------------------------------------------------
 // Render
@@ -756,7 +484,7 @@ function render({ force = false } = {}) {
   renderTable();
   renderClock();
   renderBreakout({ force });
-  renderAlerts();
+  avisos.render();
 }
 
 function setStatus(text, isError = false) {
@@ -953,7 +681,7 @@ function nivelesDelGrafico() {
     if (b.up) niveles.push({ price: b.up.level, color: '#f87171', tag: 'R' });
     if (b.down) niveles.push({ price: b.down.level, color: '#4ade80', tag: 'S' });
   }
-  const position = state.alerts.positions[pairKey()];
+  const position = avisos.posicion();
   if (position) {
     niveles.push({ price: position.stop, color: '#fb7185', tag: 'STOP', dense: true });
     niveles.push({ price: position.target, color: '#38bdf8', tag: 'OBJ', dense: true });
@@ -1038,150 +766,23 @@ function renderTable() {
 }
 
 // --- Panel de ruptura ------------------------------------------------------
-
-// Recalcula la probabilidad con el precio del último tick. Usa exactamente las
-// mismas dos funciones que el servidor (requiredExcursion + shareAtLeast) sobre
-// la muestra que vino en la respuesta, así que el número que se ve en vivo es
-// el que devolvería /api/breakout si se le preguntara en este instante.
-function liveSide(side, sample, price, atr, remaining) {
-  if (!side || !Number.isFinite(atr) || atr <= 0) return null;
-
-  const distance = side.direction === 'alza' ? side.level - price : price - side.level;
-  if (distance <= 0) {
-    return { ...side, distance: 0, distancePct: 0, probability: 1, broken: true };
-  }
-
-  const distanceAtr = distance / atr;
-  const required = requiredExcursion(distanceAtr, remaining);
-
-  return {
-    ...side,
-    distance,
-    distancePct: (distance / price) * 100,
-    distanceAtr,
-    requiredAtr: required,
-    probability: shareAtLeast(sample, required),
-    // Misma cuenta sin descontar el tiempo: lo que tendría una vela entera.
-    probabilityFullCandle: shareAtLeast(sample, distanceAtr),
-    broken: false,
-    remaining,
-  };
-}
-
-// El panel se reconstruye entero en cada repintado, y eso cerraba de golpe el
-// desplegable que el usuario acabara de abrir: con el precio en vivo llegando
-// varias veces por segundo, «Contexto» era imposible de leer. Se apunta qué
-// estaba abierto y se restaura.
-function seccionesAbiertas() {
-  const previos = el.breakout.querySelectorAll('details[data-k]');
-  return {
-    primera: previos.length === 0,
-    claves: new Set([...previos].filter((d) => d.open).map((d) => d.dataset.k)),
-  };
-}
-
-function restaurarSecciones({ primera, claves }) {
-  if (primera) return; // la primera vez mandan los `open` del marcado
-  for (const d of el.breakout.querySelectorAll('details[data-k]')) d.open = claves.has(d.dataset.k);
-}
-
-let ultimoBreakout = 0;
+//
+// El panel lo pinta /lib/panel-ruptura.js, compartido con la página de
+// acciones. Aquí sólo se decide con qué precio y con cuánta vela restante.
 
 function renderBreakout({ force = false } = {}) {
-  const b = state.breakout;
-
-  // Reconstruir este panel es caro y llegan hasta diez precios por segundo;
-  // tres repintados por segundo ya se ven fluidos.
-  const ahora = Date.now();
-  if (!force && b && b.ok && ahora - ultimoBreakout < 330) return;
-  ultimoBreakout = ahora;
-
-  if (!b || !b.ok) {
-    el.breakout.innerHTML = `<p class="muted">${b ? b.reason : 'Calculando…'}</p>`;
-    return;
-  }
-
-  const price = precioActual() || b.price;
   const now = Date.now();
   // El reloj manda sobre el payload, que puede tener uno o dos minutos.
   const ventana = ventanaActual(now);
-  const remaining = ventana ? clamp(ventana.remainingMs / intervalToMs(state.interval), 0.01, 1) : 0.01;
+  const remaining = ventana ? ventana.remainingMs / intervalToMs(state.interval) : 0.01;
 
-  const up = liveSide(b.up, b.sample.up, price, b.atr, remaining);
-  const down = liveSide(b.down, b.sample.down, price, b.atr, remaining);
-
-  const bias = verdictFor(up, down, remaining);
-  const abiertas = seccionesAbiertas();
-
-  el.breakout.innerHTML = `
-    <div class="verdict ${bias.cls}">${bias.text}</div>
-    ${sideHtml(up, 'Ruptura al alza', 'up')}
-    ${sideHtml(down, 'Ruptura a la baja', 'down')}
-    <details class="method" data-k="porque" open>
-      <summary>Por qué</summary>
-      ${b.explanation.map((line) => `<p>${line}</p>`).join('')}
-    </details>
-    <details class="method" data-k="contexto">
-      <summary>Contexto (${b.context.length} señales)</summary>
-      <ul class="factors">
-        ${b.context.map((f) => `<li class="lean-${f.lean}"><strong>${f.label}:</strong> ${f.text}</li>`).join('')}
-      </ul>
-    </details>
-    <details class="method" data-k="confirmar">
-      <summary>Cómo confirmar la ruptura</summary>
-      ${[b.trigger.up, b.trigger.down].filter(Boolean).map((t) => `<p>${t.text}<br><em>${t.invalidation}</em></p>`).join('')}
-    </details>
-    <p class="disclaimer">${b.disclaimer}</p>`;
-
-  restaurarSecciones(abiertas);
-}
-
-// El veredicto tiene que distinguir dos cosas que se parecen en el número y no
-// en el significado: que no haya sesgo (las dos paredes igual de lejos) y que
-// no dé tiempo (la vela cierra en un minuto y no llega a ninguna).
-function verdictFor(up, down, remaining) {
-  const pu = up && Number.isFinite(up.probability) ? up.probability : null;
-  const pd = down && Number.isFinite(down.probability) ? down.probability : null;
-
-  if (up && up.broken) return { text: `nivel ${formatPrice(up.level)} superado al alza`, cls: 'bull' };
-  if (down && down.broken) return { text: `nivel ${formatPrice(down.level)} perdido a la baja`, cls: 'bear' };
-  if (pu === null || pd === null) return { text: 'sin lado claro', cls: 'flat' };
-
-  if (pu < 0.05 && pd < 0.05) {
-    return {
-      text: remaining < 0.25 ? 'no le da tiempo a romper nada' : 'lejos de los dos niveles',
-      cls: 'flat',
-    };
-  }
-  if (Math.abs(pu - pd) < 0.05) return { text: 'equilibrio entre los dos lados', cls: 'flat' };
-  return pu > pd
-    ? { text: 'más cerca de romper al alza', cls: 'bull' }
-    : { text: 'más cerca de romper a la baja', cls: 'bear' };
-}
-
-function sideHtml(side, title, cls) {
-  if (!side) return `<div class="side"><header>${title}</header><p class="muted">Sin nivel por delante en el rango analizado.</p></div>`;
-
-  const probability = Number.isFinite(side.probability) ? side.probability : 0;
-  const width = clamp(probability * 100, 1, 100);
-
-  return `
-    <div class="side ${cls}">
-      <header>
-        <span>${title}</span>
-        <strong>${side.broken ? 'superado' : formatPercent(probability, 0)}</strong>
-      </header>
-      <div class="bar"><span style="width:${width}%"></span></div>
-      <div class="detail">
-        ${side.broken
-          ? `El precio ya ha pasado ${formatPrice(side.level)} dentro de la vela. Sólo cuenta si cierra al otro lado.`
-          : `Nivel ${formatPrice(side.level)} · faltan ${num(side.distancePct, 2)}% (${num(side.distanceAtr, 2)} ATR) · ${side.touches} ${side.touches === 1 ? 'toque' : 'toques'}${side.fallback ? ' (extremo del rango)' : ''}${
-              side.remaining < 0.35 && Number.isFinite(side.probabilityFullCandle)
-                ? `<br>Con una vela entera por delante sería ${formatPercent(side.probabilityFullCandle, 0)}.`
-                : ''
-            }`}
-      </div>
-    </div>`;
+  Ruptura.render(el.breakout, {
+    breakout: state.breakout,
+    price: precioActual(),
+    remaining,
+    force,
+    now,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1211,16 +812,18 @@ function applyControls({ symbol = null } = {}) {
     state.base = 0;
     state.ultimoPintado = null;
     state.breakout = null;
-    state.alerts.primed = false; // par nuevo: no se grita por lo que ya había pasado
+    avisos.olvidarPrimera(); // par nuevo: no se grita por lo que ya había pasado
     connectStream();
-    renderAlertHint();
+    avisos.renderHint();
   }
   loadAll();
 }
 
 function init() {
-  loadPrefs();
   loadMercados();
+  // Antes del primer dibujo: el seguimiento guardado aporta el stop y el
+  // objetivo, y son dos líneas del gráfico.
+  avisos.init();
   resizeCanvas();
 
   el.symbolSelect.addEventListener('change', () => {
@@ -1244,27 +847,6 @@ function init() {
     input.addEventListener('input', render);
   }
 
-  el.alertToggle.addEventListener('change', () => setAlerts(el.alertToggle.checked));
-  el.alertMode.addEventListener('change', () => {
-    state.alerts.operativa = el.alertMode.value;
-    savePrefs();
-    renderAlertHint();
-    evaluateAlerts({ force: true });
-  });
-
-  el.avisoToggle.addEventListener('change', () => {
-    state.alerts.avisosPrevios = el.avisoToggle.checked;
-    savePrefs();
-    evaluateAlerts({ force: true });
-  });
-  el.alertTest.addEventListener('click', testAlert);
-  el.modal.addEventListener('click', (e) => {
-    if (e.target === el.modal) hideModal();
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') hideModal();
-  });
-
   el.canvas.addEventListener('mousemove', onCanvasMove);
   el.canvas.addEventListener('mouseleave', hideTooltip);
 
@@ -1277,7 +859,7 @@ function init() {
 
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
-      if (!state.alerts.enabled) clearTimeout(state.refreshTimer);
+      if (!avisos.enabled) clearTimeout(state.refreshTimer);
       return;
     }
     loadAll({ silent: true });
@@ -1291,16 +873,6 @@ function init() {
     renderClock();
     if (state.breakout && state.breakout.ok) renderBreakout();
   }, 250);
-
-  el.alertToggle.checked = state.alerts.enabled;
-  el.alertMode.value = state.alerts.operativa;
-  el.avisoToggle.checked = state.alerts.avisosPrevios;
-  if (state.alerts.enabled) {
-    unlockAudio();
-    armarAudioConPrimerGesto();
-  }
-  renderAlertHint();
-  renderAlerts();
 
   loadSymbols();
   loadCatalogo();

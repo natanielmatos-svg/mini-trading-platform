@@ -5,6 +5,7 @@
 // - Expone /api/stream   precio en vivo por SSE, alimentado por un WebSocket
 //                        compartido hacia Binance
 // - Expone /api/breakout análisis de ruptura de la vela en curso
+// - Expone /api/stocks/* lo mismo para acciones estadounidenses, vía Alpaca
 // - Expone /api/predictions*: analizador de mercados de predicción que agrega
 //   Polymarket, Robinhood/Kalshi y Manifold y dice qué opción es más probable
 
@@ -18,6 +19,8 @@ const { analyzeBreakout } = require('./src/breakout');
 const { MarketStream, sseClient } = require('./src/stream');
 const { verifySymbols, groups } = require('./src/symbols');
 const { fetchAllPrices, listVenues, parseVenues } = require('./src/venues');
+const stocks = require('./src/stocks');
+const alpaca = require('./src/alpaca');
 const { consolidate } = require('./src/consolidated');
 
 const app = express();
@@ -42,11 +45,12 @@ app.use((req, res, next) => {
 // Módulos que comparten servidor y navegador: los indicadores, el formato de
 // números y el motor de señales. El navegador carga exactamente el mismo
 // archivo que ejecuta el análisis, así que no puede haber dos versiones de la
-// misma regla. `chart.js` no lo usa el servidor, pero sí las dos páginas
-// —cripto y acciones—, y vive aquí por el mismo motivo: un solo dibujo.
+// misma regla. `chart.js`, `panel-ruptura.js` y `avisos.js` no los usa el
+// servidor, pero sí las dos páginas —cripto y acciones—, y viven aquí por el
+// mismo motivo: un solo gráfico, un solo panel y un solo gestor de avisos.
 // Lista blanca explícita y no `express.static('src')`: ahí dentro están
 // también los proveedores y la orquestación.
-const SHARED_MODULES = ['indicators.js', 'format.js', 'signals.js', 'chart.js'];
+const SHARED_MODULES = ['indicators.js', 'format.js', 'signals.js', 'chart.js', 'panel-ruptura.js', 'avisos.js'];
 
 app.get('/lib/:file', (req, res) => {
   if (!SHARED_MODULES.includes(req.params.file)) {
@@ -270,6 +274,94 @@ app.get('/api/stream', (req, res) => {
     if (left > 0) streamsByIp.set(ip, left);
     else streamsByIp.delete(ip);
   });
+});
+
+// ---------------------------------------------------------------------------
+// Acciones
+// ---------------------------------------------------------------------------
+//
+// El análisis es el mismo —las velas de bolsa tienen la misma forma—, así que
+// estas rutas no repiten la lógica: piden velas a src/stocks y se las pasan a
+// analyzeBreakout, igual que /api/breakout.
+//
+// Lo que sí cambia es que la bolsa cierra, y por eso el reloj va en la
+// respuesta de la ruptura: sin él la interfaz enseñaría una cuenta atrás hacia
+// el cierre de una vela que no se va a mover hasta el lunes.
+
+function stockParams(req) {
+  return {
+    symbol: stocks.parseTicker(req.query.symbol),
+    interval: alpaca.parseInterval(req.query.interval),
+    demo: DEMO_ALWAYS || req.query.demo === '1',
+  };
+}
+
+// Tickers del desplegable. No sale a la red: es una lista fija, igual que la
+// de criptos, y la interfaz tiene que poder pintarla sin clave.
+app.get('/api/stocks/symbols', (req, res) => {
+  sendJson(res, {
+    conClave: alpaca.hayClave(),
+    feed: alpaca.FEED,
+    count: stocks.CATALOG.length,
+    groups: stocks.stockGroups(),
+    intervals: Object.keys(alpaca.TIMEFRAMES),
+  });
+});
+
+// Reloj del mercado: abierto o cerrado, y cuándo cambia.
+app.get('/api/stocks/clock', async (req, res) => {
+  try {
+    sendJson(res, await stocks.getClock({ demo: DEMO_ALWAYS || req.query.demo === '1' }));
+  } catch (err) {
+    marketError(res, err, '/api/stocks/clock');
+  }
+});
+
+app.get('/api/stocks/candles', async (req, res) => {
+  const { symbol, interval, demo } = stockParams(req);
+  const limit = parseLimit(req.query.limit);
+
+  try {
+    const data = await stocks.getStockCandles({ symbol, interval, limit, demo });
+    sendJson(res, { ...data, count: data.candles.length, intervals: Object.keys(alpaca.TIMEFRAMES) });
+  } catch (err) {
+    marketError(res, err, '/api/stocks/candles');
+  }
+});
+
+// Precio ahora. Sin consolidar entre mercados como en cripto: aquí la cinta
+// consolidada es un producto licenciado y el feed gratuito es de un solo
+// mercado, así que la respuesta dice de cuál viene en vez de aparentar que es
+// el precio oficial.
+app.get('/api/stocks/quote', async (req, res) => {
+  const { symbol, demo } = stockParams(req);
+
+  try {
+    sendJson(res, await stocks.getStockQuote({ symbol, demo }));
+  } catch (err) {
+    marketError(res, err, '/api/stocks/quote');
+  }
+});
+
+app.get('/api/stocks/breakout', async (req, res) => {
+  const { symbol, interval, demo } = stockParams(req);
+  const livePrice = Number(req.query.price);
+
+  try {
+    const [{ candles, source, fetchedAt, aviso }, clock] = await Promise.all([
+      stocks.getStockCandles({ symbol, interval, limit: 400, demo }),
+      stocks.getClock({ demo }).catch(() => null),
+    ]);
+
+    const analysis = analyzeBreakout(candles, {
+      interval,
+      livePrice: Number.isFinite(livePrice) && livePrice > 0 ? livePrice : null,
+    });
+
+    sendJson(res, { symbol, interval, source, fetchedAt, aviso: aviso || null, clock, ...analysis });
+  } catch (err) {
+    marketError(res, err, '/api/stocks/breakout');
+  }
 });
 
 // ---------------------------------------------------------------------------
