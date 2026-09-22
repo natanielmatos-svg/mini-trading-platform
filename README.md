@@ -354,8 +354,12 @@ los datos de bolsa están licenciados. Con una cuenta gratuita de
 ```bash
 export ALPACA_KEY_ID=...
 export ALPACA_SECRET_KEY=...
+npm run alpaca   # comprueba la clave en dos segundos
 npm start
 ```
+
+`npm run alpaca` dice si la clave sirve, de qué cuenta es y si el mercado está
+abierto. No imprime el secreto.
 
 Sirven tanto las claves de la cuenta real como las de papel: no son
 intercambiables —una clave de papel contra el host real devuelve un 403 tan
@@ -821,6 +825,7 @@ public/
   acciones.js          acciones: datos, horario del mercado y precio
   predicciones.html    analizador de predicciones
 data/demo/             datos de ejemplo (también usados por los tests)
+scripts/alpaca.js        comprueba la clave de Alpaca y nada más
 scripts/smoke.js         valida las APIs reales antes de desplegar
 scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx

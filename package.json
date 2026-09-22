@@ -9,7 +9,8 @@
     "test": "node --test",
     "static": "node scripts/build-static.js",
     "smoke": "node scripts/smoke.js",
-    "diagnose": "node scripts/diagnose.js"
+    "diagnose": "node scripts/diagnose.js",
+    "alpaca": "node scripts/alpaca.js"
   },
   "engines": {
     "node": ">=20"
