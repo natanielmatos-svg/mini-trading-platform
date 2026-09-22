@@ -74,7 +74,8 @@ async function main() {
   const env = require('../src/env');
   console.log(
     `Clave ${id.slice(0, 6)}… (${id.length} caracteres), feed ${alpaca.FEED}` +
-      `${env.cargado ? ', leída de .env' : ''}.\n`
+      `${env.cargado ? ', leída de .env' : ''}.` +
+      `${env.arreglado ? `\n(el .env está en ${env.arreglado}; se lee igual, pero UTF-8 sin BOM da menos guerra)` : ''}\n`
   );
 
   try {

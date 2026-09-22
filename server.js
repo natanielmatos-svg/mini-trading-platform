@@ -460,7 +460,10 @@ function start(port = PORT) {
     console.log('Acciones:      /acciones.html');
     console.log('Predicciones:  /predicciones.html');
 
-    if (env.cargado) console.log(`\nConfiguración leída de ${env.RUTA}`);
+    if (env.cargado) {
+      console.log(`\nConfiguración leída de ${env.RUTA}`);
+      if (env.arreglado) console.log(`(estaba en ${env.arreglado}; se ha leído igual, pero UTF-8 sin BOM da menos guerra)`);
+    }
     else if (env.motivo && env.motivo !== 'no hay .env') console.log(`\nAviso: ${env.motivo}`);
 
     // Sin clave de Alpaca la página de acciones arranca igual, pero con datos

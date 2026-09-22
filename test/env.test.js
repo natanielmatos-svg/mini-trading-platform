@@ -25,7 +25,7 @@ function conEnv(contenido, script, entorno = {}) {
   const habia = fs.existsSync(RUTA) ? fs.readFileSync(RUTA) : null;
   try {
     if (contenido === null) fs.rmSync(RUTA, { force: true });
-    else fs.writeFileSync(RUTA, contenido);
+    else fs.writeFileSync(RUTA, contenido); // acepta texto o Buffer
 
     return execFileSync(process.execPath, ['-e', script], {
       encoding: 'utf8',
@@ -96,4 +96,60 @@ test('.env.example está y no lleva ningún secreto', () => {
 
   const gitignore = fs.readFileSync(path.join(__dirname, '..', '.gitignore'), 'utf8');
   assert.match(gitignore, /^\.env$/m, '.env tiene que estar en .gitignore');
+});
+
+// --- Codificaciones de Windows ---------------------------------------------
+
+// El Bloc de notas guarda UTF-8 con BOM y `>` de PowerShell escribe UTF-16.
+// Node no lo tiene en cuenta: el BOM se pega al nombre de la PRIMERA variable
+// —`\uFEFFALPACA_KEY_ID`— así que `process.env.ALPACA_KEY_ID` queda sin
+// definir y la aplicación dice que falta una clave que está escrita ahí
+// mismo. Es el fallo más desconcertante posible y en Windows es el caso
+// normal, no el raro.
+
+const LINEAS = 'CLAVE_DE_PRUEBA=valor\nOTRA_DE_PRUEBA=dos\n';
+
+const CODIFICACIONES = [
+  ['UTF-8 sin BOM', Buffer.from(LINEAS, 'utf8'), null],
+  ['UTF-8 con BOM', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(LINEAS, 'utf8')]), 'UTF-8 con BOM'],
+  ['UTF-16LE con BOM', Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(LINEAS, 'utf16le')]), 'UTF-16LE'],
+  ['UTF-16LE sin BOM', Buffer.from(LINEAS, 'utf16le'), 'UTF-16LE sin BOM'],
+  ['UTF-16BE con BOM', (() => {
+    const b = Buffer.from(LINEAS, 'utf16le');
+    b.swap16();
+    return Buffer.concat([Buffer.from([0xfe, 0xff]), b]);
+  })(), 'UTF-16BE'],
+];
+
+for (const [nombre, bytes, esperado] of CODIFICACIONES) {
+  test(`un .env en ${nombre} se lee igual`, () => {
+    const r = JSON.parse(conEnv(bytes, LEER));
+    assert.equal(r.cargado, true);
+    // La PRIMERA variable es la que se pierde con un BOM: es la que importa.
+    assert.equal(r.k, 'valor', `${nombre}: la primera variable no llegó`);
+    assert.equal(r.p, 'dos');
+  });
+}
+
+test('se dice qué codificación hubo que arreglar, y no se inventa una', () => {
+  const leerArreglado = "const e = require('./src/env'); console.log(JSON.stringify({ arreglado: e.arreglado, k: process.env.CLAVE_DE_PRUEBA }));";
+
+  for (const [nombre, bytes, esperado] of CODIFICACIONES) {
+    const r = JSON.parse(conEnv(bytes, leerArreglado));
+    assert.equal(r.arreglado, esperado, `${nombre}: se esperaba ${esperado}`);
+    assert.equal(r.k, 'valor');
+  }
+});
+
+test('un valor con acentos sobrevive a la normalización', () => {
+  // Al convertir de UTF-16 es donde se estropearía, y un secreto puede
+  // llevar cualquier carácter.
+  const conAcentos = 'CLAVE_DE_PRUEBA=ñandú-Ω-€\nOTRA_DE_PRUEBA=dos\n';
+  for (const [nombre, bytes] of [
+    ['UTF-8 con BOM', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(conAcentos, 'utf8')])],
+    ['UTF-16LE con BOM', Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(conAcentos, 'utf16le')])],
+  ]) {
+    const r = JSON.parse(conEnv(bytes, LEER));
+    assert.equal(r.k, 'ñandú-Ω-€', `${nombre}: se estropeó el valor`);
+  }
 });
