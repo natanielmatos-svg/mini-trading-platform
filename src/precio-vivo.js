@@ -46,9 +46,22 @@ const F = typeof module !== 'undefined' && module.exports ? require('./format') 
 const OBJETIVO = 0.0001;
 
 // Cuánto tiene que alejarse el precio de lo que está puesto para repintar.
-// Por encima de la horquilla típica del libro, que es el ruido que se quiere
-// quitar, y muy por debajo de cualquier movimiento que signifique algo.
-const BANDA = 0.0005;
+//
+// Elegida midiendo, no a ojo. Con el flujo real de ticks (151 en un minuto):
+//
+//     0,050%  →    1 repintado/min   el titular parecía congelado
+//     0,020%  →   40 repintado/min   uno cada segundo y medio
+//     0,010%  →   96 repintado/min
+//     0,005%  →  128 repintado/min   prácticamente cada tick
+//
+// El primer valor que puse fue 0,05% y era diez veces demasiado: mataba el
+// rebote entre compra y venta, sí, pero también todo el movimiento de verdad.
+// Un precio en vivo que no se mueve no es calma, es una pantalla rota.
+//
+// A 0,02% —unos 17 dólares en bitcoin— sigue estando muy por encima de la
+// horquilla del libro, que es el ruido que se quiere quitar, y muy por debajo
+// de lo que se mueve el precio en unos segundos.
+const BANDA = 0.0002;
 
 // Tope de repintados. El ojo no distingue más de unos pocos por segundo, y el
 // destello necesita tiempo para verse.

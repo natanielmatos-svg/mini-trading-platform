@@ -103,7 +103,21 @@ tenía ocho mil veces más resolución que la suya.
 - **El escalón** decide cuántos dígitos se enseñan: se redondea a entre el
   0,001% y el 0,01% del precio, que es el orden de la horquilla del libro.
 - **La banda** decide cuándo se repinta: el número no se mueve hasta que el
-  precio se aleja de lo que está puesto más de un 0,05%.
+  precio se aleja de lo que está puesto más de un 0,02% — unos 17 dólares en
+  bitcoin.
+
+El valor salió de medirlo con el flujo real de ticks, 151 en un minuto:
+
+| banda | repintados por minuto | |
+|---|---|---|
+| 0,050% | 1 | el titular parecía congelado |
+| **0,020%** | **40** | uno cada segundo y medio |
+| 0,010% | 96 | |
+| 0,005% | 128 | prácticamente cada tick |
+
+El primer valor que puse fue 0,05% y era diez veces demasiado: mataba el rebote
+entre compra y venta, sí, pero también todo el movimiento de verdad. **Un
+precio en vivo que no se mueve no es calma, es una pantalla rota.**
 
 Al principio había una segunda pieza: redondear el titular a menos decimales
 —bitcoin en dólares enteros— para que el último dígito no bailara. Medido, no
@@ -113,7 +127,7 @@ cruzaba su frontera en cada tick. La histéresis sí lo mata, porque mide contra
 lo que se está enseñando y no contra una rejilla fija.
 
 Y una vez puesta la histéresis, quitar decimales dejó de tener sentido: el
-número sólo se repinta cuando el precio se mueve 43 dólares, así que el decimal
+número sólo se repinta cuando el precio se mueve unos 17 dólares, así que el decimal
 no puede parpadear. Lo único que conseguía era que el titular fuese **el único
 sitio de la pantalla** con otra precisión que el gráfico, la tabla de predicción
 y los niveles de ruptura. Ahora enseña los mismos decimales que todo lo demás.

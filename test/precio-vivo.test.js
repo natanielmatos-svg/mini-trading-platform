@@ -109,17 +109,47 @@ test('la histéresis es lo que mata el rebote, no el redondeo', () => {
 });
 
 test('un precio que oscila dentro de la banda no repinta nunca', () => {
-  const c = P.crear();
-  c.siguiente(85763, 0);
+  // Es el rebote entre la compra y la venta del libro: el precio va y viene
+  // sin que el mercado se mueva. La amplitud se deriva de la propia banda
+  // para que el test no se quede desfasado cuando se ajuste.
+  const base = 85763;
+  const amplitud = base * P.BANDA * 0.6; // claramente dentro
 
-  // Oscila 20 $ arriba y abajo: por encima del escalón (1 $) pero por debajo
-  // de la banda (0,05% = 42 $).
+  const c = P.crear();
+  c.siguiente(base, 0);
+
   let n = 0;
   for (let i = 1; i <= 100; i++) {
-    if (c.siguiente(85763 + (i % 2 ? 20 : -20), i * 1000)) n++;
+    if (c.siguiente(base + (i % 2 ? amplitud : -amplitud), i * 1000)) n++;
   }
   assert.equal(n, 0, `repintó ${n} veces sin salir de la banda`);
-  assert.equal(c.valor, 85763);
+  assert.equal(c.valor, base);
+
+  // Y justo fuera de la banda sí pasa: no es que esté sordo.
+  assert.ok(c.siguiente(base + base * P.BANDA * 1.5, 200_000), 'un movimiento mayor que la banda tiene que pasar');
+});
+
+test('la banda deja el titular vivo, no congelado', () => {
+  // El fallo que hubo: con la banda al 0,05% el titular repintaba UNA vez por
+  // minuto y parecía roto. Se mide sobre un flujo con el ritmo real —dos
+  // ticks y medio por segundo, un recorrido del 0,07% en cuarenta segundos—
+  // y se exige que se mueva de verdad.
+  let s = 99;
+  const rnd = () => ((s = (s * 1103515245 + 12345) % 2147483648) / 2147483648) * 2 - 1;
+
+  const ticks = [];
+  let p = 86200;
+  for (let i = 0; i < 150; i++) {
+    p *= 1 + rnd() * 0.0002;
+    ticks.push({ t: i * 400, precio: p });
+  }
+
+  const c = P.crear();
+  let n = 0;
+  for (const { t, precio } of ticks) if (c.siguiente(precio, t)) n++;
+
+  assert.ok(n >= 10, `sólo ${n} repintados en un minuto: parecería congelado`);
+  assert.ok(n <= 120, `${n} repintados en un minuto: eso vuelve a ser parpadeo`);
 });
 
 test('un movimiento real sí pasa, y con la dirección correcta', () => {
