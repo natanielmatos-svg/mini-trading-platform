@@ -7,6 +7,7 @@ process.env.DEMO = '1';
 
 const test = require('node:test');
 const assert = require('node:assert');
+const http = require('node:http');
 
 const app = require('../server');
 
@@ -159,9 +160,25 @@ test('revalidar es barato: con ETag responde 304 sin cuerpo', async () => {
   await primera.arrayBuffer();
   assert.ok(etag, 'sin ETag, "no-cache" obligaría a reenviar el archivo entero');
 
-  const segunda = await fetch(`${base}/app.js`, { headers: { 'if-none-match': etag } });
-  assert.strictEqual(segunda.status, 304);
-  const cuerpo = await segunda.text();
+  // Con `fetch` no se puede comprobar esto: undici añade por su cuenta
+  // `cache-control: no-cache` y `pragma: no-cache` a la petición, y ante eso
+  // Express hace lo correcto —devolver el archivo entero, porque el cliente
+  // ha pedido explícitamente no usar copia— así que nunca se vería un 304.
+  // Un navegador normal no manda esas cabeceras. Se usa http directamente.
+  const { status, cuerpo } = await new Promise((resolve, reject) => {
+    const req = http.request(
+      { host: '127.0.0.1', port: server.address().port, path: '/app.js', headers: { 'if-none-match': etag } },
+      (res) => {
+        let datos = '';
+        res.on('data', (c) => { datos += c; });
+        res.on('end', () => resolve({ status: res.statusCode, cuerpo: datos }));
+      }
+    );
+    req.on('error', reject);
+    req.end();
+  });
+
+  assert.strictEqual(status, 304);
   assert.strictEqual(cuerpo.length, 0);
 });
 
