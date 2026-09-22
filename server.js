@@ -39,12 +39,14 @@ app.use((req, res, next) => {
   next();
 });
 
-// Tres módulos los comparten servidor y navegador: los indicadores, el formato
-// de números y el motor de señales. El navegador carga exactamente el mismo
+// Módulos que comparten servidor y navegador: los indicadores, el formato de
+// números y el motor de señales. El navegador carga exactamente el mismo
 // archivo que ejecuta el análisis, así que no puede haber dos versiones de la
-// misma regla. Lista blanca explícita y no `express.static('src')`: ahí dentro
-// están también los proveedores y la orquestación.
-const SHARED_MODULES = ['indicators.js', 'format.js', 'signals.js'];
+// misma regla. `chart.js` no lo usa el servidor, pero sí las dos páginas
+// —cripto y acciones—, y vive aquí por el mismo motivo: un solo dibujo.
+// Lista blanca explícita y no `express.static('src')`: ahí dentro están
+// también los proveedores y la orquestación.
+const SHARED_MODULES = ['indicators.js', 'format.js', 'signals.js', 'chart.js'];
 
 app.get('/lib/:file', (req, res) => {
   if (!SHARED_MODULES.includes(req.params.file)) {

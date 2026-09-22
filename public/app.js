@@ -3,14 +3,15 @@
 // Plataforma de trading: gráfico, tabla multi-timeframe, panel de ruptura y
 // avisos de entrada y salida.
 //
-// Los indicadores, el formato de números y el motor de señales llegan de
-// /lib/*.js, que son los mismos archivos que ejecuta el servidor: no puede
-// haber dos versiones de la misma regla.
+// Los indicadores, el formato de números, el motor de señales y el dibujo del
+// gráfico llegan de /lib/*.js, que son los mismos archivos que ejecuta el
+// servidor: no puede haber dos versiones de la misma regla.
 
 (function () {
-const { emaSeries, ema, shareAtLeast, requiredExcursion } = globalThis.Indicators;
+const { ema, shareAtLeast, requiredExcursion } = globalThis.Indicators;
 const { formatPrice, num, formatPercent, formatClock, candleWindow } = globalThis.Format;
 const { evaluateSignals } = globalThis.Signals;
+const Chart = globalThis.Chart;
 
 const MTF = ['1h', '4h', '1d', '1w'];
 const CANDLES = 300;
@@ -125,14 +126,6 @@ function precioTitular() {
 function ventanaActual(now = Date.now()) {
   const ultima = state.candles[state.candles.length - 1];
   return candleWindow(now, intervalToMs(state.interval), ultima ? ultima.openTime : null);
-}
-
-function fmtTimeAxis(ms, interval) {
-  const d = new Date(ms);
-  if (['1d', '3d', '1w', '1M'].includes(interval)) {
-    return d.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' });
-  }
-  return d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 }
 
 function fmtHora(ms) {
@@ -942,264 +935,47 @@ function renderClock() {
 }
 
 // --- Gráfico ---------------------------------------------------------------
-
-const PAD = { top: 14, right: 66, bottom: 26, left: 10 };
-const VOLUME_RATIO = 0.18;
+//
+// El dibujo está en /lib/chart.js, compartido con la página de acciones. Aquí
+// queda sólo lo que depende del estado de ESTA página: qué niveles pintar y el
+// tooltip de la vela bajo el cursor.
 
 function resizeCanvas() {
-  // Sin devicePixelRatio el canvas se ve borroso en cualquier pantalla moderna.
-  const dpr = window.devicePixelRatio || 1;
-  const width = el.canvas.clientWidth;
-  const height = el.canvas.clientHeight;
-  el.canvas.width = Math.round(width * dpr);
-  el.canvas.height = Math.round(height * dpr);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  Chart.resize(el.canvas, ctx);
   drawChart();
 }
 
-function chartGeometry() {
-  const w = el.canvas.clientWidth;
-  const h = el.canvas.clientHeight;
-  const plotW = w - PAD.left - PAD.right;
-  const volumeH = h * VOLUME_RATIO;
-  const plotH = h - PAD.top - PAD.bottom - volumeH;
-  return { w, h, plotW, plotH, volumeH, volumeTop: PAD.top + plotH + 6 };
-}
-
-// Escalones "redondos" para la rejilla: 1, 2, 5 por década. Una rejilla en
-// 1.037 no la lee nadie.
-function niceStep(range, targetLines) {
-  const raw = range / targetLines;
-  const magnitude = 10 ** Math.floor(Math.log10(raw));
-  const normalized = raw / magnitude;
-  const step = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
-  return step * magnitude;
+// Los niveles de ruptura y, si hay un seguimiento abierto, stop y objetivo.
+function nivelesDelGrafico() {
+  const niveles = [];
+  const b = state.breakout;
+  if (b && b.ok) {
+    if (b.up) niveles.push({ price: b.up.level, color: '#f87171', tag: 'R' });
+    if (b.down) niveles.push({ price: b.down.level, color: '#4ade80', tag: 'S' });
+  }
+  const position = state.alerts.positions[pairKey()];
+  if (position) {
+    niveles.push({ price: position.stop, color: '#fb7185', tag: 'STOP', dense: true });
+    niveles.push({ price: position.target, color: '#38bdf8', tag: 'OBJ', dense: true });
+  }
+  return niveles;
 }
 
 function drawChart() {
-  const { w, h, plotW, plotH, volumeH, volumeTop } = chartGeometry();
-  if (w <= 0 || h <= 0) return;
-
-  ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = '#020617';
-  ctx.fillRect(0, 0, w, h);
-
-  const candles = state.candles;
-  if (candles.length < 2) {
-    ctx.fillStyle = '#64748b';
-    ctx.font = '13px system-ui, sans-serif';
-    ctx.fillText('Sin datos todavía…', PAD.left + 10, PAD.top + 20);
-    return;
-  }
-
-  const highs = candles.map((c) => c.high);
-  const lows = candles.map((c) => c.low);
-  let maxPrice = Math.max(...highs);
-  let minPrice = Math.min(...lows);
-
-  // Los niveles de ruptura y el seguimiento entran en la escala: un nivel
-  // fuera de pantalla no sirve de nada.
-  const extras = [];
-  const b = state.breakout;
-  if (b && b.ok) {
-    if (b.up) extras.push(b.up.level);
-    if (b.down) extras.push(b.down.level);
-  }
-  const position = state.alerts.positions[pairKey()];
-  if (position) extras.push(position.stop, position.target);
-
-  for (const value of extras) {
-    if (Number.isFinite(value) && value < maxPrice * 1.08 && value > minPrice * 0.92) {
-      maxPrice = Math.max(maxPrice, value);
-      minPrice = Math.min(minPrice, value);
-    }
-  }
-
-  const margin = (maxPrice - minPrice) * 0.06 || maxPrice * 0.01;
-  maxPrice += margin;
-  minPrice -= margin;
-  const range = maxPrice - minPrice || 1;
-
-  const xStep = plotW / candles.length;
-  const xFor = (i) => PAD.left + i * xStep + xStep / 2;
-  const yFor = (price) => PAD.top + plotH - ((price - minPrice) / range) * plotH;
-
-  // Rejilla y eje de precios (a la derecha, como en cualquier plataforma).
-  const step = niceStep(range, 6);
-  ctx.font = '11px system-ui, sans-serif';
-  ctx.textBaseline = 'middle';
-  for (let price = Math.ceil(minPrice / step) * step; price < maxPrice; price += step) {
-    const y = yFor(price);
-    ctx.strokeStyle = '#111c33';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(PAD.left, y);
-    ctx.lineTo(PAD.left + plotW, y);
-    ctx.stroke();
-    ctx.fillStyle = '#64748b';
-    ctx.textAlign = 'left';
-    ctx.fillText(formatPrice(price), PAD.left + plotW + 6, y);
-  }
-
-  // Eje de tiempo: unas seis marcas, alineadas a velas reales.
-  const tickEvery = Math.max(1, Math.floor(candles.length / 6));
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-  for (let i = 0; i < candles.length; i += tickEvery) {
-    const x = xFor(i);
-    ctx.strokeStyle = '#0d1729';
-    ctx.beginPath();
-    ctx.moveTo(x, PAD.top);
-    ctx.lineTo(x, PAD.top + plotH);
-    ctx.stroke();
-    ctx.fillStyle = '#64748b';
-    ctx.fillText(fmtTimeAxis(candles[i].openTime, state.interval), x, h - PAD.bottom + 6);
-  }
-
-  // Volumen, debajo del precio.
-  const maxVolume = Math.max(...candles.map((c) => c.volume || 0)) || 1;
-  for (let i = 0; i < candles.length; i++) {
-    const c = candles[i];
-    const barH = ((c.volume || 0) / maxVolume) * (volumeH - 8);
-    ctx.fillStyle = c.close >= c.open ? 'rgba(34,197,94,0.35)' : 'rgba(239,68,68,0.35)';
-    ctx.fillRect(xFor(i) - xStep * 0.3, volumeTop + (volumeH - 8) - barH, Math.max(1, xStep * 0.6), barH);
-  }
-
-  // Velas.
-  const bodyW = Math.max(1, xStep * 0.62);
-  for (let i = 0; i < candles.length; i++) {
-    const c = candles[i];
-    const x = xFor(i);
-    const bull = c.close >= c.open;
-    const color = bull ? '#22c55e' : '#ef4444';
-
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x, yFor(c.high));
-    ctx.lineTo(x, yFor(c.low));
-    ctx.stroke();
-
-    const top = Math.min(yFor(c.open), yFor(c.close));
-    const height = Math.max(1, Math.abs(yFor(c.close) - yFor(c.open)));
-    ctx.fillRect(x - bodyW / 2, top, bodyW, height);
-
-    // La vela en formación va hueca: se ve de un vistazo qué aún puede cambiar.
-    if (!c.closed) {
-      ctx.fillStyle = '#020617';
-      ctx.fillRect(x - bodyW / 2 + 1, top + 1, Math.max(0, bodyW - 2), Math.max(0, height - 2));
-      ctx.strokeStyle = color;
-      ctx.strokeRect(x - bodyW / 2, top, bodyW, height);
-    }
-  }
-
-  // EMAs (nulas hasta que hay datos suficientes: la serie arranca donde debe).
-  const closes = candles.map((c) => c.close);
   const { fast, slow } = emaLengths();
-  if (fast && slow) {
-    drawSeries(emaSeries(closes, fast), '#38bdf8', xFor, yFor);
-    drawSeries(emaSeries(closes, slow), '#f97316', xFor, yFor);
-  }
-
-  // Niveles de ruptura y, si hay seguimiento, stop y objetivo.
-  if (b && b.ok) {
-    if (b.up) drawLevel(b.up.level, '#f87171', 'R', yFor, plotW);
-    if (b.down) drawLevel(b.down.level, '#4ade80', 'S', yFor, plotW);
-  }
-  if (position) {
-    drawLevel(position.stop, '#fb7185', 'STOP', yFor, plotW, true);
-    drawLevel(position.target, '#38bdf8', 'OBJ', yFor, plotW, true);
-  }
-
-  const last = candles[candles.length - 1];
-  drawPriceTag(last.close, last.close >= last.open ? '#22c55e' : '#ef4444', plotW, yFor);
-
-  if (state.hover !== null) drawCrosshair(xFor, plotH);
-}
-
-function drawSeries(series, color, xFor, yFor) {
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.4;
-  ctx.beginPath();
-  let started = false;
-  for (let i = 0; i < series.length; i++) {
-    const v = series[i];
-    if (!Number.isFinite(v)) continue;
-    const x = xFor(i);
-    const y = yFor(v);
-    if (!started) {
-      ctx.moveTo(x, y);
-      started = true;
-    } else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-}
-
-function drawLevel(price, color, tag, yFor, plotW, dense = false) {
-  if (!Number.isFinite(price)) return;
-  const y = yFor(price);
-  ctx.save();
-  ctx.setLineDash(dense ? [2, 4] : [5, 4]);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(PAD.left, y);
-  ctx.lineTo(PAD.left + plotW, y);
-  ctx.stroke();
-  ctx.restore();
-
-  ctx.fillStyle = color;
-  ctx.font = 'bold 10px system-ui, sans-serif';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'bottom';
-  ctx.fillText(`${tag} ${formatPrice(price)}`, PAD.left + 4, y - 2);
-}
-
-function drawPriceTag(price, color, plotW, yFor) {
-  const y = yFor(price);
-  ctx.save();
-  ctx.setLineDash([2, 3]);
-  ctx.strokeStyle = color;
-  ctx.beginPath();
-  ctx.moveTo(PAD.left, y);
-  ctx.lineTo(PAD.left + plotW, y);
-  ctx.stroke();
-  ctx.restore();
-
-  const label = formatPrice(price);
-  ctx.font = 'bold 11px system-ui, sans-serif';
-  const width = ctx.measureText(label).width + 10;
-  ctx.fillStyle = color;
-  ctx.fillRect(PAD.left + plotW + 2, y - 8, width, 16);
-  ctx.fillStyle = '#020617';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(label, PAD.left + plotW + 7, y);
-}
-
-function drawCrosshair(xFor, plotH) {
-  const c = state.candles[state.hover];
-  if (!c) return;
-  const x = xFor(state.hover);
-  ctx.save();
-  ctx.setLineDash([3, 3]);
-  ctx.strokeStyle = '#475569';
-  ctx.beginPath();
-  ctx.moveTo(x, PAD.top);
-  ctx.lineTo(x, PAD.top + plotH);
-  ctx.stroke();
-  ctx.restore();
+  Chart.draw(el.canvas, {
+    candles: state.candles,
+    interval: state.interval,
+    emaFast: fast,
+    emaSlow: slow,
+    levels: nivelesDelGrafico(),
+    hover: state.hover,
+  });
 }
 
 function onCanvasMove(event) {
-  const rect = el.canvas.getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  const { plotW } = chartGeometry();
-  const xStep = plotW / Math.max(state.candles.length, 1);
-  const index = Math.floor((x - PAD.left) / xStep);
-
-  if (index < 0 || index >= state.candles.length) {
+  const index = Chart.indexAt(el.canvas, event.clientX, state.candles);
+  if (index === null) {
     hideTooltip();
     return;
   }
@@ -1207,6 +983,8 @@ function onCanvasMove(event) {
   state.hover = index;
   const c = state.candles[index];
   const change = (c.close - c.open) / c.open;
+  const rect = el.canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
 
   el.tooltip.innerHTML = `
     <strong>${new Date(c.openTime).toLocaleString('es-ES')}</strong>
