@@ -1,40 +1,36 @@
 #!/usr/bin/env node
 'use strict';
 
-// Sonda temporal para dar con el endpoint real de CF Benchmarks.
+// Sonda temporal para CF Benchmarks, segunda vuelta.
 //
-// El que supuse a partir de su documentación devuelve 404 —no 401, así que no
-// es cuestión de clave: la ruta no existe—. Desde el entorno donde se escribe
-// este código no hay salida a cfbenchmarks.com, así que en vez de encadenar
-// suposiciones se prueban varias candidatas de una vez y se mira cuál
-// responde.
+// La primera dejó claro dónde está el problema: /api/v1/values?id=BRTI
+// responde 400 "Unknown id", no 404, así que la función existe y lo que falla
+// es el identificador. /api/v1/assets pide clave (401), pero `values` no.
+//
+// Esta vuelta hace dos cosas: buscar un listado que diga qué ids valen, y
+// probar identificadores plausibles contra la función que ya sabemos buena.
 //
 //   node scripts/probe-cf.js
-//
-// Si alguna devuelve 200 con JSON, ahí está la buena: pégame la salida y
-// ajusto el adaptador. Este archivo se borra después.
-
-const CANDIDATAS = [
-  'https://www.cfbenchmarks.com/api/v1/values/latest?id=BRTI',
-  'https://www.cfbenchmarks.com/api/v1/values?id=BRTI',
-  'https://www.cfbenchmarks.com/api/v1/index/BRTI/values/latest',
-  'https://www.cfbenchmarks.com/api/v1/indices/BRTI',
-  'https://www.cfbenchmarks.com/api/v2/values/latest?id=BRTI',
-  'https://api.cfbenchmarks.com/v1/values/latest?id=BRTI',
-  'https://api.cfbenchmarks.com/api/v1/values/latest?id=BRTI',
-  'https://www.cfbenchmarks.com/api/v1/assets',
-  'https://www.cfbenchmarks.com/api/v1/values/latest?id=brti',
-];
 
 const CLAVE = process.env.CFBENCHMARKS_API_KEY || '';
+const BASE = 'https://www.cfbenchmarks.com/api/v1';
 
-function recorta(texto, max = 220) {
+// Rutas que podrían enumerar los índices disponibles.
+const LISTADOS = ['/indices', '/index', '/values', '/families', '/products', '/ids', '/assets'];
+
+// Identificadores plausibles para el índice de bitcoin en tiempo real y sus
+// equivalentes de ethereum.
+const IDS = [
+  'BRTI', 'BRR', 'BRRNY', 'BTCUSD_RTI', 'BTCUSD_RR', 'BTCUSD',
+  'ETHUSD_RTI', 'ETHUSD_RR', 'ETHUSD', 'BRTIUSD', 'brti',
+];
+
+function recorta(texto, max = 200) {
   const limpio = String(texto).replace(/\s+/g, ' ').trim();
   return limpio.length > max ? `${limpio.slice(0, max)}…` : limpio;
 }
 
-async function probar(url) {
-  const inicio = Date.now();
+async function pedir(url) {
   try {
     const res = await fetch(url, {
       headers: {
@@ -44,21 +40,31 @@ async function probar(url) {
       },
       signal: AbortSignal.timeout(10000),
     });
-
     const cuerpo = await res.text().catch(() => '');
-    const tipo = res.headers.get('content-type') || '?';
-    const marca = res.ok && tipo.includes('json') ? '  <-- ESTA' : '';
-
-    console.log(`${String(res.status).padEnd(4)} ${String(Date.now() - inicio).padStart(5)} ms  ${tipo.split(';')[0].padEnd(24)} ${url}${marca}`);
-    if (cuerpo) console.log(`      ${recorta(cuerpo)}`);
+    return { status: res.status, tipo: (res.headers.get('content-type') || '?').split(';')[0], cuerpo };
   } catch (err) {
-    console.log(`ERR  ${String(Date.now() - inicio).padStart(5)} ms  ${''.padEnd(24)} ${url}`);
-    console.log(`      ${recorta(err.message)}`);
+    return { status: 'ERR', tipo: '', cuerpo: err.message };
   }
 }
 
 (async () => {
-  console.log(`Probando ${CANDIDATAS.length} rutas de CF Benchmarks${CLAVE ? ' (con clave)' : ' (sin clave)'}...\n`);
-  for (const url of CANDIDATAS) await probar(url);
-  console.log('\nBusca la que responda 200 con JSON y pégame su salida.');
+  console.log(`CF Benchmarks${CLAVE ? ' (con clave)' : ' (sin clave)'} — segunda vuelta\n`);
+
+  console.log('1) ¿Hay algún listado de índices?');
+  for (const ruta of LISTADOS) {
+    const { status, tipo, cuerpo } = await pedir(`${BASE}${ruta}`);
+    const marca = status === 200 ? '  <-- ESTA' : '';
+    console.log(`   ${String(status).padEnd(4)} ${tipo.padEnd(18)} ${ruta}${marca}`);
+    if (status === 200 || (tipo.includes('json') && status !== 404)) console.log(`        ${recorta(cuerpo)}`);
+  }
+
+  console.log('\n2) ¿Qué identificador acepta /values?');
+  for (const id of IDS) {
+    const { status, tipo, cuerpo } = await pedir(`${BASE}/values?id=${encodeURIComponent(id)}`);
+    const marca = status === 200 ? '  <-- ESTE' : '';
+    console.log(`   ${String(status).padEnd(4)} ${tipo.padEnd(18)} id=${id}${marca}`);
+    if (status === 200) console.log(`        ${recorta(cuerpo)}`);
+  }
+
+  console.log('\nPégame la salida. Si algo responde 200, con eso basta para ajustar el adaptador.');
 })();
