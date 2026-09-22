@@ -108,7 +108,7 @@ cotización, es un error de lectura.
 | Kraken | `BTCUSD`, `/0/public/Ticker` — devuelve sus errores con un 200 y el fallo dentro del cuerpo, así que se comprueba |
 | Coinbase Advanced | `BTC-USD`, endpoint público de mercado, sin clave |
 | Gemini | `btcusd` (en minúsculas y sin separador), `/v1/pubticker` |
-| CF Benchmarks | `BRTI` / `ETHUSD_RTI` — **un índice, no un mercado**; no entra por defecto |
+| CF Benchmarks | `BRTI` / `ETHUSD_RTI` — **un índice, no un mercado, y de pago**; no entra por defecto |
 
 Un mercado que no responda se marca como caído y el consolidado sigue con los
 demás; uno cuyo precio lleve más de diez segundos parado se enseña, pero no
@@ -131,10 +131,16 @@ consecuencias:
   propósito. Si lo que quieres es seguir el índice, lo coherente es marcarlo
   a él y desmarcar los exchanges que agrega.
 
+**Necesita clave licenciada.** Sondeando su API se ve por qué: `/api/v1/indices`
+responde 200 sin clave pero con el catálogo **vacío**, y por eso `/api/v1/values`
+rechaza cualquier identificador con «Unknown id» — no es que el id esté mal, es
+que sin derechos no existe ninguno. A diferencia de los cuatro exchanges, esto
+no se puede usar gratis. La clave va en `CFBENCHMARKS_API_KEY` y viaja como
+`Authorization: Bearer`; sin ella el desglose dice exactamente eso en vez de
+soltar un error opaco.
+
 Sólo cubre los activos para los que publica índice en tiempo real (BTC y ETH);
-pedirle otro dice que no lo cubre en vez de fallar con un error opaco. Si tu
-acceso necesita clave, se pone en `CFBENCHMARKS_API_KEY` y viaja como
-`Authorization: Bearer`.
+pedirle otro dice que no lo cubre.
 
 **Sobre Kalshi:** esto reduce el sesgo de mirar un solo exchange, pero
 **no garantiza coincidir con Kalshi**, que liquida contra la fuente que

@@ -162,6 +162,12 @@ const gemini = {
 // entra en la selección por defecto. Si lo que quieres es seguir el índice,
 // lo lógico es marcarlo a él y desmarcar los exchanges que agrega.
 //
+// Y una tercera, averiguada sondeando su API: **necesita clave licenciada**.
+// Su /api/v1/indices responde 200 sin clave pero con el catálogo vacío, y por
+// eso /api/v1/values rechaza cualquier identificador con "Unknown id" — no es
+// que el id esté mal, es que sin derechos no existe ninguno. A diferencia de
+// Binance, Kraken, Coinbase y Gemini, esto no se puede usar gratis.
+//
 // Sólo cubre los activos para los que publica índice en tiempo real.
 
 const CF_INDICES = { BTC: 'BRTI', ETH: 'ETHUSD_RTI' };
@@ -174,12 +180,28 @@ const cfbenchmarks = {
     const pair = cfbenchmarks.pairFor(symbol);
     if (!pair) throw new Error(`CF Benchmarks no publica índice en tiempo real para ${baseAsset(symbol)}`);
 
-    const data = await fetchJson(`${CFBENCHMARKS_API}/api/v1/values/latest`, {
-      searchParams: { id: pair },
-      headers: CFBENCHMARKS_KEY ? { authorization: `Bearer ${CFBENCHMARKS_KEY}` } : {},
-      timeoutMs,
-      retries: 1,
-    });
+    let data;
+    try {
+      // /values, no /values/latest: esta última devuelve "api function was not
+      // found".
+      data = await fetchJson(`${CFBENCHMARKS_API}/api/v1/values`, {
+        searchParams: { id: pair },
+        headers: CFBENCHMARKS_KEY ? { authorization: `Bearer ${CFBENCHMARKS_KEY}` } : {},
+        timeoutMs,
+        retries: 1,
+      });
+    } catch (err) {
+      // Un 400 "Unknown id" o un 401 no significan que el índice no exista:
+      // significan que esta clave no tiene derechos sobre él. Decirlo así
+      // ahorra buscar un fallo donde no lo hay.
+      if (err.status === 400 || err.status === 401 || err.status === 403) {
+        throw new Error(
+          `CF Benchmarks: ${pair} no disponible${CFBENCHMARKS_KEY ? ' con esta clave' : ' sin clave'} ` +
+            '(su catálogo viene vacío sin derechos; es un producto licenciado)'
+        );
+      }
+      throw err;
+    }
 
     const entrada = data && Array.isArray(data.payload) ? data.payload[0] : data;
     const valor = toNum(entrada && (entrada.value !== undefined ? entrada.value : entrada.price));

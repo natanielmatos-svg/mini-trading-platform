@@ -202,7 +202,7 @@ test('CF Benchmarks: el índice se lee del payload y se marca como índice', asy
   assert.strictEqual(price, 86646.51);
   assert.strictEqual(pair, 'BRTI');
   assert.strictEqual(source, 'índice', 'no es libro ni operación: es un valor publicado');
-  assert.strictEqual(estado.peticiones[0].path, '/api/v1/values/latest');
+  assert.strictEqual(estado.peticiones[0].path, '/api/v1/values', '/values/latest no existe en su API');
   assert.strictEqual(estado.peticiones[0].params.id, 'BRTI');
 });
 
@@ -247,9 +247,23 @@ test('CF Benchmarks: la clave de API viaja si está configurada', async () => {
   assert.strictEqual(estado.peticiones[sinClave].headers.authorization, undefined, 'sin clave no se manda cabecera');
 });
 
-test('CF Benchmarks: un 401 se propaga, no se cuela como precio', async () => {
-  estado.cf = { status: 401, body: { message: 'unauthorized' } };
-  await assert.rejects(() => venues.cfbenchmarks.fetchPrice({ symbol: 'BTCUSDT' }), /HTTP 401/);
+test('CF Benchmarks: sin derechos se dice que es eso, no un id equivocado', async () => {
+  // Su API responde 400 "Unknown id" cuando el catálogo de la clave está
+  // vacío, que es lo que pasa sin clave. Traducirlo evita buscar un fallo
+  // donde no lo hay.
+  estado.cf = { status: 400, body: { serverTime: '2026-09-22T02:44:47Z', error: 'Unknown id' } };
+  await assert.rejects(
+    () => venues.cfbenchmarks.fetchPrice({ symbol: 'BTCUSDT' }),
+    /no disponible sin clave.*producto licenciado/
+  );
+
+  estado.cf = { status: 401, body: { error: 'not authorized' } };
+  await assert.rejects(() => venues.cfbenchmarks.fetchPrice({ symbol: 'BTCUSDT' }), /no disponible sin clave/);
+});
+
+test('CF Benchmarks: un fallo de servidor sí se propaga tal cual', async () => {
+  estado.cf = { status: 503, body: { error: 'unavailable' } };
+  await assert.rejects(() => venues.cfbenchmarks.fetchPrice({ symbol: 'BTCUSDT' }), /HTTP 503/);
 });
 
 test('CF Benchmarks: una respuesta sin valor no produce precio', async () => {
