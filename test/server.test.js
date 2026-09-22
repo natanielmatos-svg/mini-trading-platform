@@ -143,7 +143,29 @@ test('el motor de señales que recibe el navegador es el mismo que usa Node', as
   assert.match(código, /CIERRA al otro lado del nivel y con volumen/, 'la regla de confirmación viaja con el módulo');
 });
 
-test('el HTML se revalida y lleva cabeceras de seguridad', async () => {
+test('el código se revalida siempre: el HTML y también el JavaScript', async () => {
+  // Cachear app.js una hora significaba que tras desplegar un arreglo el
+  // navegador seguía ejecutando la versión anterior. Pasó de verdad.
+  for (const ruta of ['/index.html', '/app.js', '/lib/indicators.js', '/lib/signals.js', '/lib/format.js']) {
+    const res = await fetch(`${base}${ruta}`);
+    assert.strictEqual(res.headers.get('cache-control'), 'no-cache', `${ruta} se estaba cacheando`);
+    await res.arrayBuffer();
+  }
+});
+
+test('revalidar es barato: con ETag responde 304 sin cuerpo', async () => {
+  const primera = await fetch(`${base}/app.js`);
+  const etag = primera.headers.get('etag');
+  await primera.arrayBuffer();
+  assert.ok(etag, 'sin ETag, "no-cache" obligaría a reenviar el archivo entero');
+
+  const segunda = await fetch(`${base}/app.js`, { headers: { 'if-none-match': etag } });
+  assert.strictEqual(segunda.status, 304);
+  const cuerpo = await segunda.text();
+  assert.strictEqual(cuerpo.length, 0);
+});
+
+test('el HTML lleva cabeceras de seguridad', async () => {
   const res = await fetch(`${base}/index.html`);
   assert.strictEqual(res.headers.get('cache-control'), 'no-cache');
   assert.strictEqual(res.headers.get('x-content-type-options'), 'nosniff');

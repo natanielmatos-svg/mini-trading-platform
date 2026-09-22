@@ -51,18 +51,25 @@ app.get('/lib/:file', (req, res) => {
     return res.status(404).json({ error: 'Ese módulo no se publica al navegador' });
   }
   res.type('application/javascript');
-  res.setHeader('Cache-Control', 'public, max-age=3600');
+  // Mismo motivo que en la carpeta pública: esto es código.
+  res.setHeader('Cache-Control', 'no-cache');
   res.sendFile(path.join(__dirname, 'src', req.params.file));
 });
 
-// Carpeta pública. El HTML se revalida siempre —si no, un despliegue no se ve
-// hasta que el usuario fuerza la recarga— y el resto se cachea un rato.
+// Carpeta pública. El HTML y el JavaScript se revalidan siempre: son el
+// código, y cachearlos una hora significa que tras desplegar el navegador
+// sigue ejecutando la versión anterior hasta que a alguien se le ocurre forzar
+// la recarga. Pasó: se arreglaba un fallo, se desplegaba, y el usuario seguía
+// viéndolo. `no-cache` no es «no guardes», es «pregunta antes de usar»: con
+// el ETag la respuesta habitual es un 304 de unos pocos bytes.
 const publicDir = path.join(__dirname, 'public');
+const CODIGO = /\.(html|js)$/;
+
 app.use(
   express.static(publicDir, {
     maxAge: '1h',
     setHeaders(res, filePath) {
-      if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
+      if (CODIGO.test(filePath)) res.setHeader('Cache-Control', 'no-cache');
     },
   })
 );

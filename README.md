@@ -21,6 +21,14 @@ npm run static -- salida.html --demo   # instantánea estática autocontenida
 Ningún script usa sintaxis de shell, así que funcionan igual en Linux, macOS y
 Windows (PowerShell incluido). Hace falta Node 20 o superior: `node -v`.
 
+### Una nota sobre la caché
+
+El HTML **y el JavaScript** se sirven con `no-cache`, que no significa «no
+guardes» sino «pregunta antes de usar»: con el ETag la respuesta habitual es
+un 304 de unos pocos bytes. Es deliberado — cachear `app.js` una hora
+significaba que tras desplegar un arreglo el navegador seguía ejecutando la
+versión anterior, y eso ya pasó una vez.
+
 ### Cómo se prueba
 
 ```bash
