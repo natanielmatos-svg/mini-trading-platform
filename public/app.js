@@ -16,6 +16,7 @@ const Avisos = globalThis.Avisos;
 const TablaMtf = globalThis.TablaMtf;
 const PrecioVivo = globalThis.PrecioVivo;
 const PanelPrediccion = globalThis.PanelPrediccion;
+const Tarjetas = globalThis.Tarjetas;
 
 const MTF = ['1h', '4h', '1d', '1w'];
 const CANDLES = 300;
@@ -487,6 +488,7 @@ async function loadForecast() {
   try {
     const data = await getJson(`/api/forecast?symbol=${encodeURIComponent(state.symbol)}&interval=${state.interval}${paramMercados()}`);
     if (data.symbol !== state.symbol) return; // llegó tarde
+    data.recibido = Date.now(); // el ancla de las cuentas atrás
     state.forecast = data;
   } catch (err) {
     state.forecast = { error: `No se pudo predecir: ${err.message}` };
@@ -884,6 +886,10 @@ function applyControls({ symbol = null } = {}) {
 }
 
 function init() {
+  // Antes de nada: si hay un orden guardado, se aplica ya. Hacerlo después de
+  // pintar daría un salto visible al recolocar las tarjetas.
+  Tarjetas.activar({ contenedor: document.querySelector('.side-panel'), clave: 'mtp.tarjetas.cripto' });
+
   loadMercados();
   // Antes del primer dibujo: el seguimiento guardado aporta el stop y el
   // objetivo, y son dos líneas del gráfico.
@@ -935,6 +941,7 @@ function init() {
   setInterval(() => {
     if (document.hidden) return;
     renderClock();
+    PanelPrediccion.tick(el.forecast);
     if (state.breakout && state.breakout.ok) renderBreakout();
   }, 250);
 

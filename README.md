@@ -19,7 +19,7 @@ mismo código (ver [Estructura](#estructura)).
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet (también el gráfico)
-npm test             # 217 tests, sin red
+npm test             # 364 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -38,7 +38,7 @@ versión anterior, y eso ya pasó una vez.
 ### Cómo se prueba
 
 ```bash
-npm test          # 217 tests, sin red, en unos cinco segundos
+npm test          # 364 tests, sin red, en unos ocho segundos
 npm run smoke     # llama a las APIs de verdad — la única prueba que las valida
 ```
 
@@ -63,6 +63,30 @@ Córrelo antes del primer arranque y después de cada actualización.
 Velas de Binance, EMAs sobre el gráfico, tendencia en cuatro timeframes y un
 panel que responde a una sola pregunta: **¿esta vela va a romper, y hacia
 dónde?**
+
+### Las tarjetas se mueven
+
+La columna de la derecha son seis tarjetas —bloque de tiempo, predicción,
+ruptura, tendencia, avisos y EMAs— y **el orden bueno depende de a qué juegues**.
+Quien opera el minuto quiere la ruptura arriba; quien mira el día, la tendencia.
+Así que se arrastran por el asa (`⠿`) del título y se quedan donde las dejes:
+el orden se guarda en `localStorage`, por página (`mtp.tarjetas.cripto` y
+`mtp.tarjetas.acciones`), porque en cripto y en bolsa no se mira lo mismo.
+
+Tres decisiones que no se ven:
+
+- **Pointer Events, no arrastrar y soltar de HTML5.** El API de HTML5 no dispara
+  `dragstart` al tocar con el dedo, así que en un móvil no habría forma de mover
+  nada. Con Pointer Events el ratón y el dedo son el mismo código.
+- **Un asa aparte, no la tarjeta entera.** Las tarjetas llevan casillas, menús y
+  desplegables: hacer arrastrable todo el bloque convierte marcar «sonido» en un
+  arrastre accidental. El asa es un `<button>`, y por eso también se puede mover
+  con el teclado, con las flechas arriba y abajo.
+- **Una tarjeta que no estaba en el orden guardado no desaparece.** Se añade al
+  final. Quien guardó su orden antes de que existiera la tarjeta de predicción
+  no la tenía en la lista, y hacerla invisible sería peor que cualquier orden —
+  eso está probado en `test/tarjetas.test.js`, junto con un `localStorage` que
+  lanza excepciones, que es lo que hace en modo privado.
 
 ### Precio en vivo y bloque de tiempo
 
@@ -370,6 +394,20 @@ predicción de dirección.
 Y en una línea dentro del bloque de tiempo, que es la primera tarjeta y no hay
 que bajar para verla: «en 1 h, la mitad de las veces entre 60.053 y 60.383 ·
 acierta 91% de 90%».
+
+**La primera columna es una cuenta atrás, no una hora.** Decía «14:35» y eso
+obliga a mirar el reloj y restar para saber lo único que importa: cuánto queda.
+Ahora baja sola, cada medio segundo, y cuando llega a cero la fila se marca
+como *vencida* —la banda que se está viendo se calculó para un plazo que ya
+pasó, y eso tiene que verse—. El ancla es **el instante en que el navegador
+recibió la respuesta**, no la marca de tiempo del servidor: entre los dos
+relojes puede haber segundos de diferencia y la cuenta atrás heredaría ese
+desfase.
+
+Poner en hora la cuenta atrás **no repinta la tabla**. Se reescribe sólo el
+nodo de texto de cada celda, porque reconstruir el panel varias veces por
+segundo cerraría el desplegable de «cómo se calcula» en cuanto alguien lo
+abriera —el mismo fallo que ya hubo una vez en el panel de ruptura—.
 
 El abanico tiene su propio margen para estirar la escala, y muy estrecho: la
 banda del 90% a un día llega un 5% más arriba que cualquier vela, y dejarla
@@ -1083,6 +1121,7 @@ src/
   panel-ruptura.js     el panel «¿Rompe esta vela?» — las DOS páginas
   avisos.js            sonido, ventana emergente y seguimiento — las DOS páginas
   tabla-mtf.js         la tabla de tendencia — las DOS páginas
+  tarjetas.js          arrastrar las tarjetas y recordar el orden — las DOS páginas
   symbols.js           catálogo de criptomonedas del desplegable
   stocks.js            acciones: catálogo, sesión, reloj y modo de ejemplo
   alpaca.js            acciones: velas, precio y el reloj del mercado
@@ -1112,5 +1151,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  346 tests, sin red
+test/                  364 tests, sin red
 ```

@@ -65,7 +65,7 @@ app.use((req, res, next) => {
 // sola tabla y un solo modo de calmar el precio en vivo.
 // Lista blanca explícita y no `express.static('src')`: ahí dentro están
 // también los proveedores y la orquestación.
-const SHARED_MODULES = ['indicators.js', 'format.js', 'signals.js', 'chart.js', 'panel-ruptura.js', 'avisos.js', 'tabla-mtf.js', 'precio-vivo.js', 'volatilidad.js', 'panel-prediccion.js'];
+const SHARED_MODULES = ['indicators.js', 'format.js', 'signals.js', 'chart.js', 'panel-ruptura.js', 'avisos.js', 'tabla-mtf.js', 'precio-vivo.js', 'volatilidad.js', 'panel-prediccion.js', 'tarjetas.js'];
 
 app.get('/lib/:file', (req, res) => {
   if (!SHARED_MODULES.includes(req.params.file)) {

@@ -58,7 +58,7 @@
     </div>
 
     <div class="side-panel">
-      <div class="card clock-card" id="clockCard">
+      <div class="card clock-card" id="clockCard" data-tarjeta="reloj">
         <div class="clock-head">
           <span id="clockPair">—</span>
           <span class="live-dot"></span>
@@ -80,17 +80,17 @@
         </div>
       </div>
 
-      <div class="card">
+      <div class="card" data-tarjeta="prediccion">
         <h2>¿Dónde estará el precio? <small>distribución, no adivinanza</small></h2>
         <div id="forecastPanel"><p class="muted">Calculando…</p></div>
       </div>
 
-      <div class="card">
+      <div class="card" data-tarjeta="ruptura">
         <h2>¿Rompe esta vela?</h2>
         <div id="breakoutPanel"><p class="muted">Calculando…</p></div>
       </div>
 
-      <div class="card">
+      <div class="card" data-tarjeta="tendencia">
         <h2>Tendencia multi-timeframe</h2>
         <table>
           <thead>
@@ -108,7 +108,7 @@
         <p class="note">EMA rápida contra lenta en cada timeframe. Diferencias de menos del 0,05% se marcan como «Plano»: eso es ruido, no tendencia.</p>
       </div>
 
-      <div class="card">
+      <div class="card" data-tarjeta="avisos">
         <h2>Cuándo comprar y cuándo vender</h2>
         <div class="alert-controls">
           <label class="switch">
@@ -136,7 +136,7 @@
         </p>
       </div>
 
-      <div class="card">
+      <div class="card" data-tarjeta="ema">
         <h2>Parámetros de EMA</h2>
         <div class="ema-grid">
           <label>Rápida<input type="number" id="emaFast" value="20" min="1" max="500" /></label>
@@ -161,6 +161,7 @@
   <script src="/lib/tabla-mtf.js"></script>
   <script src="/lib/precio-vivo.js"></script>
   <script src="/lib/panel-prediccion.js"></script>
+  <script src="/lib/tarjetas.js"></script>
   <script src="/acciones.js"></script>
 </body>
 </html>

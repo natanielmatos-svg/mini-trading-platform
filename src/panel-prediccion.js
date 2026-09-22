@@ -11,7 +11,7 @@
 // con tipografía bonita.
 
 const F = typeof module !== 'undefined' && module.exports ? require('./format') : globalThis.Format;
-const { formatPrice, num, formatDuration } = F;
+const { formatPrice, num, formatDuration, formatClock } = F;
 
 // Cuánto dura un bloque, para poder decir "dentro de 4 horas" y no "4 bloques".
 const MS = {
@@ -51,6 +51,35 @@ function nota(cal) {
  * @param datos       la respuesta de /api/forecast
  * @param interval    para traducir bloques a tiempo
  */
+/**
+ * Pone en hora las cuentas atrás sin volver a pintar la tabla.
+ *
+ * Se llama varias veces por segundo, y reconstruir el panel entero a ese ritmo
+ * cerraría el desplegable de "cómo se calcula" cada vez que alguien lo abriera
+ * —el mismo fallo que ya hubo en el panel de ruptura— además de tirar el
+ * trabajo de pintar seis filas para cambiar seis números.
+ *
+ * Cuando una llega a cero, la fila se marca: esa predicción ya venció y la que
+ * se está viendo es de hace un rato.
+ */
+function tick(contenedor, now = Date.now()) {
+  if (!contenedor) return;
+
+  for (const celda of contenedor.querySelectorAll('.pred-cuando[data-vence]')) {
+    const falta = Number(celda.dataset.vence) - now;
+    const texto = celda.childNodes[0];
+    if (!texto) continue;
+
+    if (falta <= 0) {
+      texto.nodeValue = 'vencida';
+      celda.closest('tr').classList.add('vencida');
+    } else {
+      texto.nodeValue = formatClock(falta);
+      celda.closest('tr').classList.remove('vencida');
+    }
+  }
+}
+
 function render(contenedor, datos, interval) {
   if (!datos || !Array.isArray(datos.horizontes) || !datos.horizontes.length) {
     contenedor.innerHTML = `<p class="muted">${datos && datos.error ? datos.error : 'Calculando…'}</p>`;
@@ -59,6 +88,12 @@ function render(contenedor, datos, interval) {
 
   const paso = MS[interval] || 3600e3;
   const utiles = datos.horizontes.filter((h) => h.ok);
+
+  // El ancla es CUANDO SE RECIBIÓ, no la marca del servidor: entre los dos
+  // relojes puede haber segundos de diferencia y la cuenta atrás heredaría ese
+  // desfase. Las bandas se calcularon "a partir de ahora", así que ahora es
+  // este instante.
+  const anclaje = Number.isFinite(datos.recibido) ? datos.recibido : Date.now();
 
   if (!utiles.length) {
     const motivo = datos.horizontes[0] && datos.horizontes[0].reason;
@@ -75,7 +110,7 @@ function render(contenedor, datos, interval) {
 
     return `
       <tr>
-        <td class="pred-cuando" title="${h.desde ? `calculado con velas de ${h.desde}` : ''}">${formatDuration(cuantoFalta(h, paso))}${h.desde && h.desde !== interval ? ` <span class="pred-desde">de ${h.desde}</span>` : ''}</td>
+        <td class="pred-cuando" data-vence="${anclaje + cuantoFalta(h, paso)}" title="${h.desde ? `calculado con velas de ${h.desde}` : ''}">${formatClock(cuantoFalta(h, paso))}${h.desde && h.desde !== interval ? ` <span class="pred-desde">de ${h.desde}</span>` : ''}</td>
         <td class="pred-banda">${formatPrice(lo50.price)} – ${formatPrice(hi50.price)}</td>
         <td class="pred-banda ancha">${formatPrice(lo.price)} – ${formatPrice(hi.price)}</td>
         <td class="pred-nota ${n.clase}" title="${n.detalle.replace(/"/g, '&quot;')}">${n.texto}</td>
@@ -89,7 +124,7 @@ function render(contenedor, datos, interval) {
     </p>
     <table class="pred-tabla">
       <thead>
-        <tr><th>dentro de</th><th>50% de las veces</th><th>90% de las veces</th><th>acierto</th></tr>
+        <tr><th>vence en</th><th>50% de las veces</th><th>90% de las veces</th><th>acierto</th></tr>
       </thead>
       <tbody>${filas}</tbody>
     </table>
@@ -142,7 +177,7 @@ function renderLinea(contenedor, datos, interval) {
     `<strong>${formatPrice(hi.price)}</strong> · <span class="nota ${n.clase}" title="${n.detalle.replace(/"/g, '&quot;')}">acierta ${n.texto}</span>`;
 }
 
-const API = { render, renderLinea, nota, cuantoFalta, MS };
+const API = { render, renderLinea, tick, nota, cuantoFalta, MS };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
 else globalThis.PanelPrediccion = API;
