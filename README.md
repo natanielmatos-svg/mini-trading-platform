@@ -289,6 +289,22 @@ smoke` lo vuelve a medir cada vez.
 
 ### Motor de predicción
 
+**Los horizontes van en tiempo, no en bloques del gráfico.** Antes eran
+bloques del intervalo elegido, así que con el gráfico en 1h no había forma de
+preguntar por los próximos cinco minutos —que es justo el plazo en el que
+alguien está mirando la pantalla—. Ahora cada plazo se calcula con la serie que
+le corresponde: de 1 minuto a 1 hora salen de velas de un minuto, y de ahí
+hacia arriba del intervalo del gráfico. Predecir cinco minutos con velas de una
+hora sería inventarse una resolución que los datos no tienen.
+
+| plazo | serie | plazo | serie |
+|---|---|---|---|
+| 1 min | velas de 1m | 2 h | el gráfico |
+| 5 min | velas de 1m | 4 h | el gráfico |
+| 15 min | velas de 1m | 8 h | el gráfico |
+| 30 min | velas de 1m | 12 h | el gráfico |
+| 1 h | velas de 1m | 1 d | el gráfico |
+
 **No predice un precio, y es una decisión, no una limitación.** A quince
 minutos vista la mejor estimación puntual honesta de bitcoin es el precio de
 ahora: en un mercado líquido la deriva a ese plazo es indistinguible del ruido,

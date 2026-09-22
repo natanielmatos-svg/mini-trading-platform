@@ -765,9 +765,15 @@ function proyeccionDelGrafico() {
   const lejano = utiles[utiles.length - 1];
   const paso = PanelPrediccion.MS[state.interval] || 3600e3;
 
+  const ms = (h) => (Number.isFinite(h.ms) ? h.ms : h.bloques * paso);
+
   return {
-    horizontes: utiles.map((h) => ({ bloques: h.bloques, bandas: h.bandas })),
-    etiqueta: `próximas ${formatDuration(lejano.bloques * paso)} · 50% y 90%`,
+    // El abanico se coloca por TIEMPO: los horizontes cortos salen de velas de
+    // un minuto y los largos del intervalo del gráfico, así que sus "bloques"
+    // no son comparables entre sí. Mezclarlos colocaría cinco minutos y cinco
+    // horas en el mismo sitio.
+    horizontes: utiles.map((h) => ({ bloques: ms(h), bandas: h.bandas })),
+    etiqueta: `próximas ${formatDuration(ms(lejano))} · 50% y 90%`,
   };
 }
 

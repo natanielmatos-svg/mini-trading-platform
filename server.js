@@ -26,6 +26,7 @@ const { fetchAllPrices, listVenues, parseVenues } = require('./src/venues');
 const { getVelasConsolidadas } = require('./src/velas-consolidadas');
 const volatilidad = require('./src/volatilidad');
 const forecast = require('./src/forecast');
+const { planDeHorizontes } = forecast;
 const calibracion = require('./src/calibracion');
 
 // Los cuantiles conformes son un paseo por todo el histórico prediciendo hacia
@@ -395,8 +396,6 @@ app.get('/api/stream', (req, res) => {
 // el histórico, es decir, si las bandas que promete se cumplen de verdad. Un
 // predictor que publica su propio boletín de notas.
 
-const HORIZONTES = [1, 2, 4, 8, 12, 24];
-
 async function predecirActivo({ candles, interval, precio, bloques }) {
   const clave = `${interval}:${bloques}:${candles.length}:${candles[candles.length - 1].openTime}`;
   const conformes = await cacheConforme.wrap(clave, async () => forecast.cuantilesConformes(candles, { bloques }), 300_000);
@@ -412,21 +411,36 @@ app.get('/api/forecast', async (req, res) => {
   const { symbol, interval, demo } = marketParams(req);
   const venues = parseVenues(req.query.venues);
   const livePrice = Number(req.query.price);
-  const pedido = Number(req.query.bloques);
-  const horizontes = Number.isFinite(pedido) && pedido > 0 ? [Math.min(pedido, 96)] : HORIZONTES;
 
   try {
-    const { candles, fuente, fetchedAt } = await velasDelAnalisis({ symbol, interval, demo, venues });
+    const plan = planDeHorizontes(interval);
+    const necesarios = [...new Set(plan.map((h) => h.interval))];
+
+    // Una serie por intervalo, no una por horizonte.
+    const series = {};
+    await Promise.all(necesarios.map(async (tf) => {
+      const r = await velasDelAnalisis({ symbol, interval: tf, demo, venues });
+      series[tf] = r;
+    }));
+
+    const base = series[interval] || series[necesarios[0]];
     const precio = Number.isFinite(livePrice) && livePrice > 0 ? livePrice : null;
 
     const predicciones = [];
-    for (const bloques of horizontes) {
-      predicciones.push({ bloques, ...(await predecirActivo({ candles, interval, precio, bloques })) });
+    for (const h of plan) {
+      const s = series[h.interval];
+      if (!s || !s.candles.length) continue;
+      predicciones.push({
+        bloques: h.bloques,
+        ms: h.ms,
+        desde: h.interval,
+        ...(await predecirActivo({ candles: s.candles, interval: h.interval, precio, bloques: h.bloques })),
+      });
     }
 
     sendJson(res, {
-      symbol, interval, source: fuente, fetchedAt,
-      precio: precio || candles[candles.length - 1].close,
+      symbol, interval, source: base.fuente, fetchedAt: base.fetchedAt,
+      precio: precio || base.candles[base.candles.length - 1].close,
       horizontes: predicciones,
       aviso: forecast.AVISO,
     });
@@ -437,18 +451,29 @@ app.get('/api/forecast', async (req, res) => {
 
 app.get('/api/stocks/forecast', async (req, res) => {
   const { symbol, interval, demo } = stockParams(req);
-  const pedido = Number(req.query.bloques);
-  const horizontes = Number.isFinite(pedido) && pedido > 0 ? [Math.min(pedido, 96)] : HORIZONTES;
 
   try {
-    const [{ candles }, clock] = await Promise.all([
-      stocks.getStockCandles({ symbol, interval, limit: 400, demo }),
+    const plan = planDeHorizontes(interval);
+    const necesarios = [...new Set(plan.map((h) => h.interval))];
+
+    const [series, clock] = await Promise.all([
+      Promise.all(necesarios.map((tf) => stocks.getStockCandles({ symbol, interval: tf, limit: 400, demo })))
+        .then((rs) => Object.fromEntries(rs.map((r, i) => [necesarios[i], r]))),
       stocks.getClock({ demo }).catch(() => null),
     ]);
 
+    const { candles } = series[interval] || series[necesarios[0]];
+
     const predicciones = [];
-    for (const bloques of horizontes) {
-      predicciones.push({ bloques, ...(await predecirActivo({ candles, interval, precio: null, bloques })) });
+    for (const h of plan) {
+      const s = series[h.interval];
+      if (!s || !s.candles.length) continue;
+      predicciones.push({
+        bloques: h.bloques,
+        ms: h.ms,
+        desde: h.interval,
+        ...(await predecirActivo({ candles: s.candles, interval: h.interval, precio: null, bloques: h.bloques })),
+      });
     }
 
     sendJson(res, {

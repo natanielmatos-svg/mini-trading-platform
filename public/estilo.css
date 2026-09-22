@@ -292,6 +292,7 @@ button.small { font-size: 11px; padding: 3px 8px; }
 .pred-tabla th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
 .pred-tabla td { font-variant-numeric: tabular-nums; border: 1px solid var(--line); padding: 5px 6px; }
 .pred-cuando { color: var(--muted); white-space: nowrap; }
+.pred-desde { color: #475569; font-size: 9px; margin-left: 4px; }
 .pred-banda { color: var(--text); }
 .pred-banda.ancha { color: var(--muted); }
 .pred-nota { font-weight: 600; text-align: center; white-space: nowrap; cursor: help; }

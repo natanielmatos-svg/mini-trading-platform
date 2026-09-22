@@ -217,3 +217,76 @@ test('el aviso de que esto NO predice un precio viaja con el motor', () => {
   assert.match(F.AVISO, /precio de ahora/);
   assert.match(F.AVISO, /calibración/);
 });
+
+// --- Horizontes en tiempo, no en bloques del gráfico ------------------------
+
+test('los plazos cortos se calculan con la serie que les corresponde', () => {
+  // El fallo de diseño: los horizontes iban en bloques del intervalo elegido,
+  // así que con el gráfico en 1h no había forma de preguntar por los próximos
+  // cinco minutos, que es justo el plazo en el que alguien mira la pantalla.
+  //
+  // Y no vale predecir cinco minutos con velas de una hora: sería inventarse
+  // una resolución que los datos no tienen.
+  const { planDeHorizontes } = F;
+
+  for (const grafico of ['1h', '15m', '1d']) {
+    const plan = planDeHorizontes(grafico);
+
+    // Están los cinco plazos cortos, y todos salen de velas de un minuto.
+    for (const ms of [60_000, 300_000, 900_000, 1_800_000, 3_600_000]) {
+      const h = plan.find((x) => x.ms === ms);
+      assert.ok(h, `${grafico}: falta el horizonte de ${ms / 60_000} min`);
+      assert.equal(h.interval, '1m', `${grafico}: ${ms / 60_000} min debería salir de velas de 1m`);
+    }
+
+    // Ordenados por tiempo y sin duplicados: con el gráfico en 15m, "1 bloque"
+    // son 15 minutos y eso ya lo cubre la serie de un minuto con mejor
+    // resolución.
+    const tiempos = plan.map((x) => x.ms);
+    assert.deepEqual(tiempos, [...tiempos].sort((a, b) => a - b), `${grafico}: desordenados`);
+    assert.equal(new Set(tiempos).size, tiempos.length, `${grafico}: horizontes duplicados`);
+  }
+});
+
+test('el gráfico aporta los plazos que la serie de un minuto no cubre', () => {
+  const { planDeHorizontes } = F;
+
+  const plan = planDeHorizontes('1h');
+  const largos = plan.filter((h) => h.interval === '1h');
+  assert.ok(largos.length >= 4, 'tiene que haber plazos largos del propio gráfico');
+  // Todos por encima de una hora, que es donde acaba la serie corta.
+  for (const h of largos) assert.ok(h.ms > 3_600_000, `${h.ms} ms no debería venir del gráfico`);
+
+  // Con el gráfico en 1 minuto no hay nada que añadir por arriba hasta pasar
+  // de la hora.
+  for (const h of planDeHorizontes('1m')) {
+    assert.ok(h.ms >= 60_000);
+  }
+});
+
+test('las bandas escalan con la raíz del tiempo sobre datos realistas', () => {
+  // En modo demo las bandas salen casi planas entre 1 y 60 minutos, y parece
+  // un fallo. No lo es: el generador de demostración es una onda suave, así
+  // que un movimiento de una hora NO es ocho veces el de un minuto. Con una
+  // serie que se comporta como un precio, sí.
+  let s = 12345;
+  let p = 86000;
+  let v = 0.0004;
+  const u = () => { s = (s * 1103515245 + 12345) % 2147483648; return s / 2147483648; };
+  const g = () => { const a = Math.max(u(), 1e-9); const b = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b); };
+
+  const velas = [];
+  for (let i = 0; i < 800; i++) {
+    v = Math.sqrt(3e-8 + 0.08 * (v * g()) ** 2 + 0.9 * v * v);
+    p *= Math.exp(v * g());
+    velas.push({ openTime: i * 60_000, open: p, high: p * 1.0002, low: p * 0.9998, close: p, volume: 10 });
+  }
+
+  const sigma1 = F.predecir(velas, { bloques: 1 }).sigmaHorizonte;
+  const sigma60 = F.predecir(velas, { bloques: 60 }).sigmaHorizonte;
+  const ratio = sigma60 / sigma1;
+
+  // Cerca de √60 = 7,75, y por DEBAJO: la reversión a la media descuenta algo
+  // cuando la volatilidad de ahora está por encima de la de largo plazo.
+  assert.ok(ratio > 6 && ratio < Math.sqrt(60) + 0.1, `ratio ${ratio}, esperado cerca de ${Math.sqrt(60)}`);
+});

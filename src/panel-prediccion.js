@@ -20,6 +20,14 @@ const MS = {
   '12h': 43200e3, '1d': 86400e3, '3d': 259200e3, '1w': 604800e3,
 };
 
+// Cuánto tiempo cubre un horizonte. `ms` viene del servidor desde que los
+// plazos cortos se calculan con velas de un minuto y no con las del gráfico:
+// sin él, "5 bloques" en un gráfico de 1h se leería como cinco horas cuando
+// son cinco minutos.
+function cuantoFalta(h, paso) {
+  return Number.isFinite(h.ms) ? h.ms : h.bloques * paso;
+}
+
 // Qué fiabilidad tiene un horizonte, a partir de su calibración medida.
 function nota(cal) {
   if (!cal || !cal.ok) return { clase: 'flat', texto: 'sin medir', detalle: cal ? cal.reason : '' };
@@ -67,7 +75,7 @@ function render(contenedor, datos, interval) {
 
     return `
       <tr>
-        <td class="pred-cuando">${formatDuration(h.bloques * paso)}</td>
+        <td class="pred-cuando" title="${h.desde ? `calculado con velas de ${h.desde}` : ''}">${formatDuration(cuantoFalta(h, paso))}${h.desde && h.desde !== interval ? ` <span class="pred-desde">de ${h.desde}</span>` : ''}</td>
         <td class="pred-banda">${formatPrice(lo50.price)} – ${formatPrice(hi50.price)}</td>
         <td class="pred-banda ancha">${formatPrice(lo.price)} – ${formatPrice(hi.price)}</td>
         <td class="pred-nota ${n.clase}" title="${n.detalle.replace(/"/g, '&quot;')}">${n.texto}</td>
@@ -127,14 +135,14 @@ function renderLinea(contenedor, datos, interval) {
   const lo = h.bandas.find((b) => b.q === 0.25);
   const hi = h.bandas.find((b) => b.q === 0.75);
   const n = nota(h.calibracion);
-  const cuando = formatDuration(h.bloques * (MS[interval] || 3600e3));
+  const cuando = formatDuration(cuantoFalta(h, MS[interval] || 3600e3));
 
   contenedor.innerHTML =
     `en ${cuando}, la mitad de las veces entre <strong>${formatPrice(lo.price)}</strong> y ` +
     `<strong>${formatPrice(hi.price)}</strong> · <span class="nota ${n.clase}" title="${n.detalle.replace(/"/g, '&quot;')}">acierta ${n.texto}</span>`;
 }
 
-const API = { render, renderLinea, nota, MS };
+const API = { render, renderLinea, nota, cuantoFalta, MS };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
 else globalThis.PanelPrediccion = API;

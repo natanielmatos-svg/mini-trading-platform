@@ -53,6 +53,15 @@
 const I = typeof module !== 'undefined' && module.exports ? require('./indicators') : globalThis.Indicators;
 const { quantile } = I;
 
+// Cuánto dura cada intervalo. En el navegador este módulo no planifica
+// horizontes —eso lo hace el servidor— así que la tabla va aquí y no se
+// arrastra una dependencia de klines.js, que sí sale a la red.
+const INTERVAL_MS = {
+  '1m': 60_000, '3m': 180_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000,
+  '1h': 3_600_000, '2h': 7_200_000, '4h': 14_400_000, '6h': 21_600_000,
+  '8h': 28_800_000, '12h': 43_200_000, '1d': 86_400_000, '3d': 259_200_000, '1w': 604_800_000,
+};
+
 // Lambda de RiskMetrics para datos diarios. Cuánto pesa el pasado: con 0,94,
 // la vela de hace 30 pesa un 16% de lo que pesa la última.
 const LAMBDA = 0.94;
@@ -308,6 +317,45 @@ function cuantilesConformes(candles, { bloques = 1, cuantiles = CUANTILES, calen
   };
 }
 
+// Los horizontes van en TIEMPO, no en bloques del gráfico.
+//
+// Antes eran bloques del intervalo elegido, así que con el gráfico en 1h no
+// había forma de preguntar por los próximos cinco minutos —que es justo el
+// plazo en el que alguien está mirando la pantalla—. Ahora la lista es de
+// duraciones, y cada una se calcula con la serie que le corresponde: los
+// plazos cortos salen de velas de un minuto, los largos del intervalo del
+// gráfico. Predecir cinco minutos con velas de una hora sería inventarse una
+// resolución que los datos no tienen.
+const CORTOS = [
+  { ms: 60_000, bloques: 1 },
+  { ms: 300_000, bloques: 5 },
+  { ms: 900_000, bloques: 15 },
+  { ms: 1_800_000, bloques: 30 },
+  { ms: 3_600_000, bloques: 60 },
+];
+
+// Y del intervalo del gráfico hacia arriba, en bloques suyos.
+const LARGOS = [1, 2, 4, 8, 12, 24];
+
+/**
+ * Qué horizontes tiene sentido pedir y de qué serie sale cada uno.
+ *
+ * Se descartan los que ya cubre la serie de un minuto: con el gráfico en 15m,
+ * "1 bloque" son 15 minutos y eso ya está, medido con mejor resolución.
+ */
+function planDeHorizontes(interval) {
+  const paso = INTERVAL_MS[interval] || 3_600_000;
+  const plan = CORTOS.map((c) => ({ ...c, interval: '1m', ms: c.ms }));
+  const cubierto = Math.max(...CORTOS.map((c) => c.ms));
+
+  for (const b of LARGOS) {
+    const ms = b * paso;
+    if (ms <= cubierto) continue;
+    plan.push({ ms, bloques: b, interval });
+  }
+  return plan.sort((a, b) => a.ms - b.ms);
+}
+
 // Viaja con cada respuesta. Quien consuma la API por su cuenta tiene que leer
 // esto antes de hacer nada con los números.
 const AVISO =
@@ -318,7 +366,8 @@ const AVISO =
   'contiene el 84%, es que a ese plazo el modelo se queda corto y hay que fiarse menos.';
 
 const API = {
-  predecir, probCierreEncima, cuantilesConformes, AVISO, ewmaSigma, estandarizados, rendimientos, curtosis,
+  predecir, probCierreEncima, cuantilesConformes, planDeHorizontes, AVISO,
+  CORTOS, LARGOS, INTERVAL_MS, ewmaSigma, estandarizados, rendimientos, curtosis,
   varianzaHorizonte, varianzaLargoPlazo,
   LAMBDA, MIN_MUESTRA, CUANTILES, PERSISTENCIA,
 };
