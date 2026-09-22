@@ -183,7 +183,10 @@ async function comprobarPrecios() {
 
   for (const v of out.venues) {
     if (v.usable) {
-      console.log(`  OK    ${v.label.padEnd(9)} ${v.pair.padEnd(9)} ${v.price} (${v.diff >= 0 ? '+' : ''}${v.diffPct}%) en ${v.elapsedMs} ms`);
+      console.log(
+        `  OK    ${v.label.padEnd(9)} ${v.pair.padEnd(9)} ${String(v.price).padEnd(11)} ` +
+          `(${v.diff >= 0 ? '+' : ''}${v.diffPct}%) ${String(v.source || '?').padEnd(17)} en ${v.elapsedMs} ms`
+      );
     } else {
       console.log(`  FALLO ${v.label.padEnd(9)} ${v.pair.padEnd(9)} ${trunc(v.error || 'sin precio utilizable')}`);
     }
@@ -198,7 +201,11 @@ async function comprobarPrecios() {
   if (out.used < out.venues.length) {
     console.log('  Aviso: falta algún mercado, así que el consolidado es menos robusto de lo previsto.');
   }
-  console.log('  Parte de esa diferencia es que Binance cotiza en USDT y los otros dos en dólares.');
+  const porOperacion = out.venues.filter((v) => v.usable && v.source !== 'libro');
+  if (porOperacion.length) {
+    console.log(`  Ojo: ${porOperacion.map((v) => v.label).join(', ')} sin libro; su precio es la última operación y puede ser viejo.`);
+  }
+  console.log('  Se compara el punto medio del libro de cada casa, que siempre es de ahora.');
 
   return out.used >= 2;
 }

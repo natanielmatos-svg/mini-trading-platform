@@ -13,7 +13,7 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet (también el gráfico)
-npm test             # 193 tests, sin red
+npm test             # 195 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -24,7 +24,7 @@ Windows (PowerShell incluido). Hace falta Node 20 o superior: `node -v`.
 ### Cómo se prueba
 
 ```bash
-npm test          # 193 tests, sin red, en unos cinco segundos
+npm test          # 195 tests, sin red, en unos cinco segundos
 npm run smoke     # llama a las APIs de verdad — la única prueba que las valida
 ```
 
@@ -79,12 +79,18 @@ precio viejo o devuelva una barbaridad no puede arrastrar el número, cosa que
 a una media le bastaría. Con dos, la mediana es la media; con uno, se dice que
 es uno solo en vez de fingir consenso.
 
+Se compara **el punto medio del libro** de cada casa, no su última operación.
+La última operación de un mercado poco activo puede ser de hace minutos, y
+compararla contra el libro vivo de otro no mide una diferencia de precio: mide
+que uno lleva rato sin operar. El libro siempre es de ahora. Si una casa no
+publica libro, se usa su última operación y **se dice en el desglose**.
+
 Lo más útil del panel no es el número sino **el desglose**: cada mercado con
-su par y su diferencia respecto al consolidado. Y una advertencia que va en la
-propia interfaz: **parte de esa diferencia no es desacuerdo sobre el activo**,
-es que Binance cotiza contra USDT y Kraken y Coinbase contra dólares, y USDT
-no vale exactamente un dólar. Esconder eso detrás de una media daría una falsa
-sensación de precisión.
+su par y su diferencia respecto al consolidado. La diferencia de moneda
+—Binance cotiza contra USDT y los otros dos contra dólares— puede explicar
+parte de la separación, aunque en la primera medición real con USDT en
+paridad no explicaba nada: Binance y Kraken coincidían al 0,0003% y el que se
+apartaba era Coinbase.
 
 | | |
 |---|---|
@@ -650,5 +656,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  193 tests, sin red
+test/                  195 tests, sin red
 ```

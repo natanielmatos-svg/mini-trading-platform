@@ -750,7 +750,7 @@ function renderVenues() {
       .map((v) => {
         const estado = !v.usable ? (v.error ? 'caído' : 'viejo') : '';
         return `<div class="venue ${v.usable ? '' : 'off'}">
-          <span class="v-name">${v.label}<em>${v.pair}</em></span>
+          <span class="v-name">${v.label}<em>${v.pair}${v.source && v.source !== 'libro' ? ' · ' + v.source : ''}</em></span>
           <span class="v-price">${v.price > 0 ? formatPrice(v.price) : '—'}</span>
           <span class="v-diff ${v.diff > 0 ? 'up' : v.diff < 0 ? 'down' : ''}">${
             estado || (v.diff === null ? '' : `${v.diff >= 0 ? '+' : ''}${num(v.diffPct, 3)}%`)
@@ -758,7 +758,7 @@ function renderVenues() {
         </div>`;
       })
       .join('') +
-    `<p class="venue-note">Mediana de los mercados frescos. El análisis de ruptura usa el precio de Binance, que es de donde salen las velas.</p>` +
+    `<p class="venue-note">Mediana del punto medio del libro de cada mercado, que siempre es de ahora — la última operación de un mercado poco activo puede ser de hace minutos. El análisis de ruptura usa el precio de Binance, que es de donde salen las velas.</p>` +
     `</div>`;
 
   const toggle = $('venueToggle');

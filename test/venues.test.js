@@ -40,7 +40,9 @@ const COINBASE_OK = {
     best_ask: '86644.60',
   },
 };
-const BINANCE_OK = { body: { symbol: 'BTCUSDT', price: '86620.10000000' } };
+const BINANCE_OK = {
+  body: { symbol: 'BTCUSDT', bidPrice: '86620.00000000', bidQty: '1.5', askPrice: '86620.20000000', askQty: '0.9' },
+};
 
 let venues;
 let consolidated;
@@ -87,9 +89,10 @@ test('cada casa recibe el par en su propia notación', () => {
 
 // --- Kraken ----------------------------------------------------------------
 
-test('Kraken: el precio sale de `c`, aunque la clave del par sea la interna', async () => {
-  const { price, pair } = await venues.kraken.fetchPrice({ symbol: 'BTCUSDT' });
-  assert.strictEqual(price, 86650);
+test('Kraken: el precio sale del libro, aunque la clave del par sea la interna', async () => {
+  const { price, pair, source } = await venues.kraken.fetchPrice({ symbol: 'BTCUSDT' });
+  assert.strictEqual(price, 86650, 'punto medio de 86649,9 y 86650,1');
+  assert.strictEqual(source, 'libro');
   assert.strictEqual(pair, 'BTCUSD');
   assert.strictEqual(estado.peticiones[0].path, '/0/public/Ticker');
   assert.strictEqual(estado.peticiones[0].params.pair, 'BTCUSD');
@@ -100,25 +103,43 @@ test('Kraken: un error suyo viene con un 200 y el fallo dentro; no puede colarse
   await assert.rejects(() => venues.kraken.fetchPrice({ symbol: 'NOEXISTE' }), /Unknown asset pair/);
 });
 
-test('Kraken: sin último operado se usa el punto medio del libro', async () => {
-  estado.kraken = { status: 200, body: { error: [], result: { XXBTZUSD: { a: ['86651'], b: ['86649'] } } } };
-  const { price } = await venues.kraken.fetchPrice({ symbol: 'BTCUSDT' });
-  assert.strictEqual(price, 86650);
+test('Kraken: sin libro se cae a la última operación y se dice', async () => {
+  estado.kraken = { status: 200, body: { error: [], result: { XXBTZUSD: { c: ['86500', '0.1'] } } } };
+  const { price, source } = await venues.kraken.fetchPrice({ symbol: 'BTCUSDT' });
+  assert.strictEqual(price, 86500);
+  assert.strictEqual(source, 'última operación');
 });
 
 // --- Coinbase --------------------------------------------------------------
 
-test('Coinbase: el precio sale de la última operación', async () => {
-  const { price, pair } = await venues.coinbase.fetchPrice({ symbol: 'BTCUSDT' });
-  assert.strictEqual(price, 86644.32);
+test('Coinbase: manda el libro sobre la última operación', async () => {
+  // La respuesta trae las dos cosas: 86644,32 operado y 86644,00/86644,60 en
+  // el libro. Gana el libro, porque la operación puede ser de hace minutos.
+  const { price, pair, source } = await venues.coinbase.fetchPrice({ symbol: 'BTCUSDT' });
+  assert.strictEqual(price, 86644.3);
+  assert.strictEqual(source, 'libro');
   assert.strictEqual(pair, 'BTC-USD');
   assert.match(estado.peticiones[0].path, /\/api\/v3\/brokerage\/market\/products\/BTC-USD\/ticker$/);
 });
 
-test('Coinbase: sin operaciones se usa el punto medio del libro', async () => {
-  estado.coinbase = { status: 200, body: { trades: [], best_bid: '86644.00', best_ask: '86644.60' } };
-  const { price } = await venues.coinbase.fetchPrice({ symbol: 'BTCUSDT' });
-  assert.strictEqual(price, 86644.3);
+test('Coinbase: sin libro se cae a la última operación', async () => {
+  estado.coinbase = { status: 200, body: { trades: [{ price: '86644.32' }] } };
+  const { price, source } = await venues.coinbase.fetchPrice({ symbol: 'BTCUSDT' });
+  assert.strictEqual(price, 86644.32);
+  assert.strictEqual(source, 'última operación');
+});
+
+test('un libro cruzado no se usa: algo va mal en esa respuesta', () => {
+  const { price, source } = venues.midOrLast({ bid: '86651', ask: '86649', last: '86500' });
+  assert.strictEqual(price, 86500, 'con la venta por debajo de la compra, mejor la operación');
+  assert.strictEqual(source, 'última operación');
+});
+
+test('Binance: se pregunta al libro, no al último precio', async () => {
+  const { price, source } = await venues.binance.fetchPrice({ symbol: 'BTCUSDT' });
+  assert.strictEqual(price, 86620.1);
+  assert.strictEqual(source, 'libro');
+  assert.strictEqual(estado.peticiones[0].path, '/api/v3/ticker/bookTicker');
 });
 
 test('Coinbase: un 404 se propaga como error, no como precio cero', async () => {
@@ -135,7 +156,7 @@ test('se pregunta a las tres casas y se consolida', async () => {
 
   const out = consolidated.consolidate(quotes, { now: 1_000 });
   assert.strictEqual(out.used, 3);
-  assert.strictEqual(out.price, 86644.32, 'la mediana de 86620,10 / 86644,32 / 86650');
+  assert.strictEqual(out.price, 86644.3, 'la mediana de 86620,10 / 86644,30 / 86650');
   assert.ok(out.spread > 0 && out.spreadPct < 0.1);
 });
 
@@ -155,7 +176,7 @@ test('una casa caída no deja sin precio a las otras dos', async () => {
 });
 
 test('una respuesta sin precio utilizable cuenta como caída, no como cero', async () => {
-  estado.binance = { status: 200, body: { symbol: 'BTCUSDT', price: 'no-es-un-numero' } };
+  estado.binance = { status: 200, body: { symbol: 'BTCUSDT', bidPrice: 'no-es-un-numero', askPrice: '' } };
   const quotes = await venues.fetchAllPrices({ symbol: 'BTCUSDT', now: 1_000 });
   const rota = quotes.find((q) => q.id === 'binance');
   assert.strictEqual(rota.ok, false);
@@ -168,7 +189,7 @@ test('en demo no se llama a ninguna casa y las tres difieren un poco', async () 
 
   assert.strictEqual(estado.peticiones.length, 0, 'demo no sale a Internet');
   assert.strictEqual(quotes.length, 3);
-  assert.ok(quotes.every((q) => q.price > 0 && q.demo));
+  assert.ok(quotes.every((q) => q.price > 0 && q.demo && q.source === 'libro'));
 
   const out = consolidated.consolidate(quotes);
   assert.ok(out.spreadPct > 0, 'tienen que diferir: si no, el panel no enseñaría nada');

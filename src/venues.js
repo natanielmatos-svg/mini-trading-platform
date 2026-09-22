@@ -22,12 +22,20 @@ function baseAsset(symbol) {
   return String(symbol || '').toUpperCase().replace(/(USDT|USDC|BUSD|FDUSD|USD)$/, '') || 'BTC';
 }
 
-function firstFinite(...values) {
-  for (const v of values) {
-    const n = Number(v);
-    if (Number.isFinite(n) && n > 0) return n;
-  }
-  return null;
+function toNum(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// Punto medio si hay libro; si no, la última operación, diciendo cuál se usó.
+function midOrLast({ bid, ask, last }) {
+  const b = toNum(bid);
+  const a = toNum(ask);
+  if (b && a && a >= b) return { price: (b + a) / 2, source: 'libro' };
+
+  const l = toNum(last);
+  if (l) return { price: l, source: 'última operación' };
+  return { price: null, source: null };
 }
 
 // --- Binance ---------------------------------------------------------------
@@ -38,12 +46,14 @@ const binance = {
 
   async fetchPrice({ symbol, timeoutMs = 6000 }) {
     const pair = binance.pairFor(symbol);
-    const data = await fetchJson(`${BINANCE_API}/api/v3/ticker/price`, {
+    // bookTicker y no ticker/price: aquél da la mejor compra y venta ahora,
+    // éste sólo el último operado.
+    const data = await fetchJson(`${BINANCE_API}/api/v3/ticker/bookTicker`, {
       searchParams: { symbol: pair },
       timeoutMs,
       retries: 1,
     });
-    return { price: firstFinite(data && data.price), pair };
+    return { ...midOrLast({ bid: data && data.bidPrice, ask: data && data.askPrice }), pair };
   },
 };
 
@@ -69,12 +79,12 @@ const kraken = {
     // La clave del resultado es su nombre interno del par (XXBTZUSD para
     // BTCUSD), que no coincide con lo que se pidió: se coge el primero.
     const entry = data && data.result ? Object.values(data.result)[0] : null;
-    // c = [último precio, volumen de esa operación]
-    const last = entry && Array.isArray(entry.c) ? entry.c[0] : null;
-    const bid = entry && Array.isArray(entry.b) ? entry.b[0] : null;
+    // a = mejor venta, b = mejor compra, c = [último operado, volumen]
     const ask = entry && Array.isArray(entry.a) ? entry.a[0] : null;
+    const bid = entry && Array.isArray(entry.b) ? entry.b[0] : null;
+    const last = entry && Array.isArray(entry.c) ? entry.c[0] : null;
 
-    return { price: firstFinite(last, bid && ask ? (Number(bid) + Number(ask)) / 2 : null), pair };
+    return { ...midOrLast({ bid, ask, last }), pair };
   },
 };
 
@@ -94,11 +104,9 @@ const coinbase = {
     });
 
     const trade = data && Array.isArray(data.trades) ? data.trades[0] : null;
-    const bid = data && data.best_bid;
-    const ask = data && data.best_ask;
 
     return {
-      price: firstFinite(trade && trade.price, bid && ask ? (Number(bid) + Number(ask)) / 2 : null),
+      ...midOrLast({ bid: data && data.best_bid, ask: data && data.best_ask, last: trade && trade.price }),
       pair,
     };
   },
@@ -131,6 +139,7 @@ function demoQuotes({ symbol, now }) {
       ...venue.meta,
       ok: base !== null,
       price: base === null ? null : base * (1 + desvio + ruido),
+      source: 'libro',
       pair: venue.pairFor(symbol),
       at: now,
       elapsedMs: 0,
@@ -148,9 +157,9 @@ async function fetchAllPrices({ symbol = 'BTCUSDT', timeoutMs = 6000, venues = n
     selected.map(async (venue) => {
       const startedAt = Date.now();
       try {
-        const { price, pair } = await venue.fetchPrice({ symbol, timeoutMs });
+        const { price, pair, source } = await venue.fetchPrice({ symbol, timeoutMs });
         if (!(price > 0)) throw new Error('respuesta sin precio utilizable');
-        return { ...venue.meta, ok: true, price, pair, at: now, elapsedMs: Date.now() - startedAt };
+        return { ...venue.meta, ok: true, price, pair, source, at: now, elapsedMs: Date.now() - startedAt };
       } catch (err) {
         return {
           ...venue.meta,
@@ -165,4 +174,4 @@ async function fetchAllPrices({ symbol = 'BTCUSDT', timeoutMs = 6000, venues = n
   );
 }
 
-module.exports = { VENUES, byId, listVenues, fetchAllPrices, demoQuotes, baseAsset, binance, kraken, coinbase };
+module.exports = { VENUES, byId, listVenues, fetchAllPrices, demoQuotes, midOrLast, baseAsset, binance, kraken, coinbase };
