@@ -238,6 +238,62 @@ Las velas históricas vienen de `/api/klines`, que las cachea entre 5 y 60
 segundos según el timeframe y agrupa las peticiones simultáneas en una sola
 llamada saliente.
 
+### El análisis corre sobre los mercados que elijas
+
+Hasta hace poco el análisis salía **entero de Binance** —niveles, ATR y muestra
+de excursiones— mientras el titular enseñaba la mediana de varios mercados. Eso
+es mirar un precio y analizar otro: la distancia a un nivel, que es de lo que
+depende una señal de compra, se medía en una escala distinta de la que se veía.
+
+Ahora las velas del timeframe del gráfico se consolidan igual que el precio:
+cada mercado da las suyas, se pasan todas a dólares y para cada instante se
+toma la mediana de aperturas, máximos, mínimos y cierres.
+
+No todos los mercados publican todos los intervalos:
+
+| | 1m | 15m | 1h | 4h | 12h | 1d | 1w |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| Binance | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Kraken | ✓ | ✓ | ✓ | ✓ | · | ✓ | ✓ |
+| Coinbase | ✓ | ✓ | ✓ | · | · | ✓ | · |
+| Gemini | ✓ | ✓ | ✓ | · | · | ✓ | · |
+
+El que no puede, no contribuye, y se dice cuál. Con menos de dos mercados no
+hay mediana —sería un mercado disfrazado de consenso— así que se vuelve a
+Binance y el estado lo explica: «Binance (sin consolidar: …)».
+
+**Consolidar no es cosmético.** Medido sobre datos sintéticos con ruido por
+mercado del 0,04% por vela:
+
+| | Sólo Binance | Consolidado | |
+|---|---|---|---|
+| ATR(14) | 411,26 | 383,61 | **−6,7%** |
+| Volatilidad anual | 27,0% | 24,0% | **−11,0%** |
+
+La mediana cancela el ruido propio de cada casa, y el ATR es el denominador de
+toda distancia a un nivel: si baja, la misma distancia en dólares pasa a ser
+más ATR y la probabilidad cambia. La magnitud real depende del ruido real;
+`npm run smoke` la mide con mercados de verdad y lo imprime.
+
+### Volatilidad
+
+`src/volatilidad.js` mide la volatilidad **realizada**: la desviación típica de
+los rendimientos logarítmicos, escalada a un año, sobre las últimas 30 velas.
+
+Un 40% anual no dice nada suelto, así que se compara con las 200 ventanas
+anteriores **del mismo activo** y se etiqueta el régimen por cuartiles: por
+debajo del 25%, calma; por encima del 75%, tensión.
+
+Y una medida que no puede calcular quien mira un solo exchange: **la dispersión
+entre mercados**, cuánto discrepan las casas sobre el mismo activo. Sube cuando
+el mercado se tensiona y cuando alguna se queda descolgada.
+
+> **No es un índice de volatilidad implícita.** El VIX y el índice de
+> volatilidad de CF Benchmarks salen del precio de las opciones y dicen lo que
+> el mercado paga **hoy** por cubrirse del mes que viene. Aquí no hay datos de
+> opciones: esto mira al pasado. El aviso viaja con el número en la interfaz,
+> porque confundirlos es fácil y caro.
+
 ### ¿Rompe esta vela? El método
 
 La respuesta honesta a "¿va a romper?" no es un oráculo, es **una frecuencia
@@ -660,6 +716,13 @@ pudo contrastar con Binance.
 }
 ```
 
+### `GET /api/klines/consolidadas`
+
+`?symbol=BTCUSDT&interval=1h&venues=binance,kraken`. Las mismas velas que usa
+el análisis: la mediana de los mercados pedidos. Devuelve `source`
+(`consolidado` o `binance`) y `consolidado.venues`, que dice cuáles entraron y
+por qué no entraron los demás.
+
 ### `GET /api/stocks/symbols`
 
 Los valores del desplegable, agrupados, más `conClave` y `feed`: la interfaz
@@ -852,6 +915,9 @@ src/
   indicators.js        EMA, ATR, RSI, pivotes, niveles — servidor Y navegador
   format.js            formato de precios y porcentajes — servidor Y navegador
   signals.js           compras y ventas — servidor Y navegador
+  velas-mercados.js    velas de cada casa: Binance, Kraken, Coinbase, Gemini
+  velas-consolidadas.js la mediana de esas velas, instante a instante
+  volatilidad.js       volatilidad realizada y dispersión entre mercados
   chart.js             el gráfico de velas — las DOS páginas
   precio-vivo.js       calma el titular sin tocar el precio del análisis
   panel-ruptura.js     el panel «¿Rompe esta vela?» — las DOS páginas
@@ -886,5 +952,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  300 tests, sin red
+test/                  325 tests, sin red
 ```

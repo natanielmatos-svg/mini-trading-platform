@@ -18,6 +18,8 @@ const { getKlines, BINANCE_API } = require('../src/klines');
 const { analyzeBreakout } = require('../src/breakout');
 const { evaluateSignals } = require('../src/signals');
 const { fetchAllPrices, VENUES } = require('../src/venues');
+const { getVelasConsolidadas } = require('../src/velas-consolidadas');
+const volatilidad = require('../src/volatilidad');
 const alpaca = require('../src/alpaca');
 const stocks = require('../src/stocks');
 const { consolidate } = require('../src/consolidated');
@@ -315,11 +317,60 @@ async function comprobarAcciones() {
   }
 }
 
+// Consolidar las velas, ¿cambia el análisis o es cosmético?
+//
+// Sobre datos sintéticos el ATR bajaba un 6,7% y la volatilidad un 11%: la
+// mediana cancela el ruido propio de cada casa, y el ATR es el denominador de
+// toda distancia a un nivel. Pero el ruido que puse era el que me inventé.
+// Esto lo mide con mercados de verdad, que es la única forma de saberlo.
+async function compararConsolidado() {
+  try {
+    const [soloBinance, consolidado] = await Promise.all([
+      getKlines({ symbol: 'BTCUSDT', interval: '1h', limit: 400 }),
+      getVelasConsolidadas({ symbol: 'BTCUSDT', interval: '1h', limit: 400 }),
+    ]);
+
+    if (!consolidado.ok) {
+      console.log(`  AVISO sin consolidado: ${consolidado.motivo}`);
+      for (const v of consolidado.venues.filter((x) => !x.usado)) console.log(`        ${v.label}: ${v.motivo}`);
+      return;
+    }
+
+    const usados = consolidado.venues.filter((v) => v.usado).map((v) => v.label).join(', ');
+    console.log(`  OK    Velas consolidadas: ${consolidado.candles.length} de ${consolidado.usados} mercados (${usados})`);
+    for (const v of consolidado.venues.filter((x) => !x.usado)) console.log(`        fuera ${v.label}: ${v.motivo}`);
+
+    const a = analyzeBreakout(soloBinance.candles, { interval: '1h' });
+    const b = analyzeBreakout(consolidado.candles, { interval: '1h' });
+    if (!a.ok || !b.ok) return;
+
+    const va = volatilidad.medir(soloBinance.candles, '1h');
+    const vb = volatilidad.medir(consolidado.candles, '1h');
+    const dif = (x, y) => (x && y ? `${((y - x) / x) * 100 >= 0 ? '+' : ''}${num(((y - x) / x) * 100, 2)}%` : '—');
+
+    console.log('\n        qué cambia al consolidar     Binance    consolidado   diferencia');
+    console.log(`        ATR(14)                  ${formatPrice(a.atr).padStart(11)} ${formatPrice(b.atr).padStart(14)} ${dif(a.atr, b.atr).padStart(12)}`);
+    if (a.up && b.up) {
+      console.log(`        nivel al alza            ${formatPrice(a.up.level).padStart(11)} ${formatPrice(b.up.level).padStart(14)} ${dif(a.up.level, b.up.level).padStart(12)}`);
+      console.log(`        probabilidad al alza     ${(num(a.up.probability * 100, 1) + '%').padStart(11)} ${(num(b.up.probability * 100, 1) + '%').padStart(14)} ${dif(a.up.probability, b.up.probability).padStart(12)}`);
+    }
+    if (va.ok && vb.ok) {
+      console.log(`        volatilidad anual        ${(num(va.anualizada * 100, 1) + '%').padStart(11)} ${(num(vb.anualizada * 100, 1) + '%').padStart(14)} ${dif(va.anualizada, vb.anualizada).padStart(12)}`);
+      console.log(`        régimen                  ${va.regimen.padStart(11)} ${vb.regimen.padStart(14)}`);
+    }
+    console.log('');
+  } catch (err) {
+    console.log(`  FALLO comparación consolidada: ${trunc(err.message)}`);
+  }
+}
+
 async function main() {
   const preciosOk = await comprobarPrecios();
   console.log('');
   const mercadoOk = await comprobarMercado();
   console.log('');
+  console.log('Consolidando velas de los mercados al contado...\n');
+  await compararConsolidado();
   console.log('Consultando Alpaca (acciones)...\n');
   const accionesOk = await comprobarAcciones();
   console.log('');

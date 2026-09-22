@@ -23,6 +23,8 @@ const { analyzeBreakout } = require('./src/breakout');
 const { MarketStream, sseClient } = require('./src/stream');
 const { verifySymbols, groups } = require('./src/symbols');
 const { fetchAllPrices, listVenues, parseVenues } = require('./src/venues');
+const { getVelasConsolidadas } = require('./src/velas-consolidadas');
+const volatilidad = require('./src/volatilidad');
 const stocks = require('./src/stocks');
 const alpaca = require('./src/alpaca');
 const { consolidate } = require('./src/consolidated');
@@ -55,7 +57,7 @@ app.use((req, res, next) => {
 // sola tabla y un solo modo de calmar el precio en vivo.
 // Lista blanca explícita y no `express.static('src')`: ahí dentro están
 // también los proveedores y la orquestación.
-const SHARED_MODULES = ['indicators.js', 'format.js', 'signals.js', 'chart.js', 'panel-ruptura.js', 'avisos.js', 'tabla-mtf.js', 'precio-vivo.js'];
+const SHARED_MODULES = ['indicators.js', 'format.js', 'signals.js', 'chart.js', 'panel-ruptura.js', 'avisos.js', 'tabla-mtf.js', 'precio-vivo.js', 'volatilidad.js'];
 
 app.get('/lib/:file', (req, res) => {
   if (!SHARED_MODULES.includes(req.params.file)) {
@@ -234,22 +236,113 @@ app.get('/api/price', async (req, res) => {
   }
 });
 
+// De dónde salen las velas del análisis.
+//
+// Por defecto, de la mediana de los mercados elegidos: si el titular enseña un
+// precio consolidado y el análisis mide sobre Binance, la distancia al nivel
+// —que es de lo que depende una señal de compra— está en otra escala que el
+// precio que se está mirando.
+//
+// Si no hay consolidado utilizable se vuelve a Binance y se DICE cuál se usó,
+// en vez de servir una serie coja o callarse el cambio.
+async function velasDelAnalisis({ symbol, interval, demo, venues, limit = 400 }) {
+  if (demo) {
+    const { candles, source, fetchedAt } = await getKlines({ symbol, interval, limit, demo });
+    return { candles, fuente: source, fetchedAt, consolidado: null };
+  }
+
+  const consolidado = await getVelasConsolidadas({ symbol, interval, limit, venues }).catch((err) => ({
+    ok: false,
+    candles: [],
+    venues: [],
+    usados: 0,
+    motivo: err.message,
+  }));
+
+  if (consolidado.ok) {
+    return {
+      candles: consolidado.candles,
+      fuente: 'consolidado',
+      fetchedAt: Date.now(),
+      consolidado: { usados: consolidado.usados, venues: consolidado.venues, stable: consolidado.stable, motivo: null },
+    };
+  }
+
+  const { candles, source, fetchedAt } = await getKlines({ symbol, interval, limit, demo });
+  return {
+    candles,
+    fuente: source,
+    fetchedAt,
+    consolidado: { usados: consolidado.usados, venues: consolidado.venues, stable: null, motivo: consolidado.motivo },
+  };
+}
+
+// La volatilidad va como una señal más del contexto, que es donde la interfaz
+// ya sabe pintar cosas así, y el detalle completo viaja aparte para quien
+// quiera el número. Lo usan las dos páginas: una vela de Apple se mueve mucho
+// o poco por las mismas razones que una de bitcoin.
+function conVolatilidad(analysis, candles, interval) {
+  const vol = volatilidad.medir(candles, interval);
+  if (!vol.ok) return { ok: false, reason: vol.reason };
+  if (!analysis.ok) return vol;
+
+  analysis.context = [
+    ...(analysis.context || []),
+    {
+      // "Volatilidad" a secas ya lo usa el factor del ATR contra su media, que
+      // dice otra cosa: si la vela de AHORA se mueve más que las últimas 50.
+      // Éste sitúa el régimen en el histórico largo. Dos nombres iguales en la
+      // misma lista sólo confunden.
+      label: 'Volatilidad anualizada',
+      lean: 'neutral',
+      text:
+        `${(vol.anualizada * 100).toFixed(vol.anualizada < 0.1 ? 1 : 0)}% anual realizada, en ` +
+        `${vol.regimen}${vol.percentil !== null ? ` (percentil ${Math.round(vol.percentil * 100)})` : ''}. ` +
+        (vol.regimen === 'tensión'
+          ? 'Con la volatilidad alta los niveles se rompen más, y también se devuelven más.'
+          : vol.regimen === 'calma'
+            ? 'Con la volatilidad baja hacen falta menos recorridos grandes, así que las rupturas son más raras.'
+            : 'Ni calma ni tensión: el recorrido típico es el de siempre.'),
+    },
+  ];
+  return vol;
+}
+
 // Análisis de ruptura de la vela en curso: niveles, distancia en ATR y la
 // frecuencia histórica de recorridos equivalentes. El método está explicado en
 // la cabecera de src/breakout.js y en el README.
 app.get('/api/breakout', async (req, res) => {
   const { symbol, interval, demo } = marketParams(req);
   const livePrice = Number(req.query.price);
+  const venues = parseVenues(req.query.venues);
 
   try {
-    const { candles, source, fetchedAt } = await getKlines({ symbol, interval, limit: 400, demo });
+    const { candles, fuente, fetchedAt, consolidado } = await velasDelAnalisis({ symbol, interval, demo, venues });
     const analysis = analyzeBreakout(candles, {
       interval,
       livePrice: Number.isFinite(livePrice) && livePrice > 0 ? livePrice : null,
     });
-    sendJson(res, { symbol, interval, source, fetchedAt, ...analysis });
+
+    const vol = conVolatilidad(analysis, candles, interval);
+    sendJson(res, { symbol, interval, source: fuente, fetchedAt, consolidado, volatilidad: vol, ...analysis });
   } catch (err) {
     marketError(res, err, '/api/breakout');
+  }
+});
+
+// Las mismas velas que usa el análisis, para el gráfico. Sin esto el gráfico
+// pintaría Binance y el panel hablaría de niveles consolidados: dos escalas en
+// la misma pantalla.
+app.get('/api/klines/consolidadas', async (req, res) => {
+  const { symbol, interval, demo } = marketParams(req);
+  const limit = parseLimit(req.query.limit);
+  const venues = parseVenues(req.query.venues);
+
+  try {
+    const { candles, fuente, fetchedAt, consolidado } = await velasDelAnalisis({ symbol, interval, demo, venues, limit });
+    sendJson(res, { symbol, interval, source: fuente, fetchedAt, consolidado, count: candles.length, candles });
+  } catch (err) {
+    marketError(res, err, '/api/klines/consolidadas');
   }
 });
 
@@ -366,7 +459,8 @@ app.get('/api/stocks/breakout', async (req, res) => {
       mercadoCerrado: Boolean(clock) && !clock.isOpen,
     });
 
-    sendJson(res, { symbol, interval, source, fetchedAt, aviso: aviso || null, clock, ...analysis });
+    const vol = conVolatilidad(analysis, candles, interval);
+    sendJson(res, { symbol, interval, source, fetchedAt, aviso: aviso || null, clock, volatilidad: vol, ...analysis });
   } catch (err) {
     marketError(res, err, '/api/stocks/breakout');
   }

@@ -183,7 +183,20 @@ async function getJson(url) {
   return resp.json();
 }
 
+// Los mercados elegidos viajan en cada petición: el análisis tiene que salir
+// de las mismas casas que el titular, o se mide la distancia a un nivel en una
+// escala distinta de la que se está mirando.
+function paramMercados() {
+  return state.mercados && state.mercados.length ? `&venues=${state.mercados.join(',')}` : '';
+}
+
 function klinesUrl(interval, limit = CANDLES) {
+  // El timeframe del gráfico va consolidado; los de la tabla multi-timeframe
+  // no, porque son una lectura de tendencia y no de niveles, y consolidar
+  // cuatro marcos más multiplicaría por cinco las llamadas salientes.
+  if (interval === state.interval) {
+    return `/api/klines/consolidadas?symbol=${encodeURIComponent(state.symbol)}&interval=${interval}&limit=${limit}${paramMercados()}`;
+  }
   return `/api/klines?symbol=${encodeURIComponent(state.symbol)}&interval=${interval}&limit=${limit}`;
 }
 
@@ -237,6 +250,7 @@ async function loadAll({ silent = false } = {}) {
     state.candles = byInterval[state.interval].candles;
     state.source = byInterval[state.interval].source;
     state.fetchedAt = byInterval[state.interval].fetchedAt;
+    state.consolidado_velas = byInterval[state.interval].consolidado || null;
     state.mtf = Object.fromEntries(MTF.map((tf) => [tf, byInterval[tf].candles]));
     state.failures = 0;
 
@@ -256,7 +270,7 @@ async function loadAll({ silent = false } = {}) {
 async function loadBreakout() {
   try {
     const price = state.live ? state.live.close : null;
-    const url = `/api/breakout?symbol=${encodeURIComponent(state.symbol)}&interval=${state.interval}${price ? `&price=${price}` : ''}`;
+    const url = `/api/breakout?symbol=${encodeURIComponent(state.symbol)}&interval=${state.interval}${price ? `&price=${price}` : ''}${paramMercados()}`;
     state.breakout = await getJson(url);
     state.breakoutPriceAtFetch = state.breakout.price;
   } catch (err) {
@@ -492,7 +506,12 @@ function setStatus(text, isError = false) {
   const parts = [];
   if (text) parts.push(text);
   if (state.fetchedAt) {
-    const origen = state.source === 'demo' ? 'datos de ejemplo' : 'Binance';
+    const c = state.consolidado_velas;
+    const origen =
+      state.source === 'demo' ? 'datos de ejemplo'
+        : state.source === 'consolidado' ? `mediana de ${c.usados} mercados`
+          : c && c.motivo ? `Binance (sin consolidar: ${c.motivo})`
+            : 'Binance';
     parts.push(`${state.candles.length} velas de ${state.interval} · ${origen} · actualizado ${fmtHora(state.fetchedAt)}`);
   }
   el.status.textContent = parts.join('\n');
@@ -578,7 +597,7 @@ function renderVenues() {
   el.venues.innerHTML =
     `<button class="venue-summary ${c && c.price > 0 ? '' : 'malo'}" id="venueToggle" aria-expanded="false">${resumen}</button>` +
     `<div class="venue-list" hidden>${filas}${detalleFallos}${notaConversion}` +
-    `<p class="venue-note">Mediana del punto medio del libro de cada mercado, que siempre es de ahora — la última operación de un mercado poco activo puede ser de hace minutos. El análisis de ruptura usa el precio de Binance, que es de donde salen las velas.</p>` +
+    `<p class="venue-note">Mediana del punto medio del libro de cada mercado, que siempre es de ahora — la última operación de un mercado poco activo puede ser de hace minutos. El análisis de ruptura usa estas mismas casas: sus velas se consolidan con la misma mediana, así que los niveles están en la escala del precio que ves.</p>` +
     `</div>`;
 
   const toggle = $('venueToggle');
@@ -610,6 +629,10 @@ function renderVenues() {
       state.mercados = igualQueDefecto ? null : siguiente;
       saveMercados();
       loadConsolidado();
+      // Las velas del análisis salen de estas mismas casas: cambiar la
+      // selección y dejar el análisis como estaba sería justo la
+      // incoherencia que esto viene a quitar.
+      loadAll({ silent: true });
     });
   }
 }

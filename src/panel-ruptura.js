@@ -126,6 +126,35 @@ function sideHtml(side, title, cls) {
     </div>`;
 }
 
+// La volatilidad, con su advertencia. Va en su propio desplegable y no
+// mezclada con el contexto porque la confusión con el VIX es demasiado fácil
+// de cometer, y aquí se mide otra cosa.
+function volatilidadHtml(b) {
+  const v = b.volatilidad;
+  if (!v || !v.ok) return '';
+
+  const pct = (x) => `${(x * 100).toFixed(x < 0.1 ? 1 : 0)}%`;
+  const clase = v.regimen === 'tensión' ? 'bear' : v.regimen === 'calma' ? 'bull' : 'flat';
+
+  return `
+    <details class="method" data-k="volatilidad">
+      <summary>Volatilidad · <strong class="vol-${clase}">${pct(v.anualizada)} anual, ${v.regimen}</strong></summary>
+      <p>
+        Medida sobre las últimas ${v.ventana} velas y escalada a un año.
+        ${v.percentil !== null
+          ? `Es más ${v.percentil >= 0.5 ? 'alta' : 'baja'} que el ${Math.round((v.percentil >= 0.5 ? v.percentil : 1 - v.percentil) * 100)}% de las ${v.muestra} ventanas anteriores de este activo` +
+            `${Number.isFinite(v.mediana) ? `, cuya mediana es ${pct(v.mediana)}` : ''}.`
+          : 'Sin histórico suficiente para situarla.'}
+      </p>
+      <p><em>${VOL_AVISO}</em></p>
+    </details>`;
+}
+
+const VOL_AVISO =
+  'Es volatilidad REALIZADA: cuánto se ha movido de hecho. No es comparable con el VIX ni con un índice de ' +
+  'volatilidad implícita, que salen del precio de las opciones y dicen lo que el mercado paga hoy por cubrirse ' +
+  'del mes que viene. Aquí no hay datos de opciones.';
+
 /**
  * Pinta el panel.
  *
@@ -178,6 +207,7 @@ function render(contenedor, { breakout, price = null, remaining = 1, force = fal
       <summary>Cómo confirmar la ruptura</summary>
       ${[b.trigger.up, b.trigger.down].filter(Boolean).map((t) => `<p>${t.text}<br><em>${t.invalidation}</em></p>`).join('')}
     </details>
+    ${volatilidadHtml(b)}
     <p class="disclaimer">${b.disclaimer}</p>`;
 
   restaurarSecciones(contenedor, abiertas);
