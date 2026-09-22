@@ -781,7 +781,9 @@ function renderVenues() {
 
       return `<label class="venue ${activo && v && v.usable ? '' : 'off'}">
         <input type="checkbox" data-venue="${soportada.id}" ${activo ? 'checked' : ''} ${activo && unicoElegido ? 'disabled' : ''} />
-        <span class="v-name">${soportada.label}<em>${(v && v.pair) || ''}${v && v.source && v.source !== 'libro' ? ' · ' + v.source : ''}</em></span>
+        <span class="v-name">${soportada.label}<em>${(v && v.pair) || ''}${
+          v && v.converted ? ` · ${formatPrice(v.priceRaw)} USDT` : ''
+        }${v && v.source && v.source !== 'libro' ? ' · ' + v.source : ''}</em></span>
         <span class="v-price">${v && v.price > 0 ? formatPrice(v.price) : '—'}</span>
         <span class="v-diff ${v && v.diff > 0 ? 'up' : v && v.diff < 0 ? 'down' : ''}">${diff}</span>
       </label>`;
@@ -793,6 +795,9 @@ function renderVenues() {
     `${c.used} de ${soportadas.length} mercados · ${c.agreement} · dif. ${num(c.spreadPct, 3)}%` +
     `</button>` +
     `<div class="venue-list" hidden>${filas}` +
+    (c.venues.some((v) => v.converted)
+      ? `<p class="venue-note">Los precios en USDT se pasan a dólares al cambio de ${num(c.venues.find((v) => v.converted).stable.rate, 4)} (${c.venues.find((v) => v.converted).stable.source}): si no, el desvío de la stablecoin se colaría en la mediana como si fuera precio del activo.</p>`
+      : '') +
     `<p class="venue-note">Mediana del punto medio del libro de cada mercado, que siempre es de ahora — la última operación de un mercado poco activo puede ser de hace minutos. El análisis de ruptura usa el precio de Binance, que es de donde salen las velas.</p>` +
     `</div>`;
 

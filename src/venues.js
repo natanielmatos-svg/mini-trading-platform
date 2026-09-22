@@ -138,6 +138,62 @@ const gemini = {
 };
 
 const VENUES = [binance, kraken, coinbase, gemini];
+
+// --- USDT contra dólares ---------------------------------------------------
+//
+// Binance cotiza en USDT y las otras tres en dólares, y eso no es un detalle:
+// en la primera medición real las tres en dólares coincidían dentro del
+// 0,011% y Binance se iba sola un 0,044%. Meter ese desvío en la mediana es
+// contaminar el consolidado con el precio del USDT, no con el del bitcoin —
+// y quien liquide en dólares (Kalshi, entre otros) no lo tiene.
+//
+// Así que se mide el USDT/USD y se convierte. Si no se puede medir, no se
+// inventa una paridad: se deja el precio como está y se dice que no se
+// convirtió.
+
+async function fetchStableRate({ timeoutMs = 6000 } = {}) {
+  // Kraken primero por ser el mismo sitio del que ya se fía el consolidado.
+  try {
+    const data = await fetchJson(`${KRAKEN_API}/0/public/Ticker`, {
+      searchParams: { pair: 'USDTZUSD' },
+      timeoutMs,
+      retries: 0,
+    });
+    if (!(data && Array.isArray(data.error) && data.error.length)) {
+      const entry = data && data.result ? Object.values(data.result)[0] : null;
+      const { price } = midOrLast({
+        bid: entry && entry.b && entry.b[0],
+        ask: entry && entry.a && entry.a[0],
+        last: entry && entry.c && entry.c[0],
+      });
+      if (sensata(price)) return { rate: price, source: 'kraken', pair: 'USDTUSD' };
+    }
+  } catch {
+    /* se prueba el siguiente */
+  }
+
+  try {
+    const data = await fetchJson(`${COINBASE_API}/api/v3/brokerage/market/products/USDT-USD/ticker`, {
+      searchParams: { limit: 1 },
+      timeoutMs,
+      retries: 0,
+    });
+    const trade = data && Array.isArray(data.trades) ? data.trades[0] : null;
+    const { price } = midOrLast({ bid: data && data.best_bid, ask: data && data.best_ask, last: trade && trade.price });
+    if (sensata(price)) return { rate: price, source: 'coinbase', pair: 'USDT-USD' };
+  } catch {
+    /* sin conversión */
+  }
+
+  return null;
+}
+
+// Una stablecoin fuera de este rango no es una cotización, es un error de
+// lectura — y convertir con ella estropearía el consolidado en vez de
+// arreglarlo.
+function sensata(rate) {
+  return Number.isFinite(rate) && rate > 0.9 && rate < 1.1;
+}
 const byId = new Map(VENUES.map((v) => [v.meta.id, v]));
 
 function listVenues() {
@@ -178,7 +234,30 @@ async function fetchAllPrices({ symbol = 'BTCUSDT', timeoutMs = 6000, venues = n
   if (demo) return demoQuotes({ symbol, now, venues });
 
   const selected = venues && venues.length ? VENUES.filter((v) => venues.includes(v.meta.id)) : VENUES;
+  const hayUsdt = selected.some((v) => v.meta.quote === 'USDT');
 
+  // El cambio se pide a la vez que los precios, no después: si no, el
+  // consolidado llevaría precios de un instante y un cambio de otro.
+  const [quotes, stable] = await Promise.all([
+    fetchQuotes(selected, { symbol, timeoutMs, now }),
+    hayUsdt ? fetchStableRate({ timeoutMs }) : Promise.resolve(null),
+  ]);
+
+  return quotes.map((q) => {
+    if (q.quote !== 'USDT' || !q.ok || !stable) {
+      return { ...q, priceRaw: q.price, converted: false, stable: q.quote === 'USDT' ? stable : null };
+    }
+    return {
+      ...q,
+      priceRaw: q.price,
+      price: q.price * stable.rate,
+      converted: true,
+      stable,
+    };
+  });
+}
+
+function fetchQuotes(selected, { symbol, timeoutMs, now }) {
   return Promise.all(
     selected.map(async (venue) => {
       const startedAt = Date.now();
@@ -215,5 +294,6 @@ function parseVenues(raw) {
 
 module.exports = {
   VENUES, byId, listVenues, fetchAllPrices, demoQuotes, midOrLast, parseVenues, baseAsset,
+  fetchStableRate, sensata,
   binance, kraken, coinbase, gemini,
 };

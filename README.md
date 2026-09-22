@@ -13,7 +13,7 @@ Dos aplicaciones sobre el mismo servidor Node/Express:
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet (también el gráfico)
-npm test             # 202 tests, sin red
+npm test             # 208 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -24,7 +24,7 @@ Windows (PowerShell incluido). Hace falta Node 20 o superior: `node -v`.
 ### Cómo se prueba
 
 ```bash
-npm test          # 202 tests, sin red, en unos cinco segundos
+npm test          # 208 tests, sin red, en unos cinco segundos
 npm run smoke     # llama a las APIs de verdad — la única prueba que las valida
 ```
 
@@ -89,11 +89,18 @@ que uno lleva rato sin operar. El libro siempre es de ahora. Si una casa no
 publica libro, se usa su última operación y **se dice en el desglose**.
 
 Lo más útil del panel no es el número sino **el desglose**: cada mercado con
-su par y su diferencia respecto al consolidado. La diferencia de moneda
-—Binance cotiza contra USDT y los otros dos contra dólares— puede explicar
-parte de la separación, aunque en la primera medición real con USDT en
-paridad no explicaba nada: Binance y Kraken coincidían al 0,0003% y el que se
-apartaba era Coinbase.
+su par y su diferencia respecto al consolidado.
+
+**Los precios en USDT se convierten a dólares.** Binance cotiza contra USDT y
+las otras tres contra dólares, y eso no es un detalle: midiéndolo en real, las
+tres en dólares coincidían dentro del 0,011% y Binance se iba sola un 0,044%.
+Ese desvío es el precio del USDT, no el del bitcoin, y meterlo en la mediana
+la contamina — sobre todo si lo que quieres es cuadrar con alguien que liquida
+en dólares. Así que se mide el USDT/USD (Kraken, y Coinbase como respaldo) y
+se convierte, enseñando el cambio usado y el precio original. Si no se puede
+medir, no se inventa una paridad: se deja el precio como está y el desglose lo
+dice. Un cambio fuera del rango 0,90–1,10 se descarta: eso no es una
+cotización, es un error de lectura.
 
 | | |
 |---|---|
@@ -664,5 +671,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  202 tests, sin red
+test/                  208 tests, sin red
 ```

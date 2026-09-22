@@ -201,6 +201,16 @@ async function comprobarPrecios() {
   if (out.used < out.venues.length) {
     console.log('  Aviso: falta algún mercado, así que el consolidado es menos robusto de lo previsto.');
   }
+  const convertidos = out.venues.filter((v) => v.converted);
+  const sinConvertir = out.venues.filter((v) => v.quote === 'USDT' && v.usable && !v.converted);
+
+  if (convertidos.length) {
+    const s = convertidos[0].stable;
+    console.log(`  USDT/USD ${s.rate} (${s.source}): ${convertidos.map((v) => `${v.label} ${v.priceRaw} → ${v.price.toFixed(2)}`).join(', ')}`);
+  } else if (sinConvertir.length) {
+    console.log(`  Aviso: no se pudo medir el USDT/USD, así que ${sinConvertir.map((v) => v.label).join(', ')} va sin convertir y arrastra el desvío de la stablecoin.`);
+  }
+
   const porOperacion = out.venues.filter((v) => v.usable && v.source !== 'libro');
   if (porOperacion.length) {
     console.log(`  Ojo: ${porOperacion.map((v) => v.label).join(', ')} sin libro; su precio es la última operación y puede ser viejo.`);

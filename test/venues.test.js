@@ -188,6 +188,95 @@ test('se pregunta a las cuatro casas y se consolida', async () => {
   assert.ok(out.spread > 0 && out.spreadPct < 0.1);
 });
 
+// --- USDT contra dólares ---------------------------------------------------
+
+// El mock de Kraken sirve dos pares: el del activo y el del USDT.
+function krakenConCambio(rate) {
+  return (url) => {
+    if (url.searchParams.get('pair') === 'USDTZUSD') {
+      return { status: 200, body: { error: [], result: { USDTZUSD: { b: [String(rate)], a: [String(rate)] } } } };
+    }
+    return KRAKEN_OK;
+  };
+}
+
+test('el precio en USDT se pasa a dólares con el cambio medido', async () => {
+  estado.kraken = krakenConCambio(0.9995);
+
+  const quotes = await venues.fetchAllPrices({ symbol: 'BTCUSDT', now: 1_000 });
+  const b = quotes.find((q) => q.id === 'binance');
+
+  assert.strictEqual(b.converted, true);
+  assert.strictEqual(b.priceRaw, 86620.1, 'se conserva lo que cotizó Binance');
+  assert.ok(Math.abs(b.price - 86620.1 * 0.9995) < 1e-6, 'y se publica convertido');
+  assert.strictEqual(b.stable.rate, 0.9995);
+  assert.strictEqual(b.stable.source, 'kraken');
+
+  // A los que ya cotizan en dólares no se les toca.
+  const k = quotes.find((q) => q.id === 'kraken');
+  assert.strictEqual(k.converted, false);
+  assert.strictEqual(k.price, k.priceRaw);
+});
+
+test('la conversión acerca a Binance a las casas en dólares', async () => {
+  // Con el USDT por debajo de la par, el precio en USDT queda por encima:
+  // es justo el desvío que se midió en real y que ensuciaba la mediana.
+  estado.kraken = krakenConCambio(0.9996);
+  estado.binance = { status: 200, body: { symbol: 'BTCUSDT', bidPrice: '86684.6', askPrice: '86684.8' } };
+
+  const sinConvertir = 86684.7;
+  const quotes = await venues.fetchAllPrices({ symbol: 'BTCUSDT', now: 1_000 });
+  const b = quotes.find((q) => q.id === 'binance');
+  const k = quotes.find((q) => q.id === 'kraken');
+
+  assert.ok(
+    Math.abs(b.price - k.price) < Math.abs(sinConvertir - k.price),
+    `convertido ${b.price} debería quedar más cerca de ${k.price} que ${sinConvertir}`
+  );
+});
+
+test('un cambio absurdo no se usa: sería estropear el consolidado', async () => {
+  estado.kraken = krakenConCambio(1.4);
+  const quotes = await venues.fetchAllPrices({ symbol: 'BTCUSDT', now: 1_000 });
+  const b = quotes.find((q) => q.id === 'binance');
+
+  assert.strictEqual(b.converted, false);
+  assert.strictEqual(b.price, b.priceRaw);
+});
+
+test('si Kraken no da el cambio, se pregunta a Coinbase', async () => {
+  estado.kraken = (url) => (url.searchParams.get('pair') === 'USDTZUSD'
+    ? { status: 500, body: { error: ['EService:Unavailable'] } }
+    : KRAKEN_OK);
+  estado.coinbase = (url) => (url.pathname.includes('USDT-USD')
+    ? { status: 200, body: { trades: [], best_bid: '0.9990', best_ask: '0.9994' } }
+    : COINBASE_OK);
+
+  const quotes = await venues.fetchAllPrices({ symbol: 'BTCUSDT', now: 1_000 });
+  const b = quotes.find((q) => q.id === 'binance');
+
+  assert.strictEqual(b.converted, true);
+  assert.strictEqual(b.stable.source, 'coinbase');
+  assert.strictEqual(b.stable.rate, 0.9992);
+});
+
+test('sin cambio disponible no se inventa una paridad', async () => {
+  estado.kraken = (url) => (url.searchParams.get('pair') === 'USDTZUSD' ? { status: 500, body: {} } : KRAKEN_OK);
+  estado.coinbase = (url) => (url.pathname.includes('USDT-USD') ? { status: 500, body: {} } : COINBASE_OK);
+
+  const quotes = await venues.fetchAllPrices({ symbol: 'BTCUSDT', now: 1_000 });
+  const b = quotes.find((q) => q.id === 'binance');
+
+  assert.strictEqual(b.converted, false);
+  assert.strictEqual(b.price, b.priceRaw, 'se deja tal cual, y el campo lo delata');
+});
+
+test('sin ninguna casa en USDT no se pregunta el cambio', async () => {
+  estado.peticiones = [];
+  await venues.fetchAllPrices({ symbol: 'BTCUSDT', venues: ['kraken', 'gemini'], now: 1_000 });
+  assert.ok(!estado.peticiones.some((p) => p.params && p.params.pair === 'USDTZUSD'), 'no hace falta');
+});
+
 // --- Elegir mercados -------------------------------------------------------
 
 test('se puede pedir sólo algunos mercados', async () => {
