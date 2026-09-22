@@ -26,6 +26,7 @@ const Ruptura = globalThis.Ruptura;
 const Avisos = globalThis.Avisos;
 const TablaMtf = globalThis.TablaMtf;
 const PrecioVivo = globalThis.PrecioVivo;
+const PanelPrediccion = globalThis.PanelPrediccion;
 
 const calma = PrecioVivo.crear();
 
@@ -61,6 +62,7 @@ const el = {
   emaWarning: $('emaWarning'),
   status: $('statusText'),
   breakout: $('breakoutPanel'),
+  forecast: $('forecastPanel'),
   market: $('marketState'),
   marketLabel: $('marketLabel'),
   aviso: $('avisoClave'),
@@ -94,6 +96,7 @@ const state = {
   candles: [],
   mtf: {},
   breakout: null,
+  forecast: null,
   quote: null,        // último precio devuelto por /api/stocks/quote
   clock: null,        // reloj del mercado
   source: null,
@@ -228,6 +231,7 @@ async function loadAll({ silent = false } = {}) {
     state.mtf = Object.fromEntries(MTF.map((tf) => [tf, byInterval[tf].candles]));
 
     await loadBreakout();
+    loadForecast(); // sin await: es cara y no debe retrasar el gráfico
     avisos.evaluar();
     render({ force: true });
     setStatus('');
@@ -316,6 +320,24 @@ const avisos = Avisos.crearAvisos({
     programarVelas();
   },
 });
+
+
+// La predicción es cara —recorre el histórico prediciendo hacia delante para
+// calibrarse— así que va por su cuenta y no bloquea el resto de la carga.
+async function loadForecast() {
+  try {
+    const data = await getJson(`/api/stocks/forecast?symbol=${encodeURIComponent(state.symbol)}&interval=${state.interval}`);
+    if (data.symbol !== state.symbol) return; // llegó tarde
+    state.forecast = data;
+  } catch (err) {
+    state.forecast = { error: `No se pudo predecir: ${err.message}` };
+  }
+  renderForecast();
+}
+
+function renderForecast() {
+  if (el.forecast) PanelPrediccion.render(el.forecast, state.forecast, state.interval);
+}
 
 // ---------------------------------------------------------------------------
 // Pintado

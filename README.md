@@ -287,6 +287,67 @@ Que quede dicho: primero supuse que sería cosmético, luego medí en laboratori
 Las dos predicciones estaban mal. Lo que aguanta es lo medido, y `npm run
 smoke` lo vuelve a medir cada vez.
 
+### Motor de predicción
+
+**No predice un precio, y es una decisión, no una limitación.** A quince
+minutos vista la mejor estimación puntual honesta de bitcoin es el precio de
+ahora: en un mercado líquido la deriva a ese plazo es indistinguible del ruido,
+y cualquier número que se aparte del precio actual con aire de seguridad está
+inventado. Un motor que escupiera «86.412 dentro de 15 minutos» sería una
+máquina de fabricar confianza falsa, y con dinero delante eso es peor que no
+tener nada.
+
+Lo que sí se estima, y es lo que de verdad se usa, es la **distribución**:
+
+| dentro de | 50% de las veces | 90% de las veces | acierto |
+|---|---|---|---|
+| 1 h | 60.041 – 60.371 | 59.840 – 60.551 | 91% de 90% |
+| 12 h | 59.596 – 61.050 | 58.976 – 61.807 | 83% de 90% |
+| 1 d | 59.063 – 61.990 | 57.817 – 63.291 | 59% de 90% |
+
+Tres piezas, cada una arreglando un defecto conocido de la anterior:
+
+1. **Volatilidad condicional (EWMA).** La volatilidad se agrupa: tras un tramo
+   movido viene otro movido. Una desviación típica de las últimas 30 velas pesa
+   igual la de ayer que la de hace un mes; la EWMA reacciona.
+2. **Colas empíricas, no campana de Gauss.** Los rendimientos de cripto tienen
+   colas mucho más gordas que la normal. En vez de suponer la forma, se usa la
+   observada.
+3. **Horizonte con reversión a la media.** Escalar por raíz del tiempo daba
+   bandas demasiado estrechas a plazos largos —medido: la banda del 90%
+   contenía el 83,6% a doce velas—. Ahora la varianza de cada paso futuro se
+   mezcla hacia la de largo plazo, que es la cuenta de un GARCH.
+
+**La deriva se fija en cero a propósito**, y se protege en dos sitios: los
+rendimientos estandarizados se centran en su mediana, y los cuantiles conformes
+también. Sin lo segundo, un tramo de entrenamiento con tendencia metía esa
+tendencia en la banda central por la puerta de atrás.
+
+#### La columna que hace esto comprobable
+
+`src/calibracion.js` recorre el histórico prediciendo hacia delante —**sólo con
+lo anterior a cada punto**— y cuenta cuántas veces el precio acabó dentro de la
+banda anunciada. Un modelo que promete el 90% y cumple el 72% tiene las bandas
+demasiado estrechas, y un stop colocado ahí saltaría constantemente.
+
+Se mide con tres cosas: **cobertura** (¿el 90% es el 90%?), **PIT** (¿la
+distribución entera encaja, no sólo dos puntos?) y **pérdida pinball** contra
+una referencia trivial —paseo aleatorio con volatilidad constante y campana—.
+Si el motor no le gana, el veredicto lo dice con esas palabras.
+
+Medido sobre series sintéticas con volatilidad agrupada y saltos, cuatro
+semillas distintas:
+
+| horizonte | cobertura del 90% |
+|---|---|
+| 1 vela | 87–92% |
+| 4 velas | 90–94% |
+| 12 velas | 85–97% (inestable) |
+
+A plazo corto está bien calibrado; a doce velas es inestable y el panel lo
+enseña. Ésa es la diferencia entre un motor y un adorno: **publica su propio
+boletín de notas**, y la interfaz enseña la nota al lado de cada banda.
+
 ### Volatilidad
 
 `src/volatilidad.js` mide la volatilidad **realizada**: la desviación típica de
@@ -749,6 +810,14 @@ pudo contrastar con Binance.
 }
 ```
 
+### `GET /api/forecast`
+
+`?symbol=BTCUSDT&interval=1h&bloques=4`. Sin `bloques` devuelve todos los
+horizontes. Cada uno trae `bandas` (los cuantiles 5/10/25/50/75/90/95),
+`sigmaPct`, y `calibracion` con la cobertura medida sobre el histórico. La
+banda del 50% **es** el precio actual, a propósito. `/api/stocks/forecast` hace
+lo mismo con acciones.
+
 ### `GET /api/klines/consolidadas`
 
 `?symbol=BTCUSDT&interval=1h&venues=binance,kraken`. Las mismas velas que usa
@@ -952,6 +1021,9 @@ src/
   velas-mercados.js    velas de cada casa: Binance, Kraken, Coinbase, Gemini
   velas-consolidadas.js la mediana de esas velas, instante a instante
   volatilidad.js       volatilidad realizada y dispersión entre mercados
+  forecast.js          distribución del precio: EWMA + colas empíricas + conforme
+  calibracion.js       backtest walk-forward: ¿se cumplen las bandas que promete?
+  panel-prediccion.js  el panel de bandas — las DOS páginas
   chart.js             el gráfico de velas — las DOS páginas
   precio-vivo.js       calma el titular sin tocar el precio del análisis
   panel-ruptura.js     el panel «¿Rompe esta vela?» — las DOS páginas
@@ -986,5 +1058,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  332 tests, sin red
+test/                  346 tests, sin red
 ```

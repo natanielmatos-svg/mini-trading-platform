@@ -25,6 +25,13 @@ const { verifySymbols, groups } = require('./src/symbols');
 const { fetchAllPrices, listVenues, parseVenues } = require('./src/venues');
 const { getVelasConsolidadas } = require('./src/velas-consolidadas');
 const volatilidad = require('./src/volatilidad');
+const forecast = require('./src/forecast');
+const calibracion = require('./src/calibracion');
+
+// Los cuantiles conformes son un paseo por todo el histórico prediciendo hacia
+// delante: caro para hacerlo en cada petición, y sólo cambia cuando llegan
+// velas nuevas. Se cachea por símbolo, intervalo y horizonte.
+const cacheConforme = new (require('./src/cache').TtlCache)({ ttlMs: 300_000, maxEntries: 200 });
 const stocks = require('./src/stocks');
 const alpaca = require('./src/alpaca');
 const { consolidate } = require('./src/consolidated');
@@ -57,7 +64,7 @@ app.use((req, res, next) => {
 // sola tabla y un solo modo de calmar el precio en vivo.
 // Lista blanca explícita y no `express.static('src')`: ahí dentro están
 // también los proveedores y la orquestación.
-const SHARED_MODULES = ['indicators.js', 'format.js', 'signals.js', 'chart.js', 'panel-ruptura.js', 'avisos.js', 'tabla-mtf.js', 'precio-vivo.js', 'volatilidad.js'];
+const SHARED_MODULES = ['indicators.js', 'format.js', 'signals.js', 'chart.js', 'panel-ruptura.js', 'avisos.js', 'tabla-mtf.js', 'precio-vivo.js', 'volatilidad.js', 'panel-prediccion.js'];
 
 app.get('/lib/:file', (req, res) => {
   if (!SHARED_MODULES.includes(req.params.file)) {
@@ -372,6 +379,87 @@ app.get('/api/stream', (req, res) => {
     if (left > 0) streamsByIp.set(ip, left);
     else streamsByIp.delete(ip);
   });
+});
+
+// ---------------------------------------------------------------------------
+// Predicción
+// ---------------------------------------------------------------------------
+//
+// No devuelve un precio: devuelve la DISTRIBUCIÓN. A quince minutos vista la
+// mejor estimación puntual honesta es el precio de ahora, y cualquier número
+// que se aparte de él con aire de seguridad está inventado. Lo que sí se puede
+// estimar —y se puede comprobar— es dónde caerá el precio con cada
+// probabilidad.
+//
+// Y viene con su propia nota: cada respuesta trae la calibración medida sobre
+// el histórico, es decir, si las bandas que promete se cumplen de verdad. Un
+// predictor que publica su propio boletín de notas.
+
+const HORIZONTES = [1, 2, 4, 8, 12, 24];
+
+async function predecirActivo({ candles, interval, precio, bloques }) {
+  const clave = `${interval}:${bloques}:${candles.length}:${candles[candles.length - 1].openTime}`;
+  const conformes = await cacheConforme.wrap(clave, async () => forecast.cuantilesConformes(candles, { bloques }), 300_000);
+
+  const f = forecast.predecir(candles, { bloques, precio, conformes });
+  if (!f.ok) return f;
+
+  const cal = calibracion.calibrar(candles, { bloques, paso: Math.max(1, Math.floor(candles.length / 300)) });
+  return { ...f, calibracion: cal.ok ? { ...cal, veredicto: calibracion.veredicto(cal) } : { ok: false, reason: cal.reason } };
+}
+
+app.get('/api/forecast', async (req, res) => {
+  const { symbol, interval, demo } = marketParams(req);
+  const venues = parseVenues(req.query.venues);
+  const livePrice = Number(req.query.price);
+  const pedido = Number(req.query.bloques);
+  const horizontes = Number.isFinite(pedido) && pedido > 0 ? [Math.min(pedido, 96)] : HORIZONTES;
+
+  try {
+    const { candles, fuente, fetchedAt } = await velasDelAnalisis({ symbol, interval, demo, venues });
+    const precio = Number.isFinite(livePrice) && livePrice > 0 ? livePrice : null;
+
+    const predicciones = [];
+    for (const bloques of horizontes) {
+      predicciones.push({ bloques, ...(await predecirActivo({ candles, interval, precio, bloques })) });
+    }
+
+    sendJson(res, {
+      symbol, interval, source: fuente, fetchedAt,
+      precio: precio || candles[candles.length - 1].close,
+      horizontes: predicciones,
+      aviso: forecast.AVISO,
+    });
+  } catch (err) {
+    marketError(res, err, '/api/forecast');
+  }
+});
+
+app.get('/api/stocks/forecast', async (req, res) => {
+  const { symbol, interval, demo } = stockParams(req);
+  const pedido = Number(req.query.bloques);
+  const horizontes = Number.isFinite(pedido) && pedido > 0 ? [Math.min(pedido, 96)] : HORIZONTES;
+
+  try {
+    const [{ candles }, clock] = await Promise.all([
+      stocks.getStockCandles({ symbol, interval, limit: 400, demo }),
+      stocks.getClock({ demo }).catch(() => null),
+    ]);
+
+    const predicciones = [];
+    for (const bloques of horizontes) {
+      predicciones.push({ bloques, ...(await predecirActivo({ candles, interval, precio: null, bloques })) });
+    }
+
+    sendJson(res, {
+      symbol, interval, clock,
+      precio: candles.length ? candles[candles.length - 1].close : null,
+      horizontes: predicciones,
+      aviso: forecast.AVISO,
+    });
+  } catch (err) {
+    marketError(res, err, '/api/stocks/forecast');
+  }
 });
 
 // ---------------------------------------------------------------------------

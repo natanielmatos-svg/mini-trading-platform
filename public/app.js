@@ -15,6 +15,7 @@ const Ruptura = globalThis.Ruptura;
 const Avisos = globalThis.Avisos;
 const TablaMtf = globalThis.TablaMtf;
 const PrecioVivo = globalThis.PrecioVivo;
+const PanelPrediccion = globalThis.PanelPrediccion;
 
 const MTF = ['1h', '4h', '1d', '1w'];
 const CANDLES = 300;
@@ -27,6 +28,7 @@ const state = {
   candles: [],
   mtf: {},
   breakout: null,
+  forecast: null,
   live: null,        // última vela recibida
   livePrice: null,   // último precio operado en Binance, tick a tick
   consolidado: null, // mediana de los mercados elegidos
@@ -68,6 +70,7 @@ const el = {
   streamLabel: $('streamLabel'),
   tooltip: $('tooltip'),
   breakout: $('breakoutPanel'),
+  forecast: $('forecastPanel'),
   alertToggle: $('alertToggle'),
   alertTest: $('alertTest'),
   alertMode: $('alertMode'),
@@ -255,6 +258,7 @@ async function loadAll({ silent = false } = {}) {
     state.failures = 0;
 
     await loadBreakout();
+    loadForecast(); // sin await: es cara y no debe retrasar el gráfico
     avisos.evaluar();
     render({ force: true });
     setStatus('');
@@ -474,6 +478,24 @@ const avisos = Avisos.crearAvisos({
   // esté en segundo plano.
   onCambio: () => scheduleRefresh(),
 });
+
+
+// La predicción es cara —recorre el histórico prediciendo hacia delante para
+// calibrarse— así que va por su cuenta y no bloquea el resto de la carga.
+async function loadForecast() {
+  try {
+    const data = await getJson(`/api/forecast?symbol=${encodeURIComponent(state.symbol)}&interval=${state.interval}${paramMercados()}`);
+    if (data.symbol !== state.symbol) return; // llegó tarde
+    state.forecast = data;
+  } catch (err) {
+    state.forecast = { error: `No se pudo predecir: ${err.message}` };
+  }
+  renderForecast();
+}
+
+function renderForecast() {
+  if (el.forecast) PanelPrediccion.render(el.forecast, state.forecast, state.interval);
+}
 
 // ---------------------------------------------------------------------------
 // Render
