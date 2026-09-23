@@ -19,7 +19,7 @@ mismo código (ver [Estructura](#estructura)).
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet (también el gráfico)
-npm test             # 417 tests, sin red
+npm test             # 451 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -38,7 +38,7 @@ versión anterior, y eso ya pasó una vez.
 ### Cómo se prueba
 
 ```bash
-npm test          # 417 tests, sin red, en unos ocho segundos
+npm test          # 451 tests, sin red, en unos ocho segundos
 npm run smoke     # llama a las APIs de verdad — la única prueba que las valida
 ```
 
@@ -801,6 +801,115 @@ Los avisos guardan sus preferencias aparte de los de cripto: encender el sonido
 en una página no lo enciende en la otra, y el seguimiento en papel de AAPL no
 se mezcla con el de BTCUSDT.
 
+## Un bot para Kalshi
+
+Kalshi lista contratos binarios sobre el mismo suceso que esta aplicación ya
+estima: «¿estará bitcoin por encima de 88.000 a las 15:00?». El contrato cuesta
+entre 1 y 99 céntimos y paga 1 dólar si acierta, así que **su precio es una
+probabilidad**. Y aquí hay otra, medida sobre los exchanges. La diferencia entre
+las dos es la ventaja, si la hay.
+
+```bash
+npm run kalshi -- --serie KXBTCD --capital 500          # qué haría, ahora mismo
+npm run kalshi -- --serie KXBTCD --todos                # y por qué descarta cada mercado
+npm run kalshi -- --demo --sesgo 8                      # el camino entero, sin red
+```
+
+**Este script lee y calcula. No envía órdenes, y no puede.** La parte que
+decide se comprueba entera sin tocar una cuenta; la que ejecuta necesita claves
+y va aparte, para que nadie mueva dinero por lanzar un diagnóstico.
+
+### Cuánta ventaja hace falta de verdad
+
+Lo primero que hay que saber, porque decide si esto tiene sentido: **con una
+horquilla de 2¢, el mercado tiene que equivocarse unos 8 céntimos antes de que
+haya operación.** Medido con el escáner, desplazando a mano el precio de un
+mercado de ejemplo:
+
+| el mercado se equivoca | ventaja neta | ¿se opera? |
+|---|---|---|
+| 6¢ | 0,8¢ | no |
+| 8¢ | 3,3¢ | sí, 25 contratos |
+| 10¢ | 5,4¢ | sí, 35 contratos |
+| 15¢ | 10,5¢ | sí, 61 contratos |
+
+Se lo comen tres cosas, y las tres están en `src/kalshi-edge.js`:
+
+1. **La comisión.** Kalshi cobra `0,07 × contratos × P × (1−P)`, máxima justo en
+   50¢, que es donde están los contratos interesantes: **2 céntimos sobre un
+   contrato de 50, o sea el 4% de lo que arriesgas**. Una ventaja de un céntimo
+   no existe. (La tasa es configurable y el escáner imprime la que asume:
+   compruébala contra el calendario vigente antes de poner dinero.)
+2. **La horquilla.** Se compra al *ask* y se vende al *bid*. Dos céntimos de
+   horquilla son dos céntimos menos de ventaja.
+3. **El margen exigido.** Otros 2¢ por contrato, porque `p` es una estimación y
+   no un dato.
+
+### Los tres interruptores que impiden operar
+
+**La calibración, usada como interruptor.** Esta aplicación publica su propio
+boletín de notas: a cada plazo mide si la banda del 90% contuvo de verdad el
+90%. El bot **se niega a operar un plazo cuya cobertura medida se aparte más de
+5 puntos**. Es el uso más serio que se le puede dar a haber medido la
+calibración: no es un adorno de la interfaz, es el freno.
+
+Con las velas de ejemplo, ocho de los diez plazos quedan fuera:
+
+```
+  1 min           87%   operable
+  5 min          100%   NO operable      ← bandas demasiado anchas
+  1 h            100%   NO operable
+  8 h             90%   operable
+  1 d             59%   NO operable      ← bandas demasiado estrechas
+```
+
+**El riesgo de base.** Kalshi liquida contra **su** índice, no contra nuestra
+mediana de Binance, Kraken, Coinbase y Gemini. Predecir un precio y cobrar
+contra otro decide el resultado justo donde se opera: cerca del strike. Se
+modela como ruido añadido en cuadratura a la sigma, así que ensancha la
+distribución y **acerca la probabilidad al 50%, encogiendo la ventaja por los
+dos lados**. No se puede «elegir» a favor. El valor por defecto (0,05%) es una
+**suposición**: hay que medirlo comparando nuestro precio con el índice que
+liquida Kalshi, y hasta entonces cualquier resultado lleva esa incertidumbre
+encima.
+
+**El libro descuadrado.** En un binario, comprar NO a `n` es exactamente vender
+SÍ a `1 − n`. Si los dos lados no cuadran, una cotización está vieja — y el
+motor vería una «ventaja» enorme y la compraría. Un arbitraje que sólo existe
+porque un número está viejo es una pérdida con buena pinta. Salió de un test mal
+formado y se quedó como freno.
+
+### Entrar y salir
+
+El tamaño sale de una **fracción de Kelly** —un cuarto, porque Kelly entero
+supone que la probabilidad es exacta y aquí sale de un modelo— y lo recortan
+tres topes: contratos por mercado, capital, y **un cuarto de lo que hay puesto
+en el libro**, porque el resto movería el precio en contra.
+
+Para salir hay una regla que no es obvia: **liquidar al vencimiento no cobra
+comisión y vender sí**. Así que el bot no recoge beneficios por recogerlos. Sólo
+sale cuando la ventaja se ha dado la vuelta y la diferencia cubre la comisión de
+salir; el resto del tiempo aguanta.
+
+### Lo que todavía no está
+
+La mitad que **ejecuta**: firmar peticiones con la clave de Kalshi, enviar
+órdenes, reconciliar posiciones y el interruptor de parada. No está escrita a
+propósito: desde el entorno donde se desarrolló esto, Kalshi está bloqueado por
+la política de red, así que no se podría probar ni una línea. Escribir a ciegas
+la capa que mueve dinero real y confiar en que funcione es exactamente como se
+pierde.
+
+El orden sensato para terminarlo:
+
+1. Correr el escáner unos días y guardar lo que **habría** hecho.
+2. Medir el riesgo de base de verdad contra el índice que liquida Kalshi.
+3. Ejecutar contra el entorno de pruebas de Kalshi, con dinero de mentira.
+4. Sólo entonces, dinero real, con límite de pérdida diaria e interruptor.
+
+**Nunca pegues la clave privada de Kalshi en un chat ni la metas en el
+repositorio.** Va en `.env`, que está en `.gitignore`.
+
 ## Qué hace el analizador
 
 Para cada evento (unas elecciones, una decisión de la Fed, un partido) descarga
@@ -1234,6 +1343,9 @@ src/
   velas-consolidadas.js la mediana de esas velas, instante a instante
   volatilidad.js       volatilidad realizada y dispersión entre mercados
   forecast.js          distribución del precio: EWMA + colas empíricas + conforme
+  prediccion.js        qué horizontes se piden y con qué serie se calcula cada uno
+  kalshi-edge.js       ¿está barato este contrato? comisiones, frenos y tamaño
+  kalshi-mercados.js   los contratos de Kalshi, traducidos a algo valorable
   calibracion.js       backtest walk-forward: ¿se cumplen las bandas que promete?
   panel-prediccion.js  el panel de bandas — las DOS páginas
   panel-probabilidad.js «¿termina por encima de X?» — las DOS páginas
@@ -1267,10 +1379,11 @@ public/
   predicciones.html    analizador de predicciones
 data/demo/             datos de ejemplo (también usados por los tests)
 scripts/alpaca.js        comprueba la clave de Alpaca y nada más
+scripts/kalshi.js        qué operaría el bot en Kalshi; lee y calcula, no envía
 scripts/smoke.js         valida las APIs reales antes de desplegar
 scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  417 tests, sin red
+test/                  451 tests, sin red
 ```

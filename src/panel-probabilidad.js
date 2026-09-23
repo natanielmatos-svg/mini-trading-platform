@@ -68,33 +68,18 @@ function utiles(datos) {
   return datos.horizontes.filter((h) => h.ok && h.rejilla);
 }
 
-/**
- * El horizonte que no viene en la lista: lo que le queda a la vela en curso.
- *
- * No se puede publicar de antemano porque cambia cada segundo, así que se
- * construye aquí. El horizonte publicado más cercano presta su FORMA —la
- * rejilla, que está en unidades de sigma y por eso se puede trasladar— y la
- * ANCHURA se recalcula exacta para el tiempo que queda de verdad, con la misma
- * cuenta de reversión a la media que usa el servidor.
- *
- * La consecuencia se ve en pantalla y es la correcta: según se acerca el
- * cierre, la incertidumbre se encoge y la probabilidad se va hacia el 0 o el
- * 100. A doce segundos del cierre, el precio ya casi no tiene tiempo de
- * cambiar de lado.
- */
+// El horizonte que no viene en la lista: lo que le queda a la vela en curso.
+//
+// La cuenta vive en `forecast.js`, que es donde está el motor, porque el bot de
+// Kalshi hace exactamente lo mismo con el vencimiento de un contrato. Una sola
+// implementación para las dos, o acabarían discrepando.
+//
+// Lo que se ve en pantalla es la consecuencia, y es la correcta: según se
+// acerca el cierre la incertidumbre se encoge y la probabilidad se va hacia el
+// 0 o el 100. A doce segundos del cierre el precio ya casi no tiene tiempo de
+// cambiar de lado.
 function alCierre(datos, restanteMs) {
-  const filas = utiles(datos);
-  if (!filas.length || !(restanteMs > 0)) return null;
-
-  const base = filas.reduce((a, b) => (Math.abs(b.ms - restanteMs) < Math.abs(a.ms - restanteMs) ? b : a));
-  const paso = base.ms / base.bloques;             // cuánto dura un bloque de SU serie
-  if (!(paso > 0) || !(base.sigmaBloque > 0)) return null;
-
-  const bloques = restanteMs / paso;
-  const sigma = Math.sqrt(Fc.varianzaHorizonte(base.sigmaBloque, base.vLargo, bloques, base.persistencia));
-  if (!(sigma > 0)) return null;
-
-  return { ok: true, ms: restanteMs, bloques, desde: base.desde, rejilla: base.rejilla, sigmaHorizonte: sigma };
+  return Fc.distribucionEn(datos && datos.horizontes, restanteMs);
 }
 
 /**

@@ -26,13 +26,13 @@ const { fetchAllPrices, listVenues, parseVenues } = require('./src/venues');
 const { getVelasConsolidadas } = require('./src/velas-consolidadas');
 const volatilidad = require('./src/volatilidad');
 const forecast = require('./src/forecast');
+const { predecirActivo } = require('./src/prediccion');
 const { planDeHorizontes } = forecast;
 const calibracion = require('./src/calibracion');
 
 // Los cuantiles conformes son un paseo por todo el histórico prediciendo hacia
 // delante: caro para hacerlo en cada petición, y sólo cambia cuando llegan
 // velas nuevas. Se cachea por símbolo, intervalo y horizonte.
-const cacheConforme = new (require('./src/cache').TtlCache)({ ttlMs: 300_000, maxEntries: 200 });
 const stocks = require('./src/stocks');
 const alpaca = require('./src/alpaca');
 const { consolidate } = require('./src/consolidated');
@@ -395,28 +395,6 @@ app.get('/api/stream', (req, res) => {
 // Y viene con su propia nota: cada respuesta trae la calibración medida sobre
 // el histórico, es decir, si las bandas que promete se cumplen de verdad. Un
 // predictor que publica su propio boletín de notas.
-
-async function predecirActivo({ candles, interval, precio, bloques, nivel = null }) {
-  const clave = `${interval}:${bloques}:${candles.length}:${candles[candles.length - 1].openTime}`;
-  const conformes = await cacheConforme.wrap(clave, async () => forecast.cuantilesConformes(candles, { bloques }), 300_000);
-
-  const f = forecast.predecir(candles, { bloques, precio, conformes });
-  if (!f.ok) return f;
-
-  const cal = calibracion.calibrar(candles, { bloques, paso: Math.max(1, Math.floor(candles.length / 300)) });
-  const salida = { ...f, calibracion: cal.ok ? { ...cal, veredicto: calibracion.veredicto(cal) } : { ok: false, reason: cal.reason } };
-
-  // La probabilidad de acabar por encima de un nivel, para quien consuma la API
-  // por su cuenta. El navegador NO usa esto: la respuesta ya trae la rejilla de
-  // la distribución y resuelve cualquier nivel en cada tick, sin volver a
-  // preguntar. Responder aquí a diez ticks por segundo sería absurdo.
-  if (nivel > 0) {
-    const r = forecast.probabilidadEncima({ precio: f.precio, nivel, sigmaHorizonte: f.sigmaHorizonte, rejilla: f.rejilla });
-    if (r) salida.probabilidad = { nivel, encima: r.p, debajo: 1 - r.p, fuera: r.fuera, resolucion: r.resolucion };
-  }
-
-  return salida;
-}
 
 app.get('/api/forecast', async (req, res) => {
   const { symbol, interval, demo } = marketParams(req);

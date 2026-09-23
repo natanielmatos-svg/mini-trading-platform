@@ -382,6 +382,53 @@ function probabilidadEncima({ precio, nivel, sigmaHorizonte, rejilla }) {
 }
 
 /**
+ * La distribución a un plazo que NO está en la lista publicada.
+ *
+ * Los horizontes que viajan en la respuesta son fijos —1 min, 5 min, 1 h…— y
+ * hay dos preguntas que no caen en ninguno: cuánto le queda a la vela en curso,
+ * y cuándo vence un contrato de Kalshi. Las dos cambian segundo a segundo, así
+ * que no se pueden publicar de antemano.
+ *
+ * El horizonte publicado más cercano presta su FORMA —la rejilla, que está en
+ * unidades de sigma y por eso se puede trasladar— y la ANCHURA se recalcula
+ * exacta para el tiempo que falta, con la misma cuenta de reversión a la media.
+ * Si el plazo pedido coincide con uno publicado, sale su misma sigma al bit.
+ *
+ * `ruidoBase` añade, en cuadratura, la incertidumbre de que el precio que
+ * predecimos NO sea exactamente el que liquida el contrato. Es cero para la
+ * pantalla, donde el precio es el nuestro y no hay nada que liquidar, y no lo
+ * es para Kalshi, que liquida contra su propio índice. Ensancha la campana, que
+ * es justo lo que hace una fuente que no controlas: acerca la probabilidad al
+ * 50% y encoge la ventaja, por los dos lados a la vez.
+ */
+function distribucionEn(horizontes, restanteMs, { ruidoBase = 0 } = {}) {
+  const filas = (Array.isArray(horizontes) ? horizontes : [])
+    .filter((h) => h && h.ok && h.rejilla && h.ms > 0 && h.bloques > 0 && h.sigmaBloque > 0);
+  if (!filas.length || !(restanteMs > 0)) return null;
+
+  const base = filas.reduce((a, b) => (Math.abs(b.ms - restanteMs) < Math.abs(a.ms - restanteMs) ? b : a));
+  const paso = base.ms / base.bloques;                 // cuánto dura un bloque de SU serie
+  if (!(paso > 0)) return null;
+
+  const bloques = restanteMs / paso;
+  const propia = varianzaHorizonte(base.sigmaBloque, base.vLargo, bloques, base.persistencia);
+  const sigmaHorizonte = Math.sqrt(propia + (ruidoBase > 0 ? ruidoBase * ruidoBase : 0));
+  if (!(sigmaHorizonte > 0)) return null;
+
+  return {
+    ok: true,
+    ms: restanteMs,
+    bloques,
+    desde: base.desde,
+    rejilla: base.rejilla,
+    sigmaHorizonte,
+    sigmaPropia: Math.sqrt(propia),
+    calibracion: base.calibracion || null,
+    base,
+  };
+}
+
+/**
  * Probabilidad de CERRAR por encima de un nivel dentro de `bloques` velas.
  *
  * Distinto de tocarlo: un nivel se puede tocar y devolver. Ésta es la que
@@ -510,7 +557,7 @@ const AVISO =
   'contiene el 84%, es que a ese plazo el modelo se queda corto y hay que fiarse menos.';
 
 const API = {
-  predecir, probCierreEncima, probabilidadEncima, probEncima, rejillaZ, cuantilesConformes, planDeHorizontes, AVISO,
+  predecir, probCierreEncima, probabilidadEncima, probEncima, rejillaZ, distribucionEn, cuantilesConformes, planDeHorizontes, AVISO,
   CORTOS, LARGOS, INTERVAL_MS, ewmaSigma, estandarizados, rendimientos, curtosis,
   varianzaHorizonte, varianzaLargoPlazo,
   LAMBDA, MIN_MUESTRA, CUANTILES, PERSISTENCIA, PUNTOS_REJILLA,
