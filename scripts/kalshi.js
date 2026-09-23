@@ -25,6 +25,7 @@ const { predecirHorizontes, seriesNecesarias } = require('../src/prediccion');
 const { listarMercados, verMercado, explorarSeries, mercadosDemo, KALSHI_BASE } = require('../src/kalshi-mercados');
 const edge = require('../src/kalshi-edge');
 const { formatPrice, num, formatDuration } = require('../src/format');
+const { clasificar } = require('../src/registro');
 
 function arg(nombre, pordefecto = null) {
   const i = process.argv.indexOf(`--${nombre}`);
@@ -238,17 +239,36 @@ async function main() {
   const resp = { horizontes };
   const operables = [];
 
+  const motivos = new Map();
+  const detalle = [];
+
   for (const m of lista.mercados) {
     const r = edge.evaluarMercado(m, resp, ctx);
-    if (r.operar) operables.push({ m, r });
-    else if (OPCIONES.todos) {
-      // El título va al lado a propósito: un contrato que habla de una fecha y
-      // vence en otra sólo se detecta viendo las dos cosas juntas.
-      console.log(`  ·  ${m.ticker.padEnd(26)} ${String(m.titulo || '').slice(0, 34).padEnd(36)} ${r.motivo}`);
-    }
+    if (r.operar) { operables.push({ m, r }); continue; }
+
+    const familia = clasificar(r.motivo);
+    motivos.set(familia, (motivos.get(familia) || 0) + 1);
+    // El título va al lado a propósito: un contrato que habla de una fecha y
+    // vence en otra sólo se detecta viendo las dos cosas juntas.
+    detalle.push(`  ·  ${m.ticker.padEnd(26)} ${String(m.titulo || '').slice(0, 34).padEnd(36)} ${r.motivo}`);
   }
 
-  if (OPCIONES.todos) console.log('');
+  // Con doscientos mercados, doscientas líneas de rechazo son ruido. Lo que se
+  // quiere saber de un vistazo es QUÉ los frena, y sólo después cuál en
+  // concreto. Es la misma agrupación que usa la autopsia del cuaderno.
+  if (motivos.size) {
+    console.log('Por qué se descartaron:');
+    for (const [motivo, veces] of [...motivos.entries()].sort((a, b) => b[1] - a[1])) {
+      console.log(`  ${String(veces).padStart(6)}  ${motivo}`);
+    }
+    console.log('');
+    if (!OPCIONES.todos) console.log('Con --todos, uno por uno.\n');
+  }
+
+  if (OPCIONES.todos && detalle.length) {
+    for (const linea of detalle) console.log(linea);
+    console.log('');
+  }
 
   if (!operables.length) {
     console.log('Ninguna operación pasa los filtros.');
