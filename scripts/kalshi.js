@@ -82,7 +82,10 @@ async function explorar() {
   if (OPCIONES.buscar) console.log(`  filtrando por «${OPCIONES.buscar}»`);
   console.log('');
 
-  const { total, series, diagnostico } = await explorarSeries({ filtro: OPCIONES.buscar });
+  const { total, series, diagnostico } = await explorarSeries({
+    filtro: OPCIONES.buscar,
+    paginas: Number(arg('paginas', 25)),
+  });
 
   if (!series.length) {
     console.log(`Se miraron ${total} mercados en ${diagnostico.paginas} página(s) y no salió ninguna serie${OPCIONES.buscar ? ' con ese filtro' : ''}.`);
@@ -113,7 +116,12 @@ async function explorar() {
     );
   }
   console.log('');
-  console.log(`De ${total} mercados abiertos, ${series.length} series.`);
+  console.log(`De ${total} mercados abiertos en ${diagnostico.paginas} página(s), ${series.length} series.`);
+  if (diagnostico.mve) {
+    console.log(`Se saltaron ${diagnostico.mve} mercados «MVE»: son apuestas combinadas de varias patas,`);
+    console.log('no una opción de un evento, y este motor no las valora.');
+  }
+  console.log('Con --paginas N se mira más hondo si tu serie no aparece.');
   console.log('');
   console.log('La columna que importa es «entendidos», no el volumen: una serie con mil');
   console.log('mercados de los que entendemos cero no se puede operar. Coge una con muchos');

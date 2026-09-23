@@ -236,3 +236,50 @@ test('cuando no sale nada, se dice QUÉ respondió la API', async () => {
     delete require.cache[require.resolve('../src/kalshi-mercados')];
   }
 });
+
+test('las apuestas combinadas MVE se saltan, y se cuentan', async () => {
+  // La primera exploración contra Kalshi de verdad devolvió 600 mercados y los
+  // 600 eran MVE: combinadas de varias patas, que este motor no valora. Sin
+  // saltarlas no se llega a ver ni un contrato de cripto, y la tabla salía con
+  // dos series y cero entendidos, que parecía un fallo del traductor.
+  const servidor = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      cursor: null,
+      markets: [
+        { ...base, ticker: 'KXMVE-1', series_ticker: 'KXMVE', mve_collection_ticker: 'ALGO' },
+        { ...base, ticker: 'KXMVE-2', series_ticker: 'KXMVE', mve_selected_legs: [{ x: 1 }] },
+        { ...base, ticker: 'KXBTCD-1', series_ticker: 'KXBTCD' },
+      ],
+    }));
+  });
+
+  await new Promise((r) => servidor.listen(0, r));
+  const anterior = process.env.KALSHI_API;
+  process.env.KALSHI_API = `http://127.0.0.1:${servidor.address().port}`;
+  delete require.cache[require.resolve('../src/kalshi-mercados')];
+  const Mod = require('../src/kalshi-mercados');
+
+  try {
+    const r = await Mod.explorarSeries();
+    assert.deepEqual(r.series.map((s) => s.serie), ['KXBTCD'], 'las MVE no llegan a la tabla');
+    assert.equal(r.diagnostico.mve, 2, 'pero se dice cuántas se saltaron');
+    assert.equal(Mod.esMve({ mve_collection_ticker: 'X' }), true);
+    assert.equal(Mod.esMve({ mve_selected_legs: [] }), false, 'una lista vacía no es una combinada');
+    assert.equal(Mod.esMve(base), false);
+  } finally {
+    servidor.close();
+    if (anterior === undefined) delete process.env.KALSHI_API;
+    else process.env.KALSHI_API = anterior;
+    delete require.cache[require.resolve('../src/kalshi-mercados')];
+  }
+});
+
+test('una serie que no se entiende enseña al menos su título', () => {
+  // Con la columna «ejemplo» vacía no hay forma de saber qué es esa serie ni
+  // si merece la pena arreglar el traductor para ella.
+  const raro = { ticker: 'KXRARO-1', series_ticker: 'KXRARO', status: 'open', title: '¿Lloverá en Madrid?' };
+  assert.equal(M.normalizar(raro), null, 'no se entiende');
+  // El título sale del propio mercado, que es lo que el explorador enseña.
+  assert.equal(raro.title, '¿Lloverá en Madrid?');
+});

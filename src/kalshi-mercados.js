@@ -123,7 +123,16 @@ async function listarMercados({ serie, limit = 200, timeoutMs = 10_000 } = {}) {
  * Lo que importa de la tabla no es el volumen: es la columna de «entendidos».
  * Una serie con mil mercados de los que entendemos cero no se puede operar.
  */
-async function explorarSeries({ paginas = 3, porPagina = 200, timeoutMs = 15_000, filtro = null } = {}) {
+// Un mercado "MVE" es una combinada de varias patas ("sí Toronto, sí Detroit,
+// …"): no es una opción de un evento, es una apuesta múltiple. El analizador de
+// predicciones ya las descartaba, y aquí también sobran — pero además INUNDAN
+// el listado general. La primera exploración real devolvió 600 mercados y los
+// 600 eran MVE: sin saltarlas no se llega a ver ni un contrato de cripto.
+function esMve(m) {
+  return Boolean(m && (m.mve_collection_ticker || (Array.isArray(m.mve_selected_legs) && m.mve_selected_legs.length)));
+}
+
+async function explorarSeries({ paginas = 25, porPagina = 200, timeoutMs = 15_000, filtro = null } = {}) {
   const series = new Map();
   let cursor = null;
   let total = 0;
@@ -132,7 +141,7 @@ async function explorarSeries({ paginas = 3, porPagina = 200, timeoutMs = 15_000
   // Antes, una respuesta con otra forma dejaba la lista vacía y el escáner
   // enseñaba una tabla en blanco: indistinguible de «hoy no hay mercados», que
   // es la conclusión equivocada y la que más tiempo hace perder.
-  const diagnostico = { url: `${KALSHI_BASE}/markets`, envoltura: null, muestra: null, paginas: 0 };
+  const diagnostico = { url: `${KALSHI_BASE}/markets`, envoltura: null, muestra: null, paginas: 0, mve: 0 };
 
   for (let i = 0; i < paginas; i++) {
     const raw = await fetchJson(diagnostico.url, {
@@ -153,6 +162,8 @@ async function explorarSeries({ paginas = 3, porPagina = 200, timeoutMs = 15_000
     if (!diagnostico.campos) diagnostico.campos = Object.keys(crudos[0]);
 
     for (const m of crudos) {
+      if (esMve(m)) { diagnostico.mve++; continue; }
+
       const serie = String(m.series_ticker || m.ticker || '').split('-')[0];
       if (!serie) continue;
       if (filtro && !serie.toUpperCase().includes(filtro.toUpperCase())) continue;
@@ -167,6 +178,8 @@ async function explorarSeries({ paginas = 3, porPagina = 200, timeoutMs = 15_000
         e.formas.add(n.tipo);
         if (!e.ejemplo) e.ejemplo = n.titulo;
       }
+      // Aunque no se entienda, el título ayuda a saber qué es esa serie.
+      if (!e.ejemplo) e.ejemplo = m.title || m.yes_sub_title || '';
       series.set(serie, e);
     }
 
@@ -225,4 +238,4 @@ function mercadosDemo({ precio, horizontes, sesgo = 0, symbol = 'BTCUSDT', ahora
   return { serie: 'DEMO', total: mercados.length, entendidos: mercados.length, descartados: 0, mercados };
 }
 
-module.exports = { listarMercados, explorarSeries, normalizar, precio, mercadosDemo, KALSHI_BASE };
+module.exports = { listarMercados, explorarSeries, esMve, normalizar, precio, mercadosDemo, KALSHI_BASE };
