@@ -82,9 +82,22 @@ async function explorar() {
   if (OPCIONES.buscar) console.log(`  filtrando por «${OPCIONES.buscar}»`);
   console.log('');
 
-  const { total, series } = await explorarSeries({ filtro: OPCIONES.buscar });
+  const { total, series, diagnostico } = await explorarSeries({ filtro: OPCIONES.buscar });
+
   if (!series.length) {
-    console.log(`Se miraron ${total} mercados y no salió ninguna serie${OPCIONES.buscar ? ' con ese filtro' : ''}.`);
+    console.log(`Se miraron ${total} mercados en ${diagnostico.paginas} página(s) y no salió ninguna serie${OPCIONES.buscar ? ' con ese filtro' : ''}.`);
+    console.log('');
+    console.log('Qué respondió la API, para no quedarse adivinando:');
+    console.log(`  campos de arriba   ${JSON.stringify(diagnostico.envoltura)}`);
+    if (diagnostico.campos) console.log(`  campos de un mercado ${JSON.stringify(diagnostico.campos.slice(0, 18))}`);
+    console.log(`  primeros bytes     ${diagnostico.muestra}`);
+    console.log('');
+    if (total > 0 && OPCIONES.buscar) {
+      console.log(`Había ${total} mercados: el filtro «${OPCIONES.buscar}» es lo que los dejó fuera. Prueba sin él.`);
+    } else if (total === 0) {
+      console.log('Cero mercados. O la respuesta no trae `markets`, o el endpoint pide otros parámetros.');
+      console.log('Pégame los «primeros bytes» de arriba y lo arreglo.');
+    }
     return;
   }
 

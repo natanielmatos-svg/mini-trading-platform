@@ -123,20 +123,34 @@ async function listarMercados({ serie, limit = 200, timeoutMs = 10_000 } = {}) {
  * Lo que importa de la tabla no es el volumen: es la columna de «entendidos».
  * Una serie con mil mercados de los que entendemos cero no se puede operar.
  */
-async function explorarSeries({ paginas = 3, porPagina = 1000, timeoutMs = 15_000, filtro = null } = {}) {
+async function explorarSeries({ paginas = 3, porPagina = 200, timeoutMs = 15_000, filtro = null } = {}) {
   const series = new Map();
   let cursor = null;
   let total = 0;
 
+  // Con qué se encontró de verdad, para poder DECIRLO cuando no sale nada.
+  // Antes, una respuesta con otra forma dejaba la lista vacía y el escáner
+  // enseñaba una tabla en blanco: indistinguible de «hoy no hay mercados», que
+  // es la conclusión equivocada y la que más tiempo hace perder.
+  const diagnostico = { url: `${KALSHI_BASE}/markets`, envoltura: null, muestra: null, paginas: 0 };
+
   for (let i = 0; i < paginas; i++) {
-    const raw = await fetchJson(`${KALSHI_BASE}/markets`, {
+    const raw = await fetchJson(diagnostico.url, {
       timeoutMs,
       searchParams: { status: 'open', limit: porPagina, cursor: cursor || undefined },
     });
 
+    if (!diagnostico.envoltura) {
+      diagnostico.envoltura = raw && typeof raw === 'object' ? Object.keys(raw) : typeof raw;
+      diagnostico.muestra = JSON.stringify(raw).slice(0, 600);
+    }
+    diagnostico.paginas++;
+
     const crudos = Array.isArray(raw?.markets) ? raw.markets : [];
     if (!crudos.length) break;
     total += crudos.length;
+
+    if (!diagnostico.campos) diagnostico.campos = Object.keys(crudos[0]);
 
     for (const m of crudos) {
       const serie = String(m.series_ticker || m.ticker || '').split('-')[0];
@@ -164,7 +178,7 @@ async function explorarSeries({ paginas = 3, porPagina = 1000, timeoutMs = 15_00
     .map((e) => ({ ...e, formas: [...e.formas] }))
     .sort((a, b) => b.entendidos - a.entendidos || b.volumen - a.volumen);
 
-  return { total, series: lista };
+  return { total, series: lista, diagnostico };
 }
 
 /**

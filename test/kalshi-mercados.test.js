@@ -203,3 +203,36 @@ test('explorar sabe filtrar por nombre', async () => {
     delete require.cache[require.resolve('../src/kalshi-mercados')];
   }
 });
+
+test('cuando no sale nada, se dice QUÉ respondió la API', async () => {
+  // El fallo que esto evita: una respuesta con otra forma dejaba la lista
+  // vacía y el escáner enseñaba una tabla en blanco, indistinguible de «hoy no
+  // hay mercados». Es la conclusión equivocada y la que más tiempo hace perder.
+  const servidor = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    // Un envoltorio distinto del que esperamos: ni error, ni mercados.
+    res.end(JSON.stringify({ data: { items: [] }, next: null }));
+  });
+
+  await new Promise((r) => servidor.listen(0, r));
+  const anterior = process.env.KALSHI_API;
+  process.env.KALSHI_API = `http://127.0.0.1:${servidor.address().port}`;
+  delete require.cache[require.resolve('../src/kalshi-mercados')];
+  const Mod = require('../src/kalshi-mercados');
+
+  try {
+    const r = await Mod.explorarSeries();
+    assert.equal(r.total, 0);
+    assert.equal(r.series.length, 0);
+
+    // Y aquí está lo que hace que no se quede uno adivinando.
+    assert.deepEqual(r.diagnostico.envoltura, ['data', 'next'], 'los campos que sí vinieron');
+    assert.match(r.diagnostico.muestra, /items/);
+    assert.equal(r.diagnostico.paginas, 1);
+  } finally {
+    servidor.close();
+    if (anterior === undefined) delete process.env.KALSHI_API;
+    else process.env.KALSHI_API = anterior;
+    delete require.cache[require.resolve('../src/kalshi-mercados')];
+  }
+});
