@@ -112,6 +112,62 @@ async function listarMercados({ serie, limit = 200, timeoutMs = 10_000 } = {}) {
 }
 
 /**
+ * Qué series hay abiertas, y de cuáles entendemos los contratos.
+ *
+ * Existe porque el primer obstáculo real para probar esto es acertar el
+ * `series_ticker`, y un ticker equivocado devuelve una lista vacía en silencio
+ * —que se lee como «hoy no hay oportunidades» cuando en realidad es «te has
+ * equivocado de nombre»—. Aquí se pide el listado general y se agrupa por
+ * serie, diciendo de cada una cuántos contratos se entienden.
+ *
+ * Lo que importa de la tabla no es el volumen: es la columna de «entendidos».
+ * Una serie con mil mercados de los que entendemos cero no se puede operar.
+ */
+async function explorarSeries({ paginas = 3, porPagina = 1000, timeoutMs = 15_000, filtro = null } = {}) {
+  const series = new Map();
+  let cursor = null;
+  let total = 0;
+
+  for (let i = 0; i < paginas; i++) {
+    const raw = await fetchJson(`${KALSHI_BASE}/markets`, {
+      timeoutMs,
+      searchParams: { status: 'open', limit: porPagina, cursor: cursor || undefined },
+    });
+
+    const crudos = Array.isArray(raw?.markets) ? raw.markets : [];
+    if (!crudos.length) break;
+    total += crudos.length;
+
+    for (const m of crudos) {
+      const serie = String(m.series_ticker || m.ticker || '').split('-')[0];
+      if (!serie) continue;
+      if (filtro && !serie.toUpperCase().includes(filtro.toUpperCase())) continue;
+
+      const e = series.get(serie) || { serie, mercados: 0, entendidos: 0, volumen: 0, ejemplo: null, formas: new Set() };
+      e.mercados++;
+      e.volumen += Number(m.volume) || 0;
+
+      const n = normalizar(m);
+      if (n) {
+        e.entendidos++;
+        e.formas.add(n.tipo);
+        if (!e.ejemplo) e.ejemplo = n.titulo;
+      }
+      series.set(serie, e);
+    }
+
+    cursor = raw?.cursor || null;
+    if (!cursor) break;
+  }
+
+  const lista = [...series.values()]
+    .map((e) => ({ ...e, formas: [...e.formas] }))
+    .sort((a, b) => b.entendidos - a.entendidos || b.volumen - a.volumen);
+
+  return { total, series: lista };
+}
+
+/**
  * Mercados de mentira, para probar el camino entero sin red.
  *
  * Los precios salen de NUESTRA propia distribución, redondeados al céntimo y
@@ -155,4 +211,4 @@ function mercadosDemo({ precio, horizontes, sesgo = 0, symbol = 'BTCUSDT', ahora
   return { serie: 'DEMO', total: mercados.length, entendidos: mercados.length, descartados: 0, mercados };
 }
 
-module.exports = { listarMercados, normalizar, precio, mercadosDemo, KALSHI_BASE };
+module.exports = { listarMercados, explorarSeries, normalizar, precio, mercadosDemo, KALSHI_BASE };

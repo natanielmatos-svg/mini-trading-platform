@@ -122,3 +122,84 @@ test('sin serie no se llama a nada', async () => {
   // Un ticker vacío devolvería una lista vacía y parecería un día tranquilo.
   await assert.rejects(() => M.listarMercados({}), /series_ticker/);
 });
+
+// --- Explorar qué series hay ------------------------------------------------
+
+test('explorar agrupa por serie y cuenta cuántos contratos se entienden', async () => {
+  // La columna que importa es «entendidos»: una serie con mil mercados de los
+  // que entendemos cero no se puede operar, y sin esto parecería normal.
+  let pagina = 0;
+  const servidor = http.createServer((req, res) => {
+    pagina++;
+    assert.match(req.url, /status=open/);
+    if (pagina === 2) assert.match(req.url, /cursor=siguiente/, 'la segunda página sigue el cursor');
+
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(pagina === 1 ? {
+      cursor: 'siguiente',
+      markets: [
+        { ...base, ticker: 'KXBTCD-1', series_ticker: 'KXBTCD', volume: 100 },
+        { ...base, ticker: 'KXBTCD-2', series_ticker: 'KXBTCD', strike_type: 'between', floor_strike: 1, cap_strike: 2, volume: 50 },
+        // Sin campos legibles: cuenta como mercado, no como entendido.
+        { ticker: 'KXRAIN-1', series_ticker: 'KXRAIN', status: 'open', title: '¿Lloverá?', volume: 9999 },
+      ],
+    } : { cursor: null, markets: [{ ...base, ticker: 'KXBTCD-3', series_ticker: 'KXBTCD', volume: 10 }] }));
+  });
+
+  await new Promise((r) => servidor.listen(0, r));
+  const anterior = process.env.KALSHI_API;
+  process.env.KALSHI_API = `http://127.0.0.1:${servidor.address().port}`;
+  delete require.cache[require.resolve('../src/kalshi-mercados')];
+  const Mod = require('../src/kalshi-mercados');
+
+  try {
+    const r = await Mod.explorarSeries();
+    assert.equal(r.total, 4, 'se miraron las dos páginas');
+
+    const btc = r.series.find((s) => s.serie === 'KXBTCD');
+    assert.equal(btc.mercados, 3);
+    assert.equal(btc.entendidos, 3);
+    assert.deepEqual(btc.formas.sort(), ['franja', 'mayor']);
+
+    const lluvia = r.series.find((s) => s.serie === 'KXRAIN');
+    assert.equal(lluvia.mercados, 1);
+    assert.equal(lluvia.entendidos, 0, 'mucho volumen y cero entendidos');
+
+    // Ordena por entendidos, no por volumen: KXRAIN mueve cien veces más.
+    assert.equal(r.series[0].serie, 'KXBTCD');
+  } finally {
+    servidor.close();
+    if (anterior === undefined) delete process.env.KALSHI_API;
+    else process.env.KALSHI_API = anterior;
+    delete require.cache[require.resolve('../src/kalshi-mercados')];
+  }
+});
+
+test('explorar sabe filtrar por nombre', async () => {
+  const servidor = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      cursor: null,
+      markets: [
+        { ...base, ticker: 'KXBTCD-1', series_ticker: 'KXBTCD' },
+        { ...base, ticker: 'KXETHD-1', series_ticker: 'KXETHD' },
+      ],
+    }));
+  });
+
+  await new Promise((r) => servidor.listen(0, r));
+  const anterior = process.env.KALSHI_API;
+  process.env.KALSHI_API = `http://127.0.0.1:${servidor.address().port}`;
+  delete require.cache[require.resolve('../src/kalshi-mercados')];
+  const Mod = require('../src/kalshi-mercados');
+
+  try {
+    const r = await Mod.explorarSeries({ filtro: 'btc' });
+    assert.deepEqual(r.series.map((s) => s.serie), ['KXBTCD'], 'y no distingue mayúsculas');
+  } finally {
+    servidor.close();
+    if (anterior === undefined) delete process.env.KALSHI_API;
+    else process.env.KALSHI_API = anterior;
+    delete require.cache[require.resolve('../src/kalshi-mercados')];
+  }
+});

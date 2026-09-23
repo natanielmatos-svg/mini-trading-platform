@@ -22,7 +22,7 @@ require('../src/env');
 
 const { getKlines } = require('../src/klines');
 const { predecirHorizontes, seriesNecesarias } = require('../src/prediccion');
-const { listarMercados, mercadosDemo, KALSHI_BASE } = require('../src/kalshi-mercados');
+const { listarMercados, explorarSeries, mercadosDemo, KALSHI_BASE } = require('../src/kalshi-mercados');
 const edge = require('../src/kalshi-edge');
 const { formatPrice, num, formatDuration } = require('../src/format');
 
@@ -39,6 +39,8 @@ const OPCIONES = {
   ruidoBase: Number(arg('base', process.env.KALSHI_RUIDO_BASE || edge.LIMITES.ruidoBase)),
   todos: process.argv.includes('--todos'),
   demo: process.argv.includes('--demo'),
+  explorar: process.argv.includes('--explorar'),
+  buscar: arg('buscar', null),
   // Cuántos céntimos se desplaza el mercado de mentira respecto a lo que
   // nosotros creemos. Sirve para ver el camino positivo funcionando sin
   // inventarse que el bot encuentra ventaja: con 0 el mercado nos da la razón
@@ -71,7 +73,42 @@ function cabecera() {
   console.log('');
 }
 
+// Antes de nada: qué series hay y cuáles se entienden. Un `series_ticker`
+// equivocado devuelve cero mercados en silencio, y eso se lee como «hoy no hay
+// oportunidades» cuando en realidad es «te has equivocado de nombre».
+async function explorar() {
+  console.log('Series abiertas en Kalshi\n');
+  console.log(`  ${KALSHI_BASE}`);
+  if (OPCIONES.buscar) console.log(`  filtrando por «${OPCIONES.buscar}»`);
+  console.log('');
+
+  const { total, series } = await explorarSeries({ filtro: OPCIONES.buscar });
+  if (!series.length) {
+    console.log(`Se miraron ${total} mercados y no salió ninguna serie${OPCIONES.buscar ? ' con ese filtro' : ''}.`);
+    return;
+  }
+
+  console.log(`  serie                 mercados  entendidos  formas            ejemplo`);
+  console.log('  ' + '-'.repeat(100));
+  for (const e of series.slice(0, 40)) {
+    console.log(
+      '  ' + e.serie.padEnd(20) +
+      String(e.mercados).padStart(9) + '  ' +
+      String(e.entendidos).padStart(10) + '  ' +
+      (e.formas.join('/') || '—').padEnd(16) + '  ' +
+      String(e.ejemplo || '').slice(0, 44)
+    );
+  }
+  console.log('');
+  console.log(`De ${total} mercados abiertos, ${series.length} series.`);
+  console.log('');
+  console.log('La columna que importa es «entendidos», no el volumen: una serie con mil');
+  console.log('mercados de los que entendemos cero no se puede operar. Coge una con muchos');
+  console.log('entendidos y sobre el activo que sigues, y pásala con --serie.');
+}
+
 async function main() {
+  if (OPCIONES.explorar) return explorar();
   cabecera();
 
   // 1. Las velas y la predicción, igual que las calcula el servidor.

@@ -19,7 +19,7 @@ mismo código (ver [Estructura](#estructura)).
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet (también el gráfico)
-npm test             # 479 tests, sin red
+npm test             # 481 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -38,7 +38,7 @@ versión anterior, y eso ya pasó una vez.
 ### Cómo se prueba
 
 ```bash
-npm test          # 479 tests, sin red, en unos ocho segundos
+npm test          # 481 tests, sin red, en unos ocho segundos
 npm run smoke     # llama a las APIs de verdad — la única prueba que las valida
 ```
 
@@ -810,6 +810,7 @@ probabilidad**. Y aquí hay otra, medida sobre los exchanges. La diferencia entr
 las dos es la ventaja, si la hay.
 
 ```bash
+npm run kalshi -- --explorar --buscar btc               # qué series hay, y cuáles entendemos
 npm run kalshi -- --serie KXBTCD --capital 500          # qué haría, ahora mismo
 npm run kalshi -- --serie KXBTCD --todos                # y por qué descarta cada mercado
 npm run kalshi -- --demo --sesgo 8                      # el camino entero, sin red
@@ -818,6 +819,68 @@ npm run kalshi -- --demo --sesgo 8                      # el camino entero, sin 
 **Este script lee y calcula. No envía órdenes, y no puede.** La parte que
 decide se comprueba entera sin tocar una cuenta; la que ejecuta necesita claves
 y va aparte, para que nadie mueva dinero por lanzar un diagnóstico.
+
+### Cómo probarlo, en orden
+
+**1. Sin red y sin claves.** Prueba la tubería entera antes de tocar nada real:
+
+```bash
+npm test                                   # 481 tests
+npm run kalshi -- --demo --todos           # el escáner, con mercados inventados
+npm run kalshi -- --demo --sesgo 15        # y el camino positivo
+```
+
+Con `--sesgo 0` no encuentra nada, y eso es lo correcto: un mercado que piensa
+lo mismo que tú no te debe dinero.
+
+**2. Encuentra la serie.** Es el primer obstáculo real, y adivinar el
+`series_ticker` es la forma más fácil de creer que no hay oportunidades cuando
+lo que pasa es que te equivocaste de nombre:
+
+```bash
+npm run kalshi -- --explorar --buscar btc
+```
+
+Fíjate en la columna **entendidos**, no en el volumen: una serie con mil
+mercados de los que entendemos cero no se puede operar.
+
+**3. Escanea de verdad** (sólo lectura, sin claves, sin órdenes):
+
+```bash
+npm run kalshi -- --serie LA-QUE-SALIÓ --todos --capital 500
+```
+
+Lo normal es que no encuentre nada. Con `--todos` ves el motivo de cada
+descarte, que es la información útil.
+
+**4. Déjalo corriendo.** Ahora sí el bucle, con cartera de papel:
+
+```bash
+npm run agente -- aprobar --serie LA-QUE-SALIÓ --quien TU-NOMBRE --base 0.0005 --indice "lo que diga su reglamento"
+npm run agente -- --serie LA-QUE-SALIÓ --capital 500
+```
+
+Sin el `aprobar` no operará nada y dirá por qué: es el freno por defecto. El
+`--base` es una **suposición** hasta que lo midas; míralo como lo que es.
+
+Déjalo unos días y después:
+
+```bash
+npm run agente -- autopsia
+```
+
+**5. El agente** (esto sí gasta dinero en llamadas al modelo):
+
+```bash
+setx ANTHROPIC_API_KEY "sk-ant-..."        # PowerShell; en bash, export
+npm run agente -- --agente --web --serie LA-QUE-SALIÓ
+```
+
+Para el bot en caliente en cualquier momento, sin tocar el proceso:
+
+```bash
+echo '[{"motivo":"paro esto"}]' > vetos.json
+```
 
 ### Cuánta ventaja hace falta de verdad
 
@@ -1480,5 +1543,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  479 tests, sin red
+test/                  481 tests, sin red
 ```
