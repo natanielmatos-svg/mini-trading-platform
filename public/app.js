@@ -527,7 +527,17 @@ function renderForecast() {
 // de ruptura usa ése y no otro.
 
 function datosProb() {
-  return { datos: state.forecast, interval: state.interval, nivel: state.nivel, precio: precioActual() };
+  // La vela en curso del bloque elegido arriba: es lo que sincroniza la cifra
+  // grande con el Timeframe. La misma ventana que usa el reloj, así que las
+  // dos cuentas atrás van a la vez.
+  const v = ventanaActual();
+  return {
+    datos: state.forecast,
+    interval: state.interval,
+    nivel: state.nivel,
+    precio: precioActual(),
+    vela: v ? { cierraEn: v.close } : null,
+  };
 }
 
 // `force` repinta la tabla; sin él sólo se reescriben los números, que es lo
@@ -1043,7 +1053,10 @@ function init() {
     if (document.hidden) return;
     renderClock();
     PanelPrediccion.tick(el.forecast);
-    PanelPrediccion.tick(el.probPanel); // la misma cuenta atrás, la otra tabla
+    // La probabilidad al cierre tiene por horizonte «lo que le queda a la
+    // vela», así que baja con el reloj aunque no llegue un solo tick: según
+    // se acerca el cierre, se va hacia el 0 o el 100.
+    PanelProbabilidad.actualizar(el.probPanel, datosProb());
     if (state.breakout && state.breakout.ok) renderBreakout();
   }, 250);
 

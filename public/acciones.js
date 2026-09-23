@@ -371,11 +371,19 @@ function renderForecast() {
 // `precioActual`. La probabilidad se queda quieta con él, que es la verdad.
 
 function datosProb() {
+  // La vela en curso del bloque elegido arriba: es lo que sincroniza la cifra
+  // grande con el Timeframe. La misma ventana que usa el reloj, así que las
+  // dos cuentas atrás van a la vez.
+  const v = ventanaActual();
   return {
     datos: state.forecast,
     interval: state.interval,
     nivel: state.nivel,
     precio: precioActual(),
+    // Con la bolsa cerrada no hay vela formándose: enseñar «al cierre de esta
+    // vela, quedan 11:59:03» sería una cuenta atrás hacia un cierre que no va
+    // a ocurrir, porque esa vela ni siquiera ha empezado.
+    vela: abierto() && v ? { cierraEn: v.close } : null,
     // Los plazos cuentan del reloj de pared. Con la bolsa cerrada, «4% de pasar
     // de 366,40 dentro de cinco minutos» es la probabilidad de un movimiento
     // que no puede ocurrir, porque no hay mercado donde ocurra.
@@ -785,7 +793,10 @@ function init() {
     renderClock();
     renderMarket();
     PanelPrediccion.tick(el.forecast);
-    PanelPrediccion.tick(el.probPanel); // la misma cuenta atrás, la otra tabla
+    // La probabilidad al cierre tiene por horizonte «lo que le queda a la
+    // vela», así que baja con el reloj aunque no llegue un solo tick: según
+    // se acerca el cierre, se va hacia el 0 o el 100.
+    PanelProbabilidad.actualizar(el.probPanel, datosProb());
     if (state.breakout && state.breakout.ok) renderBreakout();
   }, 250);
 

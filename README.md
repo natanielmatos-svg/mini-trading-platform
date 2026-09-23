@@ -19,7 +19,7 @@ mismo código (ver [Estructura](#estructura)).
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet (también el gráfico)
-npm test             # 404 tests, sin red
+npm test             # 417 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -38,7 +38,7 @@ versión anterior, y eso ya pasó una vez.
 ### Cómo se prueba
 
 ```bash
-npm test          # 404 tests, sin red, en unos ocho segundos
+npm test          # 417 tests, sin red, en unos ocho segundos
 npm run smoke     # llama a las APIs de verdad — la única prueba que las valida
 ```
 
@@ -443,26 +443,54 @@ boletín de notas**, y la interfaz enseña la nota al lado de cada banda.
 
 ### ¿Termina por encima de un precio?
 
-Escribe un precio en la tarjeta y la aplicación dice, a cada plazo, qué
-probabilidad hay de que el precio acabe por encima y por debajo. Se recalcula
-con cada tick.
+Escribe un precio **debajo del gráfico** y la aplicación responde a lo que de
+verdad se pregunta quien mira una pantalla de precios. Hasta ahora sólo
+enseñaba la banda donde caerá el precio el 90% de las veces, que es la misma
+información del revés pero obliga a hacer la conversión en la cabeza.
 
-| vence en | por encima | por debajo |
-|---|---|---|
-| 00:57 | 57% | 43% |
-| 14:57 | 56% | 44% |
-| 3:59:57 | 53% | 47% |
+Lo primero que se lee es **el cierre de la vela que estás mirando**:
 
-Es la pregunta que de verdad se hace quien mira una pantalla de precios, y
-hasta ahora la aplicación no la respondía: enseñaba la banda donde caerá el
-precio el 90% de las veces, que es la misma información del revés pero obliga a
-hacer la conversión en la cabeza.
+> al cierre de esta vela de **15m** · quedan 06:55
+>
+> ## 68% por encima · 32% por debajo
+
+Y debajo, los plazos fijos en fichas: 00:46 → 93%, 04:46 → 97%, 14:46 → 93%…
+
+La tarjeta vive en la columna del gráfico, no en el panel lateral, y el gráfico
+creció de 62vh a 72vh: el hueco que quedaba bajo las velas en una pantalla
+ancha era espacio muerto, y esto es lo que se mira mientras se opera.
 
 Tres botones al lado del campo lo rellenan con lo que la aplicación ya sabe: el
 precio de ahora, y **la resistencia y el soporte que detecta el análisis de
 ruptura**. «¿Romperá la resistencia?» pasa a tener un número en vez de un
 adjetivo. El nivel se guarda **por símbolo**: 88.000 es una pregunta sensata
 sobre bitcoin y un disparate sobre ethereum.
+
+#### Sincronizada con el bloque de tiempo de arriba
+
+La cifra grande cambia con el Timeframe: en 1m pregunta por los segundos que le
+quedan a esa vela de un minuto, en 4h por las horas que le quedan a esa. **La
+cuenta atrás es la misma que la del reloj**, no una parecida — sale de la misma
+`candleWindow`.
+
+Ese horizonte no se puede publicar de antemano, porque cambia cada segundo. Así
+que el servidor manda, por cada plazo, la sigma de un bloque, la varianza de
+largo plazo y la persistencia, y **el navegador recalcula la anchura exacta**
+para el tiempo que queda, con la misma cuenta de reversión a la media que usa
+el servidor. La forma de las colas se toma del plazo medido más cercano; la
+anchura es exacta. Hay un test que lo comprueba donde se puede: cuando el
+tiempo restante coincide con un plazo publicado, la sigma recalculada es la
+suya al bit.
+
+La consecuencia se ve en pantalla y es la correcta: **según se acerca el cierre,
+la probabilidad se va hacia el 0 o el 100**. A tres segundos del cierre el
+precio ya casi no tiene tiempo de cambiar de lado. El panel se recalcula cuatro
+veces por segundo con el reloj, no sólo cuando llega un tick, porque el plazo
+se encoge aunque el mercado esté parado.
+
+Con la bolsa cerrada no hay cifra grande: no hay vela formándose, y una cuenta
+atrás «al cierre» sería hacia un cierre que no va a ocurrir. En su sitio va el
+aviso de que el mercado está cerrado.
 
 #### La cuenta la hace el navegador
 
@@ -991,6 +1019,11 @@ puntos, en unidades de sigma, con `muestra` (cuántas observaciones hay detrás)
 Con ella y `sigmaHorizonte` se calcula la probabilidad de acabar por encima de
 cualquier precio sin volver a llamar. Es lo que hace el navegador en cada tick.
 
+Y `sigmaBloque`, `vLargo` y `persistencia`, que son los tres números con los que
+se reconstruye la sigma de un plazo que **no** está en la lista —el que le queda
+a la vela en curso, que cambia cada segundo—. `forecast.varianzaHorizonte` acepta
+bloques fraccionarios justamente para eso.
+
 Con `&nivel=88000` la respuesta añade a cada horizonte `probabilidad` con
 `encima`, `debajo`, `resolucion` y `fuera` —que dice si el nivel se sale de lo
 que la muestra llegó a ver, en cuyo caso el número es un techo y no una
@@ -1239,5 +1272,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  404 tests, sin red
+test/                  417 tests, sin red
 ```

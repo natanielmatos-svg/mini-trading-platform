@@ -322,6 +322,14 @@ test('/api/forecast manda la distribución empaquetada, no sólo las bandas', as
   assert.ok(h.rejilla.z.length >= 20 && h.rejilla.z.length <= 128, `${h.rejilla.z.length} puntos`);
   assert.ok(h.rejilla.n <= h.rejilla.muestra, 'nunca más puntos que observaciones');
   assert.ok(h.sigmaHorizonte > 0, 'y la sigma del plazo, que es la otra mitad de la cuenta');
+
+  // Y con qué recalcular la sigma de un plazo que NO está en la lista: el que
+  // le queda a la vela en curso, que cambia cada segundo y por eso no se puede
+  // publicar de antemano.
+  assert.ok(h.sigmaBloque > 0, 'falta la sigma de un bloque');
+  assert.ok(h.vLargo > 0, 'falta la varianza de largo plazo');
+  assert.ok(h.persistencia > 0 && h.persistencia < 1, 'falta la persistencia');
+  assert.ok(h.bloques >= 1 && h.ms > 0, 'y cuánto dura un bloque de su serie');
 });
 
 test('/api/forecast responde por un nivel concreto si se le pide', async () => {

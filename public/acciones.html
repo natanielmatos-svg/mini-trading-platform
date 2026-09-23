@@ -52,9 +52,21 @@
   <p class="aviso-clave" id="avisoClave" hidden></p>
 
   <div class="container">
-    <div class="chart-area">
-      <canvas id="priceChart"></canvas>
-      <div id="tooltip"></div>
+    <div class="main-col">
+      <div class="chart-area">
+        <canvas id="priceChart"></canvas>
+        <div id="tooltip"></div>
+      </div>
+      <div class="card prob-card">
+        <h2>¿Termina por encima de…? <small>probabilidad en vivo</small></h2>
+        <div class="prob-entrada">
+          <input type="number" id="probNivel" step="any" min="0" inputmode="decimal" placeholder="precio" aria-label="Precio de referencia" />
+          <button type="button" id="probAhora" class="ghost small" title="El precio de ahora">ahora</button>
+          <button type="button" id="probArriba" class="ghost small" title="El nivel de resistencia que detecta el análisis de ruptura">resistencia</button>
+          <button type="button" id="probAbajo" class="ghost small" title="El nivel de soporte que detecta el análisis de ruptura">soporte</button>
+        </div>
+        <div id="probPanel"><p class="muted">Escribe un precio y aparece la probabilidad de acabar por encima y por debajo: al cierre de la vela que estás mirando, y a cada plazo.</p></div>
+      </div>
     </div>
 
     <div class="side-panel">
@@ -86,16 +98,6 @@
         <div id="forecastPanel"><p class="muted">Calculando…</p></div>
       </div>
 
-      <div class="card" data-tarjeta="probabilidad">
-        <h2>¿Termina por encima de…? <small>probabilidad en vivo</small></h2>
-        <div class="prob-entrada">
-          <input type="number" id="probNivel" step="any" min="0" inputmode="decimal" placeholder="precio" aria-label="Precio de referencia" />
-          <button type="button" id="probAhora" class="ghost small" title="El precio de ahora">ahora</button>
-          <button type="button" id="probArriba" class="ghost small" title="El nivel de resistencia que detecta el análisis de ruptura">resistencia</button>
-          <button type="button" id="probAbajo" class="ghost small" title="El nivel de soporte que detecta el análisis de ruptura">soporte</button>
-        </div>
-        <div id="probPanel"><p class="muted">Escribe un precio y aparece la probabilidad de acabar por encima y por debajo, a cada plazo.</p></div>
-      </div>
 
       <div class="card" data-tarjeta="ruptura">
         <h2>¿Rompe esta vela?</h2>

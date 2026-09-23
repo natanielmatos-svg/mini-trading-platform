@@ -60,16 +60,25 @@ a { color: var(--accent); text-decoration: none; }
 .dot.off { background: var(--down); }
 
 .container { display: flex; padding: 16px; gap: 16px; align-items: stretch; flex-wrap: wrap; }
+/* La columna principal: el gráfico y, debajo, la probabilidad. Estaba en el
+   panel lateral y había que bajar para verla; aquí ocupa el hueco que dejaba
+   el gráfico, que era espacio muerto en cuanto la pantalla es ancha. */
+.main-col { flex: 3 1 420px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
 .chart-area {
-  flex: 3 1 420px;
+  flex: none;
   background: var(--panel);
   border-radius: 8px;
   border: 1px solid var(--line);
-  height: 62vh;
-  min-height: 320px;
+  height: 72vh;
+  min-height: 340px;
   position: relative;
   overflow: hidden;
 }
+/* En una pantalla estrecha las dos columnas se apilan y 72vh de gráfico dejan
+   la probabilidad fuera de la pantalla, que es justo lo que se quería evitar. */
+@media (max-width: 720px) { .chart-area { height: 52vh; } }
+
 #priceChart { width: 100%; height: 100%; display: block; cursor: crosshair; }
 #tooltip {
   display: none;
@@ -339,32 +348,60 @@ button.small { font-size: 11px; padding: 3px 8px; }
 .clock-head .tarjeta-asa { margin-right: 0; }
 
 /* ¿Termina por encima de…? */
+.prob-card h2 { margin-bottom: 8px; }
 .prob-entrada {
   display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 .prob-entrada input {
-  flex: 1 1 110px; min-width: 90px;
+  flex: 0 1 160px; min-width: 110px;
   background: #0b1220; color: var(--text);
   border: 1px solid var(--line); border-radius: 6px;
-  padding: 6px 8px; font-size: 13px; font-variant-numeric: tabular-nums;
+  padding: 7px 9px; font-size: 15px; font-variant-numeric: tabular-nums;
 }
 .prob-entrada input:focus { outline: none; border-color: var(--accent); }
-.prob-nivel { margin: 0 0 8px; font-size: 12px; color: var(--muted); }
+
+/* La cifra grande: el cierre de la vela del bloque elegido arriba. */
+.prob-cierre {
+  background: #0b1220; border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px 12px; margin-bottom: 10px;
+}
+.prob-cierre-titulo { margin: 0 0 6px; font-size: 12px; color: var(--muted); }
+.prob-cierre-titulo strong { color: var(--text); }
+.prob-cierre-falta { font-variant-numeric: tabular-nums; color: var(--accent); }
+.prob-cierre-cifras { display: flex; gap: 28px; flex-wrap: wrap; align-items: baseline; }
+.prob-cierre-lado { display: flex; align-items: baseline; gap: 7px; }
+.prob-cierre-p { font-size: 34px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.prob-cierre-et { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+.prob-nivel { margin: 0 0 10px; font-size: 12px; color: var(--muted); }
 .prob-nivel strong { color: var(--text); font-variant-numeric: tabular-nums; }
 .prob-nivel .bull { color: var(--up); }
 .prob-nivel .bear { color: var(--down); }
+.prob-otros { margin: 0 0 6px; font-size: 11px; color: #475569; }
 
-.prob-tabla .prob-encima,
-.prob-tabla .prob-debajo {
-  text-align: center; font-weight: 600; white-space: nowrap;
+/* Los plazos fijos, en fichas: con el ancho del gráfico caben todas en una o
+   dos filas y se leen de un vistazo, cosa que una tabla de diez filas en una
+   columna estrecha no permitía. */
+.prob-plazos {
+  display: grid; gap: 6px;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  margin-bottom: 10px;
 }
-.prob-tabla .prob-encima { cursor: help; }
-.prob-tabla .bull { color: var(--up); }
-.prob-tabla .bear { color: var(--down); }
-.prob-tabla .flat { color: var(--muted); }
+.prob-tile {
+  background: #0b1220; border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 8px; display: flex; flex-direction: column; gap: 2px; cursor: help;
+}
+.prob-tile .prob-tile-plazo { font-size: 10px; color: #475569; font-variant-numeric: tabular-nums; }
+.prob-tile .prob-encima { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.prob-tile .prob-debajo { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.prob-encima.bull, .prob-cierre-p.bull { color: var(--up); }
+.prob-encima.bear, .prob-cierre-p.bear { color: var(--down); }
+.prob-encima.flat, .prob-cierre-p.flat { color: var(--text); }
+
 .prob-aviso {
-  margin: 0 0 8px; padding: 6px 8px; font-size: 11px; line-height: 1.45;
+  margin: 0 0 10px; padding: 6px 8px; font-size: 11px; line-height: 1.45;
   color: #fbbf24; background: rgba(251, 191, 36, 0.08);
   border-left: 2px solid #fbbf24; border-radius: 0 4px 4px 0;
 }

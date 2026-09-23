@@ -165,7 +165,8 @@ function predecir(candles, { bloques = 1, precio = null, lambda = LAMBDA, cuanti
   const sigma1 = sigmas[sigmas.length - 1];           // para la siguiente vela
   if (!(sigma1 > 0)) return { ok: false, reason: 'volatilidad estimada en cero' };
 
-  const sigmaH = Math.sqrt(varianzaHorizonte(sigma1, varianzaLargoPlazo(rets), bloques, persistencia));
+  const vLargo = varianzaLargoPlazo(rets);
+  const sigmaH = Math.sqrt(varianzaHorizonte(sigma1, vLargo, bloques, persistencia));
 
   const p0 = Number.isFinite(precio) && precio > 0 ? precio : candles[candles.length - 1].close;
 
@@ -197,6 +198,11 @@ function predecir(candles, { bloques = 1, precio = null, lambda = LAMBDA, cuanti
     precio: p0,
     rejilla,
     sigmaBloque: sigma1,
+    // La varianza de largo plazo hacia la que revierte. Viaja con la respuesta
+    // porque el navegador la necesita para recalcular la sigma de un horizonte
+    // que no está en la lista: el que le queda a la vela en curso, que cambia
+    // cada segundo y no se puede publicar de antemano.
+    vLargo,
     sigmaHorizonte: sigmaH,
     // En tanto por uno sobre el precio, que es como se lee.
     sigmaPct: sigmaH * 100,
@@ -240,11 +246,23 @@ function varianzaLargoPlazo(rets) {
  */
 function varianzaHorizonte(sigma1, vLargo, bloques, persistencia = PERSISTENCIA) {
   const v1 = sigma1 * sigma1;
+  if (!(bloques > 0)) return 0;
   if (!(vLargo > 0) || !(persistencia > 0) || persistencia >= 1) return v1 * bloques;
 
+  // `bloques` puede no ser entero: «lo que le queda a esta vela» son 7,4
+  // minutos, no 7. Los pasos completos se suman enteros y del último se toma
+  // la fracción que toca.
+  const enteros = Math.floor(bloques);
   let total = 0;
-  for (let i = 1; i <= bloques; i++) total += vLargo + persistencia ** (i - 1) * (v1 - vLargo);
-  return Math.max(total, v1); // nunca menos que un solo paso
+  for (let i = 1; i <= enteros; i++) total += vLargo + persistencia ** (i - 1) * (v1 - vLargo);
+
+  const resto = bloques - enteros;
+  if (resto > 0) total += resto * (vLargo + persistencia ** enteros * (v1 - vLargo));
+
+  // Nunca menos de lo que da el propio horizonte a volatilidad constante. Con
+  // `bloques` por debajo de uno el suelo baja con él: si a la vela le quedan
+  // doce segundos, la incertidumbre no es la de un minuto entero.
+  return Math.max(total, v1 * Math.min(bloques, 1));
 }
 
 // Curtosis de la muestra estandarizada. Una normal da 3.
