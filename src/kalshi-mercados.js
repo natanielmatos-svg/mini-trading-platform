@@ -125,9 +125,12 @@ async function listarMercados({ serie, limit = 200, timeoutMs = 10_000 } = {}) {
  */
 // Un mercado "MVE" es una combinada de varias patas ("sí Toronto, sí Detroit,
 // …"): no es una opción de un evento, es una apuesta múltiple. El analizador de
-// predicciones ya las descartaba, y aquí también sobran — pero además INUNDAN
-// el listado general. La primera exploración real devolvió 600 mercados y los
-// 600 eran MVE: sin saltarlas no se llega a ver ni un contrato de cripto.
+// predicciones ya las descartaba, y aquí también sobran.
+//
+// Cuánto sobran, medido contra Kalshi de verdad: pedir /markets sin filtro
+// devolvió 5000 mercados y los 5000 eran combinadas de la NFL. Por eso la
+// exploración va por /events con mercados anidados —la ruta que el analizador
+// de predicciones lleva usando en producción— y no por el listado general.
 function esMve(m) {
   return Boolean(m && (m.mve_collection_ticker || (Array.isArray(m.mve_selected_legs) && m.mve_selected_legs.length)));
 }
@@ -141,12 +144,12 @@ async function explorarSeries({ paginas = 25, porPagina = 200, timeoutMs = 15_00
   // Antes, una respuesta con otra forma dejaba la lista vacía y el escáner
   // enseñaba una tabla en blanco: indistinguible de «hoy no hay mercados», que
   // es la conclusión equivocada y la que más tiempo hace perder.
-  const diagnostico = { url: `${KALSHI_BASE}/markets`, envoltura: null, muestra: null, paginas: 0, mve: 0 };
+  const diagnostico = { url: `${KALSHI_BASE}/events`, envoltura: null, muestra: null, paginas: 0, mve: 0, eventos: 0 };
 
   for (let i = 0; i < paginas; i++) {
     const raw = await fetchJson(diagnostico.url, {
       timeoutMs,
-      searchParams: { status: 'open', limit: porPagina, cursor: cursor || undefined },
+      searchParams: { status: 'open', limit: porPagina, with_nested_markets: 'true', cursor: cursor || undefined },
     });
 
     if (!diagnostico.envoltura) {
@@ -155,32 +158,40 @@ async function explorarSeries({ paginas = 25, porPagina = 200, timeoutMs = 15_00
     }
     diagnostico.paginas++;
 
-    const crudos = Array.isArray(raw?.markets) ? raw.markets : [];
-    if (!crudos.length) break;
-    total += crudos.length;
+    const eventos = Array.isArray(raw?.events) ? raw.events : [];
+    if (!eventos.length) break;
+    diagnostico.eventos += eventos.length;
 
-    if (!diagnostico.campos) diagnostico.campos = Object.keys(crudos[0]);
-
-    for (const m of crudos) {
-      if (esMve(m)) { diagnostico.mve++; continue; }
-
-      const serie = String(m.series_ticker || m.ticker || '').split('-')[0];
+    for (const ev of eventos) {
+      const serie = String(ev.series_ticker || ev.event_ticker || '').split('-')[0];
       if (!serie) continue;
-      if (filtro && !serie.toUpperCase().includes(filtro.toUpperCase())) continue;
 
-      const e = series.get(serie) || { serie, mercados: 0, entendidos: 0, volumen: 0, ejemplo: null, formas: new Set() };
-      e.mercados++;
-      e.volumen += Number(m.volume) || 0;
+      const mercados = Array.isArray(ev.markets) ? ev.markets : [];
+      total += mercados.length;
 
-      const n = normalizar(m);
-      if (n) {
-        e.entendidos++;
-        e.formas.add(n.tipo);
-        if (!e.ejemplo) e.ejemplo = n.titulo;
+      if (filtro) {
+        const texto = `${serie} ${ev.title || ''} ${ev.sub_title || ''}`.toUpperCase();
+        if (!texto.includes(filtro.toUpperCase())) continue;
       }
-      // Aunque no se entienda, el título ayuda a saber qué es esa serie.
-      if (!e.ejemplo) e.ejemplo = m.title || m.yes_sub_title || '';
-      series.set(serie, e);
+
+      for (const m of mercados) {
+        if (esMve(m)) { diagnostico.mve++; continue; }
+        if (!diagnostico.campos) diagnostico.campos = Object.keys(m);
+
+        const e = series.get(serie) || { serie, mercados: 0, entendidos: 0, volumen: 0, ejemplo: null, formas: new Set() };
+        e.mercados++;
+        e.volumen += Number(m.volume) || 0;
+
+        const n = normalizar(m);
+        if (n) {
+          e.entendidos++;
+          e.formas.add(n.tipo);
+        }
+        // Aunque no se entienda, el título ayuda a saber qué es esa serie y si
+        // merece la pena enseñarle al traductor a leerla.
+        if (!e.ejemplo) e.ejemplo = (n && n.titulo) || ev.title || m.title || m.yes_sub_title || '';
+        series.set(serie, e);
+      }
     }
 
     cursor = raw?.cursor || null;

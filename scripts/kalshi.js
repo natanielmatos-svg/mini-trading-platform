@@ -92,7 +92,9 @@ async function explorar() {
     console.log('');
     console.log('Qué respondió la API, para no quedarse adivinando:');
     console.log(`  campos de arriba   ${JSON.stringify(diagnostico.envoltura)}`);
-    if (diagnostico.campos) console.log(`  campos de un mercado ${JSON.stringify(diagnostico.campos.slice(0, 18))}`);
+    console.log(`  eventos vistos     ${diagnostico.eventos}`);
+    console.log(`  combinadas MVE     ${diagnostico.mve} (saltadas: no son una opción de un evento)`);
+    if (diagnostico.campos) console.log(`  campos de un mercado ${JSON.stringify(diagnostico.campos)}`);
     console.log(`  primeros bytes     ${diagnostico.muestra}`);
     console.log('');
     if (total > 0 && OPCIONES.buscar) {
@@ -116,7 +118,7 @@ async function explorar() {
     );
   }
   console.log('');
-  console.log(`De ${total} mercados abiertos en ${diagnostico.paginas} página(s), ${series.length} series.`);
+  console.log(`De ${diagnostico.eventos} eventos y ${total} mercados en ${diagnostico.paginas} página(s), ${series.length} series.`);
   if (diagnostico.mve) {
     console.log(`Se saltaron ${diagnostico.mve} mercados «MVE»: son apuestas combinadas de varias patas,`);
     console.log('no una opción de un evento, y este motor no las valora.');

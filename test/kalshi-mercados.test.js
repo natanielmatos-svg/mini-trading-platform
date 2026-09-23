@@ -131,19 +131,23 @@ test('explorar agrupa por serie y cuenta cuántos contratos se entienden', async
   let pagina = 0;
   const servidor = http.createServer((req, res) => {
     pagina++;
+    assert.match(req.url, /^\/events/, 'se explora por eventos, no por el listado general');
+    assert.match(req.url, /with_nested_markets=true/);
     assert.match(req.url, /status=open/);
     if (pagina === 2) assert.match(req.url, /cursor=siguiente/, 'la segunda página sigue el cursor');
 
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify(pagina === 1 ? {
       cursor: 'siguiente',
-      markets: [
-        { ...base, ticker: 'KXBTCD-1', series_ticker: 'KXBTCD', volume: 100 },
-        { ...base, ticker: 'KXBTCD-2', series_ticker: 'KXBTCD', strike_type: 'between', floor_strike: 1, cap_strike: 2, volume: 50 },
+      events: [
+        { series_ticker: 'KXBTCD', title: 'Bitcoin', markets: [
+          { ...base, ticker: 'KXBTCD-1', volume: 100 },
+          { ...base, ticker: 'KXBTCD-2', strike_type: 'between', floor_strike: 1, cap_strike: 2, volume: 50 },
+        ] },
         // Sin campos legibles: cuenta como mercado, no como entendido.
-        { ticker: 'KXRAIN-1', series_ticker: 'KXRAIN', status: 'open', title: '¿Lloverá?', volume: 9999 },
+        { series_ticker: 'KXRAIN', title: '¿Lloverá?', markets: [{ ticker: 'KXRAIN-1', status: 'open', title: '¿Lloverá?', volume: 9999 }] },
       ],
-    } : { cursor: null, markets: [{ ...base, ticker: 'KXBTCD-3', series_ticker: 'KXBTCD', volume: 10 }] }));
+    } : { cursor: null, events: [{ series_ticker: 'KXBTCD', markets: [{ ...base, ticker: 'KXBTCD-3', volume: 10 }] }] }));
   });
 
   await new Promise((r) => servidor.listen(0, r));
@@ -180,9 +184,9 @@ test('explorar sabe filtrar por nombre', async () => {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
       cursor: null,
-      markets: [
-        { ...base, ticker: 'KXBTCD-1', series_ticker: 'KXBTCD' },
-        { ...base, ticker: 'KXETHD-1', series_ticker: 'KXETHD' },
+      events: [
+        { series_ticker: 'KXBTCD', title: 'Bitcoin', markets: [{ ...base, ticker: 'KXBTCD-1' }] },
+        { series_ticker: 'KXETHD', title: 'Ethereum', markets: [{ ...base, ticker: 'KXETHD-1' }] },
       ],
     }));
   });
@@ -246,10 +250,12 @@ test('las apuestas combinadas MVE se saltan, y se cuentan', async () => {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
       cursor: null,
-      markets: [
-        { ...base, ticker: 'KXMVE-1', series_ticker: 'KXMVE', mve_collection_ticker: 'ALGO' },
-        { ...base, ticker: 'KXMVE-2', series_ticker: 'KXMVE', mve_selected_legs: [{ x: 1 }] },
-        { ...base, ticker: 'KXBTCD-1', series_ticker: 'KXBTCD' },
+      events: [
+        { series_ticker: 'KXMVE', title: 'Combinadas', markets: [
+          { ...base, ticker: 'KXMVE-1', mve_collection_ticker: 'ALGO' },
+          { ...base, ticker: 'KXMVE-2', mve_selected_legs: [{ x: 1 }] },
+        ] },
+        { series_ticker: 'KXBTCD', title: 'Bitcoin', markets: [{ ...base, ticker: 'KXBTCD-1' }] },
       ],
     }));
   });
