@@ -289,3 +289,52 @@ test('una serie que no se entiende enseña al menos su título', () => {
   // El título sale del propio mercado, que es lo que el explorador enseña.
   assert.equal(raro.title, '¿Lloverá en Madrid?');
 });
+
+test('el explorador dice cuándo vence lo más cercano de cada serie', async () => {
+  // Es la columna que decide si una serie es operable POR ESTE motor. Una de
+  // contratos a ocho días y otra a una hora se parecen en todo lo demás, y la
+  // primera se descarta entera por vencer más allá de donde el modelo está
+  // medido. Enterarse ahí abajo, mercado a mercado, es tarde.
+  const ahora = Date.parse('2026-09-23T12:00:00Z');
+  const en = (h) => new Date(ahora + h * 3600_000).toISOString();
+
+  const servidor = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      cursor: null,
+      events: [
+        { series_ticker: 'KXHORA', title: 'BTC por horas', markets: [
+          { ...base, ticker: 'KXHORA-1', expiration_time: en(1) },
+          { ...base, ticker: 'KXHORA-2', expiration_time: en(6) },
+          { ...base, ticker: 'KXHORA-3', expiration_time: en(200) },
+        ] },
+        { series_ticker: 'KXSEMANA', title: 'BTC por semanas', markets: [
+          { ...base, ticker: 'KXSEMANA-1', expiration_time: en(190) },
+        ] },
+      ],
+    }));
+  });
+
+  await new Promise((r) => servidor.listen(0, r));
+  const anterior = process.env.KALSHI_API;
+  process.env.KALSHI_API = `http://127.0.0.1:${servidor.address().port}`;
+  delete require.cache[require.resolve('../src/kalshi-mercados')];
+  const Mod = require('../src/kalshi-mercados');
+
+  try {
+    const r = await Mod.explorarSeries({ ahora });
+
+    const hora = r.series.find((s) => s.serie === 'KXHORA');
+    assert.equal(hora.vencePronto, 3600_000, 'lo más cercano, no lo primero que salga');
+    assert.equal(hora.dentroDeUnDia, 2, 'los de 1 h y 6 h; el de 200 h no');
+
+    const semana = r.series.find((s) => s.serie === 'KXSEMANA');
+    assert.equal(semana.dentroDeUnDia, 0, 'una serie a ocho días no tiene nada operable');
+    assert.ok(semana.vencePronto > 24 * 3600_000);
+  } finally {
+    servidor.close();
+    if (anterior === undefined) delete process.env.KALSHI_API;
+    else process.env.KALSHI_API = anterior;
+    delete require.cache[require.resolve('../src/kalshi-mercados')];
+  }
+});

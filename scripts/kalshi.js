@@ -106,15 +106,17 @@ async function explorar() {
     return;
   }
 
-  console.log(`  serie                 mercados  entendidos  formas            ejemplo`);
-  console.log('  ' + '-'.repeat(100));
+  console.log(`  serie                 mercados  entendidos  vence antes  <24h  formas      ejemplo`);
+  console.log('  ' + '-'.repeat(112));
   for (const e of series.slice(0, 40)) {
     console.log(
       '  ' + e.serie.padEnd(20) +
       String(e.mercados).padStart(9) + '  ' +
       String(e.entendidos).padStart(10) + '  ' +
-      (e.formas.join('/') || '—').padEnd(16) + '  ' +
-      String(e.ejemplo || '').slice(0, 44)
+      (e.vencePronto === null ? '—' : formatDuration(e.vencePronto)).padStart(11) + '  ' +
+      String(e.dentroDeUnDia).padStart(4) + '  ' +
+      (e.formas.join('/') || '—').padEnd(10) + '  ' +
+      String(e.ejemplo || '').slice(0, 34)
     );
   }
   console.log('');
@@ -125,9 +127,13 @@ async function explorar() {
   }
   console.log('Con --paginas N se mira más hondo si tu serie no aparece.');
   console.log('');
-  console.log('La columna que importa es «entendidos», no el volumen: una serie con mil');
-  console.log('mercados de los que entendemos cero no se puede operar. Coge una con muchos');
-  console.log('entendidos y sobre el activo que sigues, y pásala con --serie.');
+  console.log('Dos columnas deciden, y ninguna es el volumen:');
+  console.log('  · «entendidos» — una serie de la que entendemos cero no se puede operar.');
+  console.log(`  · «<24h» — cuántos contratos vencen dentro del plazo en el que este motor`);
+  console.log('    está medido. Una serie a ocho días se descarta entera, por buena que sea:');
+  console.log('    a ese plazo el modelo no está calibrado y prefiere no opinar.');
+  console.log('');
+  console.log('Coge una con las dos columnas altas y pásala con --serie.');
 }
 
 async function main() {

@@ -135,7 +135,7 @@ function esMve(m) {
   return Boolean(m && (m.mve_collection_ticker || (Array.isArray(m.mve_selected_legs) && m.mve_selected_legs.length)));
 }
 
-async function explorarSeries({ paginas = 25, porPagina = 200, timeoutMs = 15_000, filtro = null } = {}) {
+async function explorarSeries({ paginas = 25, porPagina = 200, timeoutMs = 15_000, filtro = null, ahora = Date.now() } = {}) {
   const series = new Map();
   let cursor = null;
   let total = 0;
@@ -178,7 +178,10 @@ async function explorarSeries({ paginas = 25, porPagina = 200, timeoutMs = 15_00
         if (esMve(m)) { diagnostico.mve++; continue; }
         if (!diagnostico.campos) diagnostico.campos = Object.keys(m);
 
-        const e = series.get(serie) || { serie, mercados: 0, entendidos: 0, volumen: 0, ejemplo: null, formas: new Set() };
+        const e = series.get(serie) || {
+          serie, mercados: 0, entendidos: 0, volumen: 0, ejemplo: null,
+          formas: new Set(), vencePronto: null, dentroDeUnDia: 0,
+        };
         e.mercados++;
         e.volumen += Number(m.volume) || 0;
 
@@ -186,6 +189,17 @@ async function explorarSeries({ paginas = 25, porPagina = 200, timeoutMs = 15_00
         if (n) {
           e.entendidos++;
           e.formas.add(n.tipo);
+
+          // El plazo es lo que decide si una serie es operable POR ESTE motor,
+          // y sin esta columna no se ve: una serie de contratos a ocho días y
+          // otra de contratos a una hora se parecen en todo lo demás, y la
+          // primera se descarta entera por vencer más allá de donde el modelo
+          // está medido. Enterarse ahí abajo, mercado a mercado, es tarde.
+          const falta = n.vencimiento - ahora;
+          if (falta > 0) {
+            if (e.vencePronto === null || falta < e.vencePronto) e.vencePronto = falta;
+            if (falta <= 24 * 3600_000) e.dentroDeUnDia++;
+          }
         }
         // Aunque no se entienda, el título ayuda a saber qué es esa serie y si
         // merece la pena enseñarle al traductor a leerla.
