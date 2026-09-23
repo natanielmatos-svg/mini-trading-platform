@@ -92,7 +92,7 @@ async function explorar() {
     console.log('');
     console.log('Qué respondió la API, para no quedarse adivinando:');
     console.log(`  campos de arriba   ${JSON.stringify(diagnostico.envoltura)}`);
-    console.log(`  eventos vistos     ${diagnostico.eventos}`);
+    console.log(`  eventos vistos     ${diagnostico.eventos}${diagnostico.agotado ? ' (el listado entero)' : ' (quedaban más páginas)'}`);
     console.log(`  combinadas MVE     ${diagnostico.mve} (saltadas: no son una opción de un evento)`);
     if (diagnostico.campos) console.log(`  campos de un mercado ${JSON.stringify(diagnostico.campos)}`);
     console.log(`  primeros bytes     ${diagnostico.muestra}`);
@@ -125,7 +125,12 @@ async function explorar() {
     console.log(`Se saltaron ${diagnostico.mve} mercados «MVE»: son apuestas combinadas de varias patas,`);
     console.log('no una opción de un evento, y este motor no las valora.');
   }
-  console.log('Con --paginas N se mira más hondo si tu serie no aparece.');
+  if (diagnostico.agotado) {
+    console.log('Se recorrió el listado ENTERO: lo que no esté aquí, no está abierto ahora mismo.');
+  } else {
+    console.log(`Quedaban más páginas por mirar (el corte son ${arg('paginas', 25)}). Con --paginas N se llega más hondo,`);
+    console.log('y hasta que diga «listado entero» no se puede concluir que una serie no existe.');
+  }
   console.log('');
   console.log('Dos columnas deciden, y ninguna es el volumen:');
   console.log('  · «entendidos» — una serie de la que entendemos cero no se puede operar.');

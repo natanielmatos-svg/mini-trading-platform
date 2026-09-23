@@ -338,3 +338,58 @@ test('el explorador dice cuándo vence lo más cercano de cada serie', async () 
     delete require.cache[require.resolve('../src/kalshi-mercados')];
   }
 });
+
+test('el explorador dice si recorrió el listado entero o se quedó sin páginas', async () => {
+  // Son conclusiones opuestas: agotado significa que esa serie no existe;
+  // quedarse sin páginas, que hay que seguir mirando. Sin distinguirlas se
+  // acaba concluyendo lo primero cuando pasaba lo segundo.
+  let pagina = 0;
+  const servidor = http.createServer((req, res) => {
+    pagina++;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      cursor: 'siempre-hay-mas',
+      events: [{ series_ticker: `S${pagina}`, title: 'algo', markets: [{ ...base, ticker: `S${pagina}-1` }] }],
+    }));
+  });
+
+  await new Promise((r) => servidor.listen(0, r));
+  const anterior = process.env.KALSHI_API;
+  process.env.KALSHI_API = `http://127.0.0.1:${servidor.address().port}`;
+  delete require.cache[require.resolve('../src/kalshi-mercados')];
+  const Mod = require('../src/kalshi-mercados');
+
+  try {
+    const corto = await Mod.explorarSeries({ paginas: 3 });
+    assert.equal(corto.diagnostico.paginas, 3);
+    assert.equal(corto.diagnostico.agotado, false, 'el servidor sigue ofreciendo cursor');
+  } finally {
+    servidor.close();
+    if (anterior === undefined) delete process.env.KALSHI_API;
+    else process.env.KALSHI_API = anterior;
+    delete require.cache[require.resolve('../src/kalshi-mercados')];
+  }
+});
+
+test('sin cursor, el listado se da por agotado', async () => {
+  const servidor = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ cursor: null, events: [{ series_ticker: 'KXBTCD', markets: [{ ...base, ticker: 'KXBTCD-1' }] }] }));
+  });
+
+  await new Promise((r) => servidor.listen(0, r));
+  const anterior = process.env.KALSHI_API;
+  process.env.KALSHI_API = `http://127.0.0.1:${servidor.address().port}`;
+  delete require.cache[require.resolve('../src/kalshi-mercados')];
+  const Mod = require('../src/kalshi-mercados');
+
+  try {
+    const r = await Mod.explorarSeries({ paginas: 25 });
+    assert.equal(r.diagnostico.agotado, true, 'se vio todo lo que hay');
+  } finally {
+    servidor.close();
+    if (anterior === undefined) delete process.env.KALSHI_API;
+    else process.env.KALSHI_API = anterior;
+    delete require.cache[require.resolve('../src/kalshi-mercados')];
+  }
+});

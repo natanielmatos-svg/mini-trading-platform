@@ -144,7 +144,11 @@ async function explorarSeries({ paginas = 25, porPagina = 200, timeoutMs = 15_00
   // Antes, una respuesta con otra forma dejaba la lista vacía y el escáner
   // enseñaba una tabla en blanco: indistinguible de «hoy no hay mercados», que
   // es la conclusión equivocada y la que más tiempo hace perder.
-  const diagnostico = { url: `${KALSHI_BASE}/events`, envoltura: null, muestra: null, paginas: 0, mve: 0, eventos: 0 };
+  // `agotado` importa tanto como el resto: sin él no se distingue «he visto
+  // todo lo que hay» de «me quedé sin páginas», y son conclusiones opuestas.
+  // La primera dice que esa serie no existe; la segunda, que hay que seguir
+  // mirando.
+  const diagnostico = { url: `${KALSHI_BASE}/events`, envoltura: null, muestra: null, paginas: 0, mve: 0, eventos: 0, agotado: false };
 
   for (let i = 0; i < paginas; i++) {
     const raw = await fetchJson(diagnostico.url, {
@@ -159,7 +163,7 @@ async function explorarSeries({ paginas = 25, porPagina = 200, timeoutMs = 15_00
     diagnostico.paginas++;
 
     const eventos = Array.isArray(raw?.events) ? raw.events : [];
-    if (!eventos.length) break;
+    if (!eventos.length) { diagnostico.agotado = true; break; }
     diagnostico.eventos += eventos.length;
 
     for (const ev of eventos) {
@@ -209,7 +213,7 @@ async function explorarSeries({ paginas = 25, porPagina = 200, timeoutMs = 15_00
     }
 
     cursor = raw?.cursor || null;
-    if (!cursor) break;
+    if (!cursor) { diagnostico.agotado = true; break; }
   }
 
   const lista = [...series.values()]
