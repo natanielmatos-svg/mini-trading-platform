@@ -111,4 +111,48 @@ async function listarMercados({ serie, limit = 200, timeoutMs = 10_000 } = {}) {
   };
 }
 
-module.exports = { listarMercados, normalizar, precio, KALSHI_BASE };
+/**
+ * Mercados de mentira, para probar el camino entero sin red.
+ *
+ * Los precios salen de NUESTRA propia distribución, redondeados al céntimo y
+ * con una horquilla de dos: el mercado nos da exactamente la razón. Con
+ * `sesgo` a cero no hay nada que operar, y eso es lo honesto —un mercado que
+ * piensa lo mismo que tú no te debe dinero—. Con sesgo se ve funcionar el
+ * camino positivo, y lo que se ve entonces es una ventaja INVENTADA.
+ */
+function mercadosDemo({ precio, horizontes, sesgo = 0, symbol = 'BTCUSDT', ahora = Date.now() } = {}) {
+  const forecast = require('./forecast');
+  const mercados = [];
+
+  // El plazo cortísimo va a propósito: con velas de ejemplo suele ser el único
+  // horizonte bien calibrado, y sin él el filtro descarta todo.
+  for (const minutos of [2.5, 10, 30, 60]) {
+    const falta = minutos * 60_000;
+    const dist = forecast.distribucionEn(horizontes, falta);
+    if (!dist) continue;
+
+    for (const desvio of [-0.004, -0.002, 0, 0.002, 0.004]) {
+      const suelo = Math.round((precio * (1 + desvio)) / 50) * 50;
+      const r = forecast.probabilidadEncima({ precio, nivel: suelo, sigmaHorizonte: dist.sigmaHorizonte, rejilla: dist.rejilla });
+      if (!r || r.fuera) continue;
+
+      const medio = Math.min(Math.max(Math.round((r.p + sesgo / 100) * 100), 3), 97);
+      const yesBid = (medio - 1) / 100;
+      const yesAsk = (medio + 1) / 100;
+
+      mercados.push({
+        ticker: `DEMO-${String(minutos).replace('.', 'M')}M-${suelo}`,
+        titulo: `DEMO: ${symbol} por encima de ${suelo} dentro de ${minutos} min`,
+        tipo: 'mayor', suelo, techo: null,
+        vencimiento: ahora + falta,
+        yesBid, yesAsk, noBid: 1 - yesAsk, noAsk: 1 - yesBid,
+        libro: { yesAsk: 500, noAsk: 500 },
+        volumen: 1000, interesAbierto: 500,
+      });
+    }
+  }
+
+  return { serie: 'DEMO', total: mercados.length, entendidos: mercados.length, descartados: 0, mercados };
+}
+
+module.exports = { listarMercados, normalizar, precio, mercadosDemo, KALSHI_BASE };

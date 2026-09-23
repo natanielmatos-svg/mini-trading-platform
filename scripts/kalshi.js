@@ -22,56 +22,9 @@ require('../src/env');
 
 const { getKlines } = require('../src/klines');
 const { predecirHorizontes, seriesNecesarias } = require('../src/prediccion');
-const { listarMercados, KALSHI_BASE } = require('../src/kalshi-mercados');
+const { listarMercados, mercadosDemo, KALSHI_BASE } = require('../src/kalshi-mercados');
 const edge = require('../src/kalshi-edge');
 const { formatPrice, num, formatDuration } = require('../src/format');
-
-/**
- * Un mercado de mentira para probar el camino entero sin red.
- *
- * Los precios salen de NUESTRA propia distribución, redondeados al céntimo y
- * con una horquilla de dos: es decir, el mercado nos da exactamente la razón.
- * Con `--sesgo 0` el escáner no encuentra nada que operar, y eso es lo honesto:
- * un mercado que piensa lo mismo que tú no te debe dinero. `--sesgo 5` lo
- * desplaza cinco céntimos para ver funcionar el camino positivo, y lo que se ve
- * entonces es una ventaja INVENTADA, no una medida.
- */
-function mercadosDemo(precio, horizontes) {
-  const forecast = require('../src/forecast');
-  const ahora = Date.now();
-  const mercados = [];
-
-  // Se incluye un plazo muy corto a propósito: con las velas de ejemplo, el
-  // único horizonte bien calibrado es el de un minuto, así que sin él el filtro
-  // de calibración descarta TODO y no se llega a ver el camino positivo.
-  for (const minutos of [2.5, 10, 30, 60]) {
-    const falta = minutos * 60_000;
-    const dist = forecast.distribucionEn(horizontes, falta);
-    if (!dist) continue;
-
-    for (const desvio of [-0.004, -0.002, 0, 0.002, 0.004]) {
-      const suelo = Math.round((precio * (1 + desvio)) / 50) * 50;
-      const r = forecast.probabilidadEncima({ precio, nivel: suelo, sigmaHorizonte: dist.sigmaHorizonte, rejilla: dist.rejilla });
-      if (!r || r.fuera) continue;
-
-      const medio = Math.min(Math.max(Math.round((r.p + OPCIONES.sesgo / 100) * 100), 3), 97);
-      const yesBid = (medio - 1) / 100;
-      const yesAsk = (medio + 1) / 100;
-
-      mercados.push({
-        ticker: `DEMO-${String(minutos).replace('.', 'M')}M-${suelo}`,
-        titulo: `DEMO: ${OPCIONES.symbol} por encima de ${suelo} dentro de ${minutos} min`,
-        tipo: 'mayor', suelo, techo: null,
-        vencimiento: ahora + falta,
-        yesBid, yesAsk, noBid: 1 - yesAsk, noAsk: 1 - yesBid,
-        libro: { yesAsk: 500, noAsk: 500 },
-        volumen: 1000, interesAbierto: 500,
-      });
-    }
-  }
-
-  return { serie: 'DEMO', total: mercados.length, entendidos: mercados.length, descartados: 0, mercados };
-}
 
 function arg(nombre, pordefecto = null) {
   const i = process.argv.indexOf(`--${nombre}`);
@@ -154,7 +107,7 @@ async function main() {
   let lista;
   try {
     lista = OPCIONES.demo
-      ? mercadosDemo(precio, horizontes)
+      ? mercadosDemo({ precio, horizontes, sesgo: OPCIONES.sesgo, symbol: OPCIONES.symbol })
       : await listarMercados({ serie: OPCIONES.serie });
   } catch (err) {
     console.error(`No se pudo leer Kalshi: ${err.message}`);
