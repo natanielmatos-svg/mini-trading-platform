@@ -393,3 +393,65 @@ test('sin cursor, el listado se da por agotado', async () => {
     delete require.cache[require.resolve('../src/kalshi-mercados')];
   }
 });
+
+test('el plazo sale del CIERRE, no de la fecha de expiración', () => {
+  // Lo descubrieron los datos reales: un contrato titulado «Bitcoin price on
+  // Sep 25» salía con vencimiento a siete días mirándolo el día 23. Cinco días
+  // de plazo fantasma, en un motor cuyo límite son veinticuatro horas: o sea,
+  // rechazarlo todo por una fecha mal elegida.
+  const m = M.normalizar({
+    ...base,
+    close_time: '2026-09-25T20:00:00Z',
+    expiration_time: '2026-09-30T20:00:00Z',
+  });
+
+  assert.equal(m.vencimiento, Date.parse('2026-09-25T20:00:00Z'), 'manda el cierre');
+  assert.equal(m.expira, Date.parse('2026-09-30T20:00:00Z'), 'pero la otra no se pierde');
+  assert.ok(m.expira > m.vencimiento);
+});
+
+test('`expected_expiration_time` gana a `expiration_time` cuando no hay cierre', () => {
+  const m = M.normalizar({
+    ...base,
+    close_time: null,
+    expected_expiration_time: '2026-09-25T20:00:00Z',
+    expiration_time: '2026-10-30T20:00:00Z',
+  });
+  assert.equal(m.vencimiento, Date.parse('2026-09-25T20:00:00Z'));
+});
+
+test('sin ninguna fecha utilizable el mercado se descarta', () => {
+  assert.equal(M.normalizar({ ...base, close_time: null, expiration_time: null }), null);
+});
+
+test('el explorador mide cuánto se separan las dos fechas', async () => {
+  // Una separación grande es la señal de estar leyendo la fecha equivocada.
+  const ahora = Date.parse('2026-09-23T12:00:00Z');
+  const servidor = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      cursor: null,
+      events: [{ series_ticker: 'KXBTCD', title: 'BTC', markets: [{
+        ...base,
+        close_time: '2026-09-25T20:00:00Z',
+        expiration_time: '2026-09-30T20:00:00Z',
+      }] }],
+    }));
+  });
+
+  await new Promise((r) => servidor.listen(0, r));
+  const anterior = process.env.KALSHI_API;
+  process.env.KALSHI_API = `http://127.0.0.1:${servidor.address().port}`;
+  delete require.cache[require.resolve('../src/kalshi-mercados')];
+  const Mod = require('../src/kalshi-mercados');
+
+  try {
+    const r = await Mod.explorarSeries({ ahora });
+    assert.equal(r.series[0].brecha, 5 * 24 * 3600_000, 'cinco días de diferencia');
+  } finally {
+    servidor.close();
+    if (anterior === undefined) delete process.env.KALSHI_API;
+    else process.env.KALSHI_API = anterior;
+    delete require.cache[require.resolve('../src/kalshi-mercados')];
+  }
+});

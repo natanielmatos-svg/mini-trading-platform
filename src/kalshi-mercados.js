@@ -40,7 +40,24 @@ function fecha(v) {
 function normalizar(market) {
   if (!market || market.status === 'closed' || market.status === 'settled') return null;
 
-  const vencimiento = fecha(market.expiration_time) || fecha(market.close_time);
+  // CUÁL DE LAS CUATRO FECHAS. Kalshi publica `close_time`,
+  // `expected_expiration_time`, `expiration_time` y `latest_expiration_time`, y
+  // no significan lo mismo: la primera es cuándo deja de poder operarse, y las
+  // últimas son plazos administrativos que pueden caer mucho después.
+  //
+  // Esto empezó prefiriendo `expiration_time` y los datos reales lo
+  // desmintieron: un contrato titulado «Bitcoin price on Sep 25» salía con
+  // vencimiento a SIETE días mirándolo el día 23. Cinco días de más, en un
+  // motor cuyo límite son veinticuatro horas — o sea, rechazarlo todo por un
+  // plazo inventado.
+  //
+  // Manda `close_time`, y por dos razones que apuntan igual: es el instante en
+  // que el precio queda fijado para estos contratos de «precio en la fecha X»,
+  // y además es cuando dejamos de poder actuar. Modelar más allá sería estimar
+  // la incertidumbre de un rato en el que ya no se puede ni comprar ni vender.
+  const cierre = fecha(market.close_time);
+  const expira = fecha(market.expected_expiration_time) || fecha(market.expiration_time);
+  const vencimiento = cierre || expira;
   if (!vencimiento) return null;
 
   const suelo = num(market.floor_strike);
@@ -67,6 +84,11 @@ function normalizar(market) {
     suelo,
     techo,
     vencimiento,
+    // Las dos por separado, para poder verlas cuando discrepen. Que discrepen
+    // es normal; que discrepen MUCHO suele querer decir que estamos leyendo la
+    // fecha equivocada, y sin enseñarlas eso no se detecta.
+    cierre,
+    expira,
     yesBid,
     yesAsk,
     // Kalshi publica los dos lados; cuando falta uno se deriva, porque comprar
@@ -203,6 +225,14 @@ async function explorarSeries({ paginas = 25, porPagina = 200, timeoutMs = 15_00
           if (falta > 0) {
             if (e.vencePronto === null || falta < e.vencePronto) e.vencePronto = falta;
             if (falta <= 24 * 3600_000) e.dentroDeUnDia++;
+          }
+
+          // Cuánto se separan las dos fechas. Una separación grande es la
+          // señal de estar leyendo la equivocada, y costó cinco días de plazo
+          // fantasma descubrirlo la primera vez.
+          if (n.cierre && n.expira) {
+            const brecha = Math.abs(n.expira - n.cierre);
+            if (brecha > (e.brecha || 0)) e.brecha = brecha;
           }
         }
         // Aunque no se entienda, el título ayuda a saber qué es esa serie y si

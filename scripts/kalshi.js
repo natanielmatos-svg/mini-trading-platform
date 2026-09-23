@@ -120,6 +120,16 @@ async function explorar() {
     );
   }
   console.log('');
+  const conBrecha = series.filter((e) => e.brecha > 12 * 3600_000);
+  if (conBrecha.length) {
+    console.log('');
+    console.log('Aviso: en estas series, la fecha de cierre y la de expiración se separan mucho.');
+    console.log('Se usa la de CIERRE, que es cuando deja de poder operarse:');
+    for (const e of conBrecha.slice(0, 6)) {
+      console.log(`  ${e.serie.padEnd(20)} hasta ${formatDuration(e.brecha)} de diferencia`);
+    }
+  }
+  console.log('');
   console.log(`De ${diagnostico.eventos} eventos y ${total} mercados en ${diagnostico.paginas} página(s), ${series.length} series.`);
   if (diagnostico.mve) {
     console.log(`Se saltaron ${diagnostico.mve} mercados «MVE»: son apuestas combinadas de varias patas,`);
