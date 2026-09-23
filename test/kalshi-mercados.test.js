@@ -455,3 +455,31 @@ test('el explorador mide cuánto se separan las dos fechas', async () => {
     delete require.cache[require.resolve('../src/kalshi-mercados')];
   }
 });
+
+test('se puede pedir un mercado suelto, crudo y leído a la vez', async () => {
+  // Para cuando un título y un plazo no cuadran: hace falta ver la respuesta
+  // tal cual la manda Kalshi, con las cuatro fechas al lado.
+  const servidor = http.createServer((req, res) => {
+    assert.match(req.url, /^\/markets\/KXBTCD-26SEP25-B130000$/);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ market: { ...base, ticker: 'KXBTCD-26SEP25-B130000', title: 'Bitcoin price on Sep 25?' } }));
+  });
+
+  await new Promise((r) => servidor.listen(0, r));
+  const anterior = process.env.KALSHI_API;
+  process.env.KALSHI_API = `http://127.0.0.1:${servidor.address().port}`;
+  delete require.cache[require.resolve('../src/kalshi-mercados')];
+  const Mod = require('../src/kalshi-mercados');
+
+  try {
+    const { crudo, leido } = await Mod.verMercado({ ticker: 'KXBTCD-26SEP25-B130000' });
+    assert.equal(crudo.title, 'Bitcoin price on Sep 25?', 'lo crudo, sin interpretar');
+    assert.equal(leido.tipo, 'mayor', 'y lo que entendemos de ello');
+    await assert.rejects(() => Mod.verMercado({}), /ticker/);
+  } finally {
+    servidor.close();
+    if (anterior === undefined) delete process.env.KALSHI_API;
+    else process.env.KALSHI_API = anterior;
+    delete require.cache[require.resolve('../src/kalshi-mercados')];
+  }
+});

@@ -111,6 +111,22 @@ function normalizar(market) {
  * enseña, porque un ticker equivocado devolvería una lista vacía en silencio y
  * eso parecería «hoy no hay oportunidades».
  */
+/**
+ * Un mercado concreto, crudo y sin interpretar.
+ *
+ * Para cuando algo no cuadra y hay que mirar la respuesta tal cual la manda
+ * Kalshi. Un contrato titulado «precio el 25 de septiembre» que cierra dentro
+ * de cinco minutos puede ser normal —la serie tiene muchas fechas y ése es
+ * otro— o puede ser que estemos leyendo mal la fecha otra vez. Lo segundo ya
+ * pasó una vez, y se tardó en verlo porque no había forma de mirar.
+ */
+async function verMercado({ ticker, timeoutMs = 10_000 } = {}) {
+  if (!ticker) throw new Error('hace falta el ticker del mercado');
+  const raw = await fetchJson(`${KALSHI_BASE}/markets/${encodeURIComponent(ticker)}`, { timeoutMs });
+  const m = raw && raw.market ? raw.market : raw;
+  return { crudo: m, leido: normalizar(m) };
+}
+
 async function listarMercados({ serie, limit = 200, timeoutMs = 10_000 } = {}) {
   if (!serie) throw new Error('hace falta el series_ticker de Kalshi');
 
@@ -297,4 +313,4 @@ function mercadosDemo({ precio, horizontes, sesgo = 0, symbol = 'BTCUSDT', ahora
   return { serie: 'DEMO', total: mercados.length, entendidos: mercados.length, descartados: 0, mercados };
 }
 
-module.exports = { listarMercados, explorarSeries, esMve, normalizar, precio, mercadosDemo, KALSHI_BASE };
+module.exports = { listarMercados, verMercado, explorarSeries, esMve, normalizar, precio, mercadosDemo, KALSHI_BASE };

@@ -22,7 +22,7 @@ require('../src/env');
 
 const { getKlines } = require('../src/klines');
 const { predecirHorizontes, seriesNecesarias } = require('../src/prediccion');
-const { listarMercados, explorarSeries, mercadosDemo, KALSHI_BASE } = require('../src/kalshi-mercados');
+const { listarMercados, verMercado, explorarSeries, mercadosDemo, KALSHI_BASE } = require('../src/kalshi-mercados');
 const edge = require('../src/kalshi-edge');
 const { formatPrice, num, formatDuration } = require('../src/format');
 
@@ -40,6 +40,7 @@ const OPCIONES = {
   todos: process.argv.includes('--todos'),
   demo: process.argv.includes('--demo'),
   explorar: process.argv.includes('--explorar'),
+  ver: arg('ver', null),
   buscar: arg('buscar', null),
   // Cuántos céntimos se desplaza el mercado de mentira respecto a lo que
   // nosotros creemos. Sirve para ver el camino positivo funcionando sin
@@ -151,7 +152,32 @@ async function explorar() {
   console.log('Coge una con las dos columnas altas y pásala con --serie.');
 }
 
+// Un mercado tal cual lo manda Kalshi, con las cuatro fechas al lado. Es lo
+// que hace falta cuando un título y un plazo no cuadran.
+async function ver() {
+  const { crudo, leido } = await verMercado({ ticker: OPCIONES.ver });
+
+  console.log(`${crudo.ticker || OPCIONES.ver}\n`);
+  console.log(`  título       ${crudo.title || crudo.yes_sub_title || '(sin título)'}`);
+  console.log(`  estado       ${crudo.status}`);
+  console.log(`  tipo strike  ${crudo.strike_type || '(ninguno)'}  suelo ${crudo.floor_strike ?? '—'}  techo ${crudo.cap_strike ?? '—'}`);
+  console.log('');
+  console.log('  Las cuatro fechas, que es donde estaba el fallo la vez pasada:');
+  for (const campo of ['close_time', 'expected_expiration_time', 'expiration_time', 'latest_expiration_time']) {
+    const v = crudo[campo];
+    const falta = v ? Date.parse(v) - Date.now() : NaN;
+    console.log(`    ${campo.padEnd(26)} ${String(v || '—').padEnd(26)} ${Number.isFinite(falta) ? (falta > 0 ? `dentro de ${formatDuration(falta)}` : 'ya pasó') : ''}`);
+  }
+  console.log('');
+  console.log(`  precios      sí ${cents(leido && leido.yesBid)}/${cents(leido && leido.yesAsk)}  ·  no ${cents(leido && leido.noBid)}/${cents(leido && leido.noAsk)}`);
+  console.log(`  se entiende  ${leido ? `sí, como «${leido.tipo}», venciendo en ${formatDuration(leido.vencimiento - Date.now())}` : 'NO'}`);
+  console.log('');
+  console.log('Si el título habla de una fecha y el cierre dice otra cosa, pégame esto:');
+  console.log('es la señal de estar leyendo la fecha equivocada.');
+}
+
 async function main() {
+  if (OPCIONES.ver) return ver();
   if (OPCIONES.explorar) return explorar();
   cabecera();
 
@@ -215,7 +241,11 @@ async function main() {
   for (const m of lista.mercados) {
     const r = edge.evaluarMercado(m, resp, ctx);
     if (r.operar) operables.push({ m, r });
-    else if (OPCIONES.todos) console.log(`  ·  ${m.ticker.padEnd(26)} ${r.motivo}`);
+    else if (OPCIONES.todos) {
+      // El título va al lado a propósito: un contrato que habla de una fecha y
+      // vence en otra sólo se detecta viendo las dos cosas juntas.
+      console.log(`  ·  ${m.ticker.padEnd(26)} ${String(m.titulo || '').slice(0, 34).padEnd(36)} ${r.motivo}`);
+    }
   }
 
   if (OPCIONES.todos) console.log('');
