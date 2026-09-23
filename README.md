@@ -4,7 +4,7 @@ Tres páginas sobre el mismo servidor Node/Express:
 
 | Ruta | Qué es |
 |---|---|
-| `/index.html` | **Criptomonedas**: velas de Binance en vivo, precio consolidado entre mercados, tendencia multi-timeframe con EMAs, análisis de ruptura de la vela en curso y avisos de compra y venta con sonido |
+| `/index.html` | **Criptomonedas**: velas de Binance en vivo, precio consolidado entre mercados, tendencia multi-timeframe con EMAs, análisis de ruptura de la vela en curso, probabilidad de acabar por encima de un precio que tú escribes, y avisos de compra y venta con sonido |
 | `/acciones.html` | **Acciones de EE. UU.**: lo mismo, con velas de Alpaca y consciente del horario del mercado |
 | `/predicciones.html` | **Analizador de predicciones**: agrega Polymarket, Robinhood/Kalshi y Manifold y dice qué opción es la más probable de cada evento |
 
@@ -19,7 +19,7 @@ mismo código (ver [Estructura](#estructura)).
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet (también el gráfico)
-npm test             # 364 tests, sin red
+npm test             # 404 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -38,7 +38,7 @@ versión anterior, y eso ya pasó una vez.
 ### Cómo se prueba
 
 ```bash
-npm test          # 364 tests, sin red, en unos ocho segundos
+npm test          # 404 tests, sin red, en unos ocho segundos
 npm run smoke     # llama a las APIs de verdad — la única prueba que las valida
 ```
 
@@ -49,6 +49,7 @@ Los tests cubren tres capas, y conviene saber qué prueba cada una:
 | Indicadores, ruptura, señales | Series sintéticas con pivotes controlados | Que las reglas hacen lo que dicen |
 | Rutas HTTP, caché, límites | El servidor en un puerto efímero, modo demo | Que la API se comporta |
 | **Protocolo de Binance** | Un servidor local que imita su REST y su WebSocket (`test/binance.test.js`, `test/stream-binance.test.js`) | Que si Binance responde lo que documenta, se entiende; y que sus errores —400, 429, 503, formato cambiado, socket caído— no tumban nada |
+| **Que las páginas carguen lo que necesitan** | Leyendo el HTML y los módulos: cada `globalThis.X` que un módulo pide lo tiene que definir otro cargado antes (`test/compartidos.test.js`) | Que no se repita el fallo de un módulo que funciona en Node por `require` y revienta en el navegador porque la página no carga su dependencia. Pasó con `forecast.js`, con 390 tests en verde |
 
 En Node 20 se saltan los ocho tests del WebSocket: esa versión no trae
 `WebSocket` global, el hub lo detecta y usa sondeo, y eso último sí se prueba.
@@ -439,6 +440,81 @@ semillas distintas:
 A plazo corto está bien calibrado; a doce velas es inestable y el panel lo
 enseña. Ésa es la diferencia entre un motor y un adorno: **publica su propio
 boletín de notas**, y la interfaz enseña la nota al lado de cada banda.
+
+### ¿Termina por encima de un precio?
+
+Escribe un precio en la tarjeta y la aplicación dice, a cada plazo, qué
+probabilidad hay de que el precio acabe por encima y por debajo. Se recalcula
+con cada tick.
+
+| vence en | por encima | por debajo |
+|---|---|---|
+| 00:57 | 57% | 43% |
+| 14:57 | 56% | 44% |
+| 3:59:57 | 53% | 47% |
+
+Es la pregunta que de verdad se hace quien mira una pantalla de precios, y
+hasta ahora la aplicación no la respondía: enseñaba la banda donde caerá el
+precio el 90% de las veces, que es la misma información del revés pero obliga a
+hacer la conversión en la cabeza.
+
+Tres botones al lado del campo lo rellenan con lo que la aplicación ya sabe: el
+precio de ahora, y **la resistencia y el soporte que detecta el análisis de
+ruptura**. «¿Romperá la resistencia?» pasa a tener un número en vez de un
+adjetivo. El nivel se guarda **por símbolo**: 88.000 es una pregunta sensata
+sobre bitcoin y un disparate sobre ethereum.
+
+#### La cuenta la hace el navegador
+
+El precio de bitcoin llega diez veces por segundo. Preguntar al servidor a ese
+ritmo sería absurdo, y responder con el precio de hace un minuto sería mentira:
+la probabilidad de pasar de 88.000 con bitcoin en 87.900 no es la misma que con
+bitcoin en 87.400.
+
+Así que `/api/forecast` manda la **distribución empaquetada**: 128 puntos por
+horizonte, en unidades de la propia volatilidad de ese plazo. Con eso y la
+sigma del horizonte, el navegador resuelve cualquier precio en microsegundos.
+Es el mismo truco que ya usaba el análisis de ruptura, que manda su muestra de
+excursiones para poder recalcular la probabilidad sin volver a preguntar.
+
+Cuesta 12 KB de los 25 KB de la respuesta, una vez por minuto. Medido: con 128
+puntos el grano es del 0,4%, más fino de lo que la muestra puede afirmar, así
+que lo que limita es la muestra y no la rejilla.
+
+#### Es frecuencia observada, no una fórmula
+
+No hay ninguna campana de Gauss en esta cuenta. El número sale de mirar a qué
+distancia está el precio escrito en unidades de volatilidad y **contar** cuántos
+de los cientos de movimientos que el modelo ya midió a ese plazo se pasaron de
+ahí. Las colas gordas del cripto están dentro por construcción, en vez de
+aparecer como sorpresas.
+
+Sale de la **misma** distribución que dibuja las bandas —la conforme si la hay,
+la de un paso si no— y eso no es un detalle de implementación: si la banda del
+90% acaba en 88.000 y esto dijera «12% de acabar por encima de 88.000», dos
+tarjetas de la misma pantalla se contradirían y no habría forma de saber cuál
+creer. Están atadas en el código y hay dos tests que lo vigilan, uno sobre el
+módulo y otro sobre la respuesta HTTP.
+
+Entre refresco y refresco **sí** se separan, y es lo correcto: la probabilidad
+se recalcula con cada tick y las bandas se quedan donde estaban hasta la
+siguiente consulta. Cada tarjeta dice sobre qué precio está centrada.
+
+#### Lo que este número no puede decir
+
+- **Nunca 0% ni 100%.** Fuera de lo que la muestra vio se escribe «< 0,4%», que
+  es el grano de la rejilla. Decir 0% de algo que no se ha visto es confundir
+  «no lo he visto» con «no pasa», y con dinero delante ésa es la clase de
+  afirmación que arruina a alguien.
+- **Sin decimales inventados.** Por encima del 10% se redondea al entero: con la
+  muestra que hay, «61,7%» serían dos dígitos que nadie puede sostener. Por
+  debajo del 10%, donde un punto porcentual sí cambia la decisión, se da uno.
+- **Es acabar por encima, no tocarlo.** Un precio se puede tocar y volver. Para
+  un stop o un objetivo, que saltan al tocarse, este número se queda corto.
+
+El `title` de cada celda trae además las **cuotas justas** y el precio en
+céntimos de un contrato binario, que es como se cotiza exactamente esto en
+Kalshi.
 
 ### Volatilidad
 
@@ -910,6 +986,17 @@ horizontes. Cada uno trae `bandas` (los cuantiles 5/10/25/50/75/90/95),
 banda del 50% **es** el precio actual, a propósito. `/api/stocks/forecast` hace
 lo mismo con acciones.
 
+Cada horizonte trae también `rejilla`: la distribución empaquetada en 128
+puntos, en unidades de sigma, con `muestra` (cuántas observaciones hay detrás).
+Con ella y `sigmaHorizonte` se calcula la probabilidad de acabar por encima de
+cualquier precio sin volver a llamar. Es lo que hace el navegador en cada tick.
+
+Con `&nivel=88000` la respuesta añade a cada horizonte `probabilidad` con
+`encima`, `debajo`, `resolucion` y `fuera` —que dice si el nivel se sale de lo
+que la muestra llegó a ver, en cuyo caso el número es un techo y no una
+medida—. Está para quien consuma la API por su cuenta: la página no lo usa,
+porque ya tiene la rejilla.
+
 ### `GET /api/klines/consolidadas`
 
 `?symbol=BTCUSDT&interval=1h&venues=binance,kraken`. Las mismas velas que usa
@@ -1116,6 +1203,7 @@ src/
   forecast.js          distribución del precio: EWMA + colas empíricas + conforme
   calibracion.js       backtest walk-forward: ¿se cumplen las bandas que promete?
   panel-prediccion.js  el panel de bandas — las DOS páginas
+  panel-probabilidad.js «¿termina por encima de X?» — las DOS páginas
   chart.js             el gráfico de velas — las DOS páginas
   precio-vivo.js       calma el titular sin tocar el precio del análisis
   panel-ruptura.js     el panel «¿Rompe esta vela?» — las DOS páginas
@@ -1151,5 +1239,5 @@ scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  364 tests, sin red
+test/                  404 tests, sin red
 ```

@@ -309,3 +309,63 @@ test('las dos páginas cargan los módulos que usan', async () => {
     assert.match(html, /\/estilo\.css/, `${pagina} no carga la hoja común`);
   }
 });
+
+test('/api/forecast manda la distribución empaquetada, no sólo las bandas', async () => {
+  // Sin la rejilla el navegador no podría responder por un precio cualquiera:
+  // tendría que preguntar al servidor en cada tick, diez veces por segundo.
+  const { status, body } = await getJson('/api/forecast?symbol=btcusdt&interval=1h');
+  assert.strictEqual(status, 200);
+
+  const h = body.horizontes.find((x) => x.ok);
+  assert.ok(h, 'algún horizonte tiene que salir en modo demo');
+  assert.ok(h.rejilla && Array.isArray(h.rejilla.z), 'falta la rejilla');
+  assert.ok(h.rejilla.z.length >= 20 && h.rejilla.z.length <= 128, `${h.rejilla.z.length} puntos`);
+  assert.ok(h.rejilla.n <= h.rejilla.muestra, 'nunca más puntos que observaciones');
+  assert.ok(h.sigmaHorizonte > 0, 'y la sigma del plazo, que es la otra mitad de la cuenta');
+});
+
+test('/api/forecast responde por un nivel concreto si se le pide', async () => {
+  const sin = await getJson('/api/forecast?symbol=btcusdt&interval=1h');
+  const primero = sin.body.horizontes.find((h) => h.ok);
+  assert.ok(!primero.probabilidad, 'sin nivel no se calcula');
+
+  // El nivel es el precio en el que ESE horizonte está centrado, no el del
+  // encabezado: los plazos cortos se miden con velas de un minuto y los largos
+  // con las del gráfico, así que cada uno parte de la última vela de su serie.
+  // Con datos de verdad las dos coinciden —ambas acaban en el precio de ahora—;
+  // en modo demo las series se generan aparte y no tienen por qué.
+  const { body } = await getJson(`/api/forecast?symbol=btcusdt&interval=1h&nivel=${primero.precio}`);
+  const h = body.horizontes.find((x) => x.ok && x.ms === primero.ms);
+
+  assert.ok(h.probabilidad, 'con nivel sí');
+  assert.ok(Math.abs(h.probabilidad.encima - 0.5) < 0.05, `en su propio precio, la mitad: ${h.probabilidad.encima}`);
+  assert.ok(Math.abs(h.probabilidad.encima + h.probabilidad.debajo - 1) < 1e-9);
+});
+
+test('/api/forecast y la probabilidad no se contradicen', async () => {
+  // La banda del 90% acaba en un precio; la probabilidad de acabar por encima
+  // de ese precio tiene que ser el 5%. Si no, dos filas de la misma tarjeta
+  // dicen cosas distintas y no hay forma de saber cuál creer.
+  const primera = await getJson('/api/forecast?symbol=btcusdt&interval=1h');
+  const h0 = primera.body.horizontes.find((x) => x.ok);
+  const borde = h0.bandas.find((b) => b.q === 0.95).price;
+
+  const { body } = await getJson(`/api/forecast?symbol=btcusdt&interval=1h&nivel=${borde}`);
+  const h = body.horizontes.find((x) => x.ok && x.ms === h0.ms);
+  assert.ok(Math.abs(h.probabilidad.encima - 0.05) < 0.02, `salió ${h.probabilidad.encima}`);
+});
+
+test('/api/forecast ignora un nivel que no es un precio', async () => {
+  for (const nivel of ['0', '-5', 'hola', '']) {
+    const { status, body } = await getJson(`/api/forecast?symbol=btcusdt&interval=1h&nivel=${nivel}`);
+    assert.strictEqual(status, 200, `nivel=${nivel}`);
+    assert.ok(!body.horizontes.find((h) => h.ok).probabilidad, `nivel=${nivel} no debería calcular nada`);
+  }
+});
+
+test('/lib/panel-probabilidad.js se publica al navegador', async () => {
+  const res = await fetch(`${base}/lib/panel-probabilidad.js`);
+  assert.strictEqual(res.status, 200);
+  const cuerpo = await res.text();
+  assert.match(cuerpo, /globalThis\.PanelProbabilidad/);
+});

@@ -214,3 +214,88 @@ test('el panel recalcula lo mismo que devolvió el servidor si el precio no ha c
       `${lado}: panel ${vivo.probability} vs análisis ${a[lado].probability}`);
   }
 });
+
+// --- Que las páginas carguen lo que sus módulos necesitan -------------------
+//
+// Esto existe por un fallo concreto: el panel de probabilidad leía
+// `globalThis.Forecast` y la página no cargaba `forecast.js`. Los 390 tests
+// pasaban —en Node el módulo se resuelve con `require`— y la tarjeta reventaba
+// en cuanto se escribía un precio. Es el mismo patrón que ya ha mordido antes:
+// lo que sólo se rompe en el navegador, en el navegador hay que buscarlo, y si
+// se puede comprobar leyendo los archivos, mejor que ir a mirar.
+
+const fs = require('node:fs');
+const path = require('node:path');
+
+const RAIZ = path.join(__dirname, '..');
+const PAGINAS = ['index.html', 'acciones.html'];
+
+const leer = (...p) => fs.readFileSync(path.join(RAIZ, ...p), 'utf8');
+
+// Los módulos que el servidor publica al navegador.
+function publicados() {
+  const m = leer('server.js').match(/const SHARED_MODULES = \[([^\]]+)\]/);
+  assert.ok(m, 'no se encontró SHARED_MODULES en server.js');
+  return m[1].split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
+}
+
+// Qué deja un módulo en el ámbito global, y qué espera encontrar en él.
+function global(archivo) {
+  const src = leer('src', archivo);
+  const pone = [...src.matchAll(/globalThis\.(\w+)\s*=/g)].map((m) => m[1]);
+  // Sin lookahead: `\w+` es codicioso y con un «no seguido de =» detrás
+  // retrocedería, sacando `Indicator` de `globalThis.Indicators =`. Se cogen
+  // todas y se restan las que el propio módulo define.
+  const todas = [...src.matchAll(/globalThis\.(\w+)/g)].map((m) => m[1]);
+  return { pone, pide: todas.filter((x) => !pone.includes(x)) };
+}
+
+for (const pagina of PAGINAS) {
+  test(`${pagina} sólo carga módulos que el servidor publica`, () => {
+    const html = leer('public', pagina);
+    const cargados = [...html.matchAll(/src="\/lib\/([\w.-]+)"/g)].map((m) => m[1]);
+    assert.ok(cargados.length, 'la página tiene que cargar algún módulo compartido');
+
+    for (const m of cargados) {
+      assert.ok(publicados().includes(m), `${pagina} carga /lib/${m}, que el servidor devuelve como 404`);
+    }
+  });
+
+  test(`${pagina} carga cada módulo antes de quien lo necesita`, () => {
+    const html = leer('public', pagina);
+    const cargados = [...html.matchAll(/src="\/lib\/([\w.-]+)"/g)].map((m) => m[1]);
+
+    const disponibles = new Set();
+    for (const archivo of cargados) {
+      const { pone, pide } = global(archivo);
+      for (const dep of pide) {
+        assert.ok(disponibles.has(dep), `${pagina}: ${archivo} necesita globalThis.${dep} y no se ha cargado todavía`);
+      }
+      for (const nombre of pone) disponibles.add(nombre);
+    }
+  });
+
+  test(`${pagina} no depende de nada que nadie cargue`, () => {
+    // El guion de la página también lee del ámbito global.
+    const guion = pagina === 'index.html' ? 'app.js' : 'acciones.js';
+    const src = fs.readFileSync(path.join(RAIZ, 'public', guion), 'utf8');
+    const pide = [...src.matchAll(/=\s*globalThis\.(\w+)/g)].map((m) => m[1]);
+    assert.ok(pide.length, 'algo tendrá que coger del ámbito global');
+
+    const html = leer('public', pagina);
+    const cargados = [...html.matchAll(/src="\/lib\/([\w.-]+)"/g)].map((m) => m[1]);
+    const disponibles = new Set(cargados.flatMap((a) => global(a).pone));
+
+    for (const dep of pide) {
+      assert.ok(disponibles.has(dep), `${guion} usa globalThis.${dep} y ${pagina} no carga ningún módulo que lo defina`);
+    }
+  });
+}
+
+test('el servidor no publica módulos que nadie carga', () => {
+  // Publicar código que ninguna página pide es superficie por nada.
+  const cargados = new Set(PAGINAS.flatMap((p) => [...leer('public', p).matchAll(/src="\/lib\/([\w.-]+)"/g)].map((m) => m[1])));
+  for (const m of publicados()) {
+    assert.ok(cargados.has(m), `server.js publica ${m} y ninguna página lo carga`);
+  }
+});

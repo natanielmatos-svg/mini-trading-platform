@@ -16,12 +16,16 @@ const Avisos = globalThis.Avisos;
 const TablaMtf = globalThis.TablaMtf;
 const PrecioVivo = globalThis.PrecioVivo;
 const PanelPrediccion = globalThis.PanelPrediccion;
+const PanelProbabilidad = globalThis.PanelProbabilidad;
 const Tarjetas = globalThis.Tarjetas;
 
 const MTF = ['1h', '4h', '1d', '1w'];
 const CANDLES = 300;
 const PREFS_KEY = 'mtp.alertas';
 const MERCADOS_KEY = 'mtp.mercados';
+// El nivel se guarda POR SÍMBOLO: 88.000 es una pregunta sensata sobre bitcoin
+// y un disparate sobre ethereum.
+const NIVEL_KEY = (symbol) => `mtp.nivel.${symbol}`;
 
 const state = {
   symbol: 'BTCUSDT',
@@ -30,6 +34,7 @@ const state = {
   mtf: {},
   breakout: null,
   forecast: null,
+  nivel: null,       // el precio por el que se pregunta, si hay alguno
   live: null,        // última vela recibida
   livePrice: null,   // último precio operado en Binance, tick a tick
   consolidado: null, // mediana de los mercados elegidos
@@ -73,6 +78,12 @@ const el = {
   breakout: $('breakoutPanel'),
   forecast: $('forecastPanel'),
   predLinea: $('predLinea'),
+  probPanel: $('probPanel'),
+  probNivel: $('probNivel'),
+  probLinea: $('probLinea'),
+  probAhora: $('probAhora'),
+  probArriba: $('probArriba'),
+  probAbajo: $('probAbajo'),
   alertToggle: $('alertToggle'),
   alertTest: $('alertTest'),
   alertMode: $('alertMode'),
@@ -384,6 +395,8 @@ function connectStream() {
       // La probabilidad de ruptura se mueve con el precio, así que el panel
       // se repinta también; es sólo texto, no toca el gráfico.
       renderBreakout();
+      // Y la de acabar por encima del nivel, que es la que se pidió en vivo.
+      renderProbabilidad();
     } catch {
       /* un mensaje ilegible no debe romper el flujo */
     }
@@ -500,6 +513,68 @@ async function loadForecast() {
 function renderForecast() {
   if (el.forecast) PanelPrediccion.render(el.forecast, state.forecast, state.interval);
   PanelPrediccion.renderLinea(el.predLinea, state.forecast, state.interval);
+  renderProbabilidad({ force: true }); // datos nuevos: la tabla entera
+}
+
+// ---------------------------------------------------------------------------
+// «¿Termina por encima de X?»
+// ---------------------------------------------------------------------------
+//
+// El precio que entra aquí es el de BINANCE, tick a tick, y no el consolidado
+// del titular ni el calmado. Tiene que ser el mismo con el que se midió la
+// distribución —las velas del análisis son de Binance— o «faltan 1,2% hasta el
+// nivel» sería sutilmente falso, que es el mismo motivo por el que el análisis
+// de ruptura usa ése y no otro.
+
+function datosProb() {
+  return { datos: state.forecast, interval: state.interval, nivel: state.nivel, precio: precioActual() };
+}
+
+// `force` repinta la tabla; sin él sólo se reescriben los números, que es lo
+// que corre con cada tick. Si `actualizar` no reconoce la tabla —porque los
+// horizontes cambiaron— lo dice y se repinta.
+function renderProbabilidad({ force = false } = {}) {
+  const d = datosProb();
+  if (force || !PanelProbabilidad.actualizar(el.probPanel, d)) {
+    PanelProbabilidad.render(el.probPanel, d);
+  }
+  PanelProbabilidad.renderLinea(el.probLinea, d);
+}
+
+function fijarNivel(valor, { escribir = true } = {}) {
+  const n = Number(valor);
+  state.nivel = n > 0 ? n : null;
+
+  // Sólo se reescribe la casilla cuando el valor viene de un botón. Mientras
+  // alguien teclea no se le toca lo escrito: redondearlo a media palabra
+  // movería el cursor y borraría los dígitos que aún no ha terminado de poner.
+  if (escribir && el.probNivel) {
+    const redondo = PanelProbabilidad.redondearNivel(state.nivel);
+    state.nivel = redondo;
+    el.probNivel.value = redondo === null ? '' : String(redondo);
+  }
+
+  try {
+    if (state.nivel === null) localStorage.removeItem(NIVEL_KEY(state.symbol));
+    else localStorage.setItem(NIVEL_KEY(state.symbol), String(state.nivel));
+  } catch {
+    /* en modo privado localStorage lanza; se sigue sin recordar el nivel */
+  }
+
+  renderProbabilidad({ force: true });
+}
+
+// Al cambiar de par se recupera el nivel de ESE par, no se arrastra el anterior.
+function recuperarNivel() {
+  let guardado = null;
+  try {
+    guardado = localStorage.getItem(NIVEL_KEY(state.symbol));
+  } catch {
+    /* idem */
+  }
+  state.nivel = Number(guardado) > 0 ? Number(guardado) : null;
+  if (el.probNivel) el.probNivel.value = state.nivel === null ? '' : String(state.nivel);
+  renderProbabilidad({ force: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -881,6 +956,7 @@ function applyControls({ symbol = null } = {}) {
     avisos.olvidarPrimera(); // par nuevo: no se grita por lo que ya había pasado
     connectStream();
     avisos.renderHint();
+    recuperarNivel(); // el nivel es de un par concreto; no se arrastra al siguiente
   }
   loadAll();
 }
@@ -891,6 +967,31 @@ function init() {
   Tarjetas.activar({ contenedor: document.querySelector('.side-panel'), clave: 'mtp.tarjetas.cripto' });
 
   loadMercados();
+  recuperarNivel();
+
+  // El campo del precio. Se escucha `input` y no `change`: la probabilidad
+  // tiene que aparecer mientras se escribe, no al salir del campo.
+  if (el.probNivel) {
+    el.probNivel.addEventListener('input', () => fijarNivel(el.probNivel.value, { escribir: false }));
+  }
+  if (el.probAhora) el.probAhora.addEventListener('click', () => fijarNivel(precioActual()));
+
+  // Los dos niveles que el análisis de ruptura ya detectó. Es la pregunta que
+  // de verdad se hace todo el mundo —«¿romperá la resistencia?»— y ahora se
+  // responde con un número en vez de con un adjetivo.
+  if (el.probArriba) {
+    el.probArriba.addEventListener('click', () => {
+      const b = state.breakout;
+      if (b && b.ok && b.up && b.up.level > 0) fijarNivel(b.up.level);
+    });
+  }
+  if (el.probAbajo) {
+    el.probAbajo.addEventListener('click', () => {
+      const b = state.breakout;
+      if (b && b.ok && b.down && b.down.level > 0) fijarNivel(b.down.level);
+    });
+  }
+
   // Antes del primer dibujo: el seguimiento guardado aporta el stop y el
   // objetivo, y son dos líneas del gráfico.
   avisos.init();
@@ -942,6 +1043,7 @@ function init() {
     if (document.hidden) return;
     renderClock();
     PanelPrediccion.tick(el.forecast);
+    PanelPrediccion.tick(el.probPanel); // la misma cuenta atrás, la otra tabla
     if (state.breakout && state.breakout.ok) renderBreakout();
   }, 250);
 

@@ -122,7 +122,7 @@ function calibrar(candles, { bloques = 1, paso = 1, cuantiles = F.CUANTILES, cal
     const real = candles[t + bloques].close;
     if (!(real > 0)) continue;
 
-    const f = F.predecir(historia, { bloques, cuantiles });
+    const f = F.predecir(historia, { bloques, cuantiles, conRejilla: false });
     if (!f.ok) continue;
     const r = referencia(historia, { bloques, cuantiles });
     if (!r) continue;

@@ -148,7 +148,7 @@ function estandarizados(rets, sigmas, { centrar = true } = {}) {
  * @param candles  histórico, la última puede estar en curso
  * @param opciones { bloques, precio, lambda, cuantiles }
  */
-function predecir(candles, { bloques = 1, precio = null, lambda = LAMBDA, cuantiles = CUANTILES, persistencia = PERSISTENCIA, conformes = null } = {}) {
+function predecir(candles, { bloques = 1, precio = null, lambda = LAMBDA, cuantiles = CUANTILES, persistencia = PERSISTENCIA, conformes = null, conRejilla = true } = {}) {
   if (!Array.isArray(candles) || candles.length < MIN_MUESTRA) {
     return { ok: false, reason: `hacen falta al menos ${MIN_MUESTRA} velas y hay ${Array.isArray(candles) ? candles.length : 0}` };
   }
@@ -179,10 +179,23 @@ function predecir(candles, { bloques = 1, precio = null, lambda = LAMBDA, cuanti
     return { q, price: p0 * Math.exp(zq * sigmaH) };
   });
 
+  // La rejilla sale de la MISMA muestra que las bandas: la conforme si la hay,
+  // la de un paso si no. Si saliera de otra, «probabilidad de pasar de 88.000»
+  // podría contradecir a la banda del 90% que acaba en 88.000, en dos filas
+  // contiguas de la misma tabla.
+  //
+  // `conRejilla` existe porque los recorridos walk-forward llaman aquí cientos
+  // de veces y no la usan: construirla en cada paso multiplicaba por seis el
+  // coste de calibrarse.
+  const rejilla = conRejilla
+    ? (conformes && conformes.rejilla ? conformes.rejilla : rejillaZ(z))
+    : null;
+
   return {
     ok: true,
     bloques,
     precio: p0,
+    rejilla,
     sigmaBloque: sigma1,
     sigmaHorizonte: sigmaH,
     // En tanto por uno sobre el precio, que es como se lee.
@@ -244,25 +257,132 @@ function curtosis(xs) {
   return xs.reduce((a, b) => a + (b - m) ** 4, 0) / n / (v * v);
 }
 
+// Cuántos puntos de la distribución viajan al navegador. Con 128 la curva se
+// reproduce mejor de lo que la muestra puede afirmar —con 250 errores medidos,
+// la frecuencia observada tiene un grano del 0,4%— así que el límite de verdad
+// lo pone la muestra, no la rejilla.
+const PUNTOS_REJILLA = 128;
+
+/**
+ * La distribución empaquetada: lo que hace falta para responder «¿y a 87.500?»
+ * sin volver a pedir las velas.
+ *
+ * Es el sitio donde se decidió que la probabilidad la calcule el NAVEGADOR. El
+ * precio llega diez veces por segundo; preguntar al servidor a ese ritmo sería
+ * absurdo, y responder con el precio de hace un minuto sería mentira. Con la
+ * rejilla y la sigma del horizonte, el navegador resuelve cualquier nivel en
+ * microsegundos y la probabilidad se mueve con el precio de verdad.
+ *
+ * Los puntos van en los cuantiles (i+½)/n, no en i/(n−1). La diferencia
+ * importa en los extremos: con la segunda convención el mayor valor observado
+ * tendría probabilidad acumulada 1, o sea que el modelo afirmaría que pasarse
+ * de ahí es IMPOSIBLE. Con ésta, el extremo deja media observación a cada
+ * lado, que es exactamente lo que una muestra de n puede decir.
+ */
+function rejillaZ(muestra, puntos = PUNTOS_REJILLA) {
+  const xs = muestra.filter(Number.isFinite).sort((a, b) => a - b);
+  if (xs.length < 20) return null;
+
+  // Nunca más puntos que observaciones: adelgazar una muestra pequeña hasta
+  // rellenar la rejilla sería inventarse resolución.
+  const n = Math.min(puntos, xs.length);
+
+  // Se ordena una vez y se indexa. Llamar a `quantile` por punto volvería a
+  // ordenar la muestra 128 veces, y esto se calcula para once horizontes en
+  // cada refresco.
+  const z = [];
+  for (let i = 0; i < n; i++) {
+    const pos = (xs.length - 1) * ((i + 0.5) / n);
+    const bajo = Math.floor(pos);
+    const alto = Math.min(bajo + 1, xs.length - 1);
+    z.push(redondear(xs[bajo] + (xs[alto] - xs[bajo]) * (pos - bajo)));
+  }
+  return { z, n, muestra: xs.length };
+}
+
+// Seis decimales: en unidades de sigma, eso es más fino que cualquier cosa que
+// se pueda leer, y recorta el JSON a la mitad.
+const redondear = (x) => Math.round(x * 1e6) / 1e6;
+
+/**
+ * P(z > umbral) leída de la rejilla, interpolando.
+ *
+ * Es frecuencia OBSERVADA, no una fórmula: cuántas veces, de las que el modelo
+ * ya vivió, el resultado se pasó de ese umbral. Por eso no hay campana de Gauss
+ * en ninguna parte de esta cuenta.
+ *
+ * Fuera del rango de la muestra no se devuelve 0 ni 1. Se devuelve el grano de
+ * la muestra —media observación entre n— con `fuera` puesto, para que quien lo
+ * enseñe escriba «menos de 0,4%» y no «imposible». Un modelo que dice 0% de un
+ * suceso que no ha visto está confundiendo «no lo he visto» con «no pasa», y
+ * eso es la clase de afirmación que arruina a alguien.
+ */
+function probEncima(rejilla, umbral) {
+  if (!rejilla || !Array.isArray(rejilla.z) || rejilla.z.length < 2) return null;
+  if (!Number.isFinite(umbral)) return null;
+
+  const { z } = rejilla;
+  const n = z.length;
+  const grano = 0.5 / n;                       // lo mínimo que la rejilla puede afirmar
+  const resolucion = 1 / (rejilla.muestra || n);
+
+  if (umbral <= z[0]) return { p: 1 - grano, fuera: 'abajo', resolucion, grano };
+  if (umbral >= z[n - 1]) return { p: grano, fuera: 'arriba', resolucion, grano };
+
+  // Búsqueda binaria: el tramo donde cae el umbral.
+  let lo = 0;
+  let hi = n - 1;
+  while (hi - lo > 1) {
+    const medio = (lo + hi) >> 1;
+    if (z[medio] <= umbral) lo = medio;
+    else hi = medio;
+  }
+
+  const tramo = z[hi] - z[lo];
+  const dentro = tramo > 0 ? (umbral - z[lo]) / tramo : 0;
+  // F(z[i]) = (i+½)/n, y entre puntos se interpola en línea recta.
+  const acumulada = (lo + 0.5 + dentro) / n;
+
+  return { p: 1 - acumulada, fuera: null, resolucion, grano };
+}
+
+/**
+ * Probabilidad de acabar por encima de un nivel, a partir de una predicción ya
+ * hecha. Ésta es la que llama el navegador en cada tick.
+ */
+function probabilidadEncima({ precio, nivel, sigmaHorizonte, rejilla }) {
+  if (!(precio > 0) || !(nivel > 0) || !(sigmaHorizonte > 0)) return null;
+
+  // El umbral en unidades de sigma. Logarítmico porque los rendimientos lo son:
+  // subir un 10% y bajar un 10% no son movimientos simétricos en precio, pero
+  // sí lo son aquí, y es aquí donde se mide.
+  const umbral = Math.log(nivel / precio) / sigmaHorizonte;
+  const r = probEncima(rejilla, umbral);
+  if (!r) return null;
+
+  return { ...r, umbral, nivel, precio };
+}
+
 /**
  * Probabilidad de CERRAR por encima de un nivel dentro de `bloques` velas.
  *
  * Distinto de tocarlo: un nivel se puede tocar y devolver. Ésta es la que
  * importa para una apuesta que se liquida a una hora fija, como las de Kalshi.
+ *
+ * Sale de la MISMA distribución que las bandas —la conforme si la hay, la de
+ * un paso si no— y eso no es un detalle de implementación: si la banda del 90%
+ * acaba en 88.000 y esta función dijera que hay un 12% de acabar por encima de
+ * 88.000, el panel se estaría contradiciendo a sí mismo en dos filas contiguas.
  */
 function probCierreEncima(candles, nivel, opciones = {}) {
   const f = predecir(candles, opciones);
   if (!f.ok) return f;
   if (!(nivel > 0)) return { ok: false, reason: 'nivel no utilizable' };
 
-  const rets = rendimientos(candles);
-  const z = estandarizados(rets, ewmaSigma(rets, opciones.lambda || LAMBDA));
-  const umbral = Math.log(nivel / f.precio) / f.sigmaHorizonte;
+  const r = probabilidadEncima({ precio: f.precio, nivel, sigmaHorizonte: f.sigmaHorizonte, rejilla: f.rejilla });
+  if (!r) return { ok: false, reason: 'sin muestra para estimar la probabilidad' };
 
-  // Frecuencia observada, no una fórmula: de todos los rendimientos
-  // estandarizados del histórico, cuántos superan el umbral.
-  const encima = z.filter((x) => x > umbral).length;
-  return { ok: true, probabilidad: encima / z.length, umbralZ: umbral, muestra: z.length, ...f };
+  return { ok: true, probabilidad: r.p, umbralZ: r.umbral, fuera: r.fuera, ...f };
 }
 
 /**
@@ -292,7 +412,7 @@ function cuantilesConformes(candles, { bloques = 1, cuantiles = CUANTILES, calen
     if (!(real > 0)) continue;
 
     // Predicción hecha SÓLO con lo anterior: aquí es donde esto es honesto.
-    const f = predecir(historia, { bloques, cuantiles: [0.5] });
+    const f = predecir(historia, { bloques, cuantiles: [0.5], conRejilla: false });
     if (!f.ok || !(f.sigmaHorizonte > 0)) continue;
 
     errores.push(Math.log(real / f.precio) / f.sigmaHorizonte);
@@ -310,8 +430,14 @@ function cuantilesConformes(candles, { bloques = 1, cuantiles = CUANTILES, calen
     ? orden[(orden.length - 1) / 2]
     : (orden[orden.length / 2 - 1] + orden[orden.length / 2]) / 2;
 
+  const centrados = errores.map((e) => e - m);
+
   return {
     cuantiles: cuantiles.map((q) => ({ q, z: quantile(errores, q) - m })),
+    // La distribución entera, no sólo siete puntos: con ella el navegador
+    // responde por cualquier nivel que se le escriba, no sólo por los siete
+    // que caben en la tabla.
+    rejilla: rejillaZ(centrados),
     muestra: errores.length,
     derivaDescartada: m,
   };
@@ -366,10 +492,10 @@ const AVISO =
   'contiene el 84%, es que a ese plazo el modelo se queda corto y hay que fiarse menos.';
 
 const API = {
-  predecir, probCierreEncima, cuantilesConformes, planDeHorizontes, AVISO,
+  predecir, probCierreEncima, probabilidadEncima, probEncima, rejillaZ, cuantilesConformes, planDeHorizontes, AVISO,
   CORTOS, LARGOS, INTERVAL_MS, ewmaSigma, estandarizados, rendimientos, curtosis,
   varianzaHorizonte, varianzaLargoPlazo,
-  LAMBDA, MIN_MUESTRA, CUANTILES, PERSISTENCIA,
+  LAMBDA, MIN_MUESTRA, CUANTILES, PERSISTENCIA, PUNTOS_REJILLA,
 };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = API;

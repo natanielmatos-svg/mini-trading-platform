@@ -59,6 +59,7 @@
         </div>
         <div class="clock-bar"><span id="clockBar"></span></div>
         <p class="pred-linea" id="predLinea"></p>
+        <p class="pred-linea" id="probLinea"></p>
         <div class="clock-foot">
           <span id="clockOpen"></span>
           <span id="clockClose"></span>
@@ -68,6 +69,17 @@
       <div class="card" data-tarjeta="prediccion">
         <h2>¿Dónde estará el precio? <small>distribución, no adivinanza</small></h2>
         <div id="forecastPanel"><p class="muted">Calculando…</p></div>
+      </div>
+
+      <div class="card" data-tarjeta="probabilidad">
+        <h2>¿Termina por encima de…? <small>probabilidad en vivo</small></h2>
+        <div class="prob-entrada">
+          <input type="number" id="probNivel" step="any" min="0" inputmode="decimal" placeholder="precio" aria-label="Precio de referencia" />
+          <button type="button" id="probAhora" class="ghost small" title="El precio de ahora">ahora</button>
+          <button type="button" id="probArriba" class="ghost small" title="El nivel de resistencia que detecta el análisis de ruptura">resistencia</button>
+          <button type="button" id="probAbajo" class="ghost small" title="El nivel de soporte que detecta el análisis de ruptura">soporte</button>
+        </div>
+        <div id="probPanel"><p class="muted">Escribe un precio y aparece la probabilidad de acabar por encima y por debajo, a cada plazo.</p></div>
       </div>
 
       <div class="card" data-tarjeta="ruptura">
@@ -147,6 +159,8 @@
   <script src="/lib/tabla-mtf.js"></script>
   <script src="/lib/precio-vivo.js"></script>
   <script src="/lib/panel-prediccion.js"></script>
+  <script src="/lib/forecast.js"></script>
+  <script src="/lib/panel-probabilidad.js"></script>
   <script src="/lib/tarjetas.js"></script>
   <script src="/app.js"></script>
 </body>

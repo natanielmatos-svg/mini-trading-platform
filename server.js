@@ -65,7 +65,7 @@ app.use((req, res, next) => {
 // sola tabla y un solo modo de calmar el precio en vivo.
 // Lista blanca explícita y no `express.static('src')`: ahí dentro están
 // también los proveedores y la orquestación.
-const SHARED_MODULES = ['indicators.js', 'format.js', 'signals.js', 'chart.js', 'panel-ruptura.js', 'avisos.js', 'tabla-mtf.js', 'precio-vivo.js', 'volatilidad.js', 'panel-prediccion.js', 'tarjetas.js'];
+const SHARED_MODULES = ['indicators.js', 'format.js', 'signals.js', 'chart.js', 'panel-ruptura.js', 'avisos.js', 'tabla-mtf.js', 'precio-vivo.js', 'forecast.js', 'panel-prediccion.js', 'panel-probabilidad.js', 'tarjetas.js'];
 
 app.get('/lib/:file', (req, res) => {
   if (!SHARED_MODULES.includes(req.params.file)) {
@@ -396,7 +396,7 @@ app.get('/api/stream', (req, res) => {
 // el histórico, es decir, si las bandas que promete se cumplen de verdad. Un
 // predictor que publica su propio boletín de notas.
 
-async function predecirActivo({ candles, interval, precio, bloques }) {
+async function predecirActivo({ candles, interval, precio, bloques, nivel = null }) {
   const clave = `${interval}:${bloques}:${candles.length}:${candles[candles.length - 1].openTime}`;
   const conformes = await cacheConforme.wrap(clave, async () => forecast.cuantilesConformes(candles, { bloques }), 300_000);
 
@@ -404,13 +404,25 @@ async function predecirActivo({ candles, interval, precio, bloques }) {
   if (!f.ok) return f;
 
   const cal = calibracion.calibrar(candles, { bloques, paso: Math.max(1, Math.floor(candles.length / 300)) });
-  return { ...f, calibracion: cal.ok ? { ...cal, veredicto: calibracion.veredicto(cal) } : { ok: false, reason: cal.reason } };
+  const salida = { ...f, calibracion: cal.ok ? { ...cal, veredicto: calibracion.veredicto(cal) } : { ok: false, reason: cal.reason } };
+
+  // La probabilidad de acabar por encima de un nivel, para quien consuma la API
+  // por su cuenta. El navegador NO usa esto: la respuesta ya trae la rejilla de
+  // la distribución y resuelve cualquier nivel en cada tick, sin volver a
+  // preguntar. Responder aquí a diez ticks por segundo sería absurdo.
+  if (nivel > 0) {
+    const r = forecast.probabilidadEncima({ precio: f.precio, nivel, sigmaHorizonte: f.sigmaHorizonte, rejilla: f.rejilla });
+    if (r) salida.probabilidad = { nivel, encima: r.p, debajo: 1 - r.p, fuera: r.fuera, resolucion: r.resolucion };
+  }
+
+  return salida;
 }
 
 app.get('/api/forecast', async (req, res) => {
   const { symbol, interval, demo } = marketParams(req);
   const venues = parseVenues(req.query.venues);
   const livePrice = Number(req.query.price);
+  const nivel = Number(req.query.nivel) > 0 ? Number(req.query.nivel) : null;
 
   try {
     const plan = planDeHorizontes(interval);
@@ -434,7 +446,7 @@ app.get('/api/forecast', async (req, res) => {
         bloques: h.bloques,
         ms: h.ms,
         desde: h.interval,
-        ...(await predecirActivo({ candles: s.candles, interval: h.interval, precio, bloques: h.bloques })),
+        ...(await predecirActivo({ candles: s.candles, interval: h.interval, precio, bloques: h.bloques, nivel })),
       });
     }
 
@@ -451,6 +463,7 @@ app.get('/api/forecast', async (req, res) => {
 
 app.get('/api/stocks/forecast', async (req, res) => {
   const { symbol, interval, demo } = stockParams(req);
+  const nivel = Number(req.query.nivel) > 0 ? Number(req.query.nivel) : null;
 
   try {
     const plan = planDeHorizontes(interval);
@@ -472,7 +485,7 @@ app.get('/api/stocks/forecast', async (req, res) => {
         bloques: h.bloques,
         ms: h.ms,
         desde: h.interval,
-        ...(await predecirActivo({ candles: s.candles, interval: h.interval, precio: null, bloques: h.bloques })),
+        ...(await predecirActivo({ candles: s.candles, interval: h.interval, precio: null, bloques: h.bloques, nivel })),
       });
     }
 

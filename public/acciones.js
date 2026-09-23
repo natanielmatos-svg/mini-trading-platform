@@ -27,6 +27,7 @@ const Avisos = globalThis.Avisos;
 const TablaMtf = globalThis.TablaMtf;
 const PrecioVivo = globalThis.PrecioVivo;
 const PanelPrediccion = globalThis.PanelPrediccion;
+const PanelProbabilidad = globalThis.PanelProbabilidad;
 const Tarjetas = globalThis.Tarjetas;
 
 const calma = PrecioVivo.crear();
@@ -34,6 +35,9 @@ const calma = PrecioVivo.crear();
 const MTF = ['1h', '4h', '1d', '1w'];
 const CANDLES = 300;
 const PREFS_KEY = 'mtp.alertas.acciones'; // separado del de cripto a propósito
+// El nivel se guarda POR VALOR: 190 es una pregunta sensata sobre Apple y un
+// disparate sobre Berkshire.
+const NIVEL_KEY = (symbol) => `mtp.nivel.${symbol}`;
 
 // Cada cuánto se pregunta el precio. Con la bolsa abierta, cinco segundos:
 // suficiente para que el número se vea vivo sin castigar la cuota gratuita.
@@ -65,6 +69,12 @@ const el = {
   breakout: $('breakoutPanel'),
   forecast: $('forecastPanel'),
   predLinea: $('predLinea'),
+  probPanel: $('probPanel'),
+  probNivel: $('probNivel'),
+  probLinea: $('probLinea'),
+  probAhora: $('probAhora'),
+  probArriba: $('probArriba'),
+  probAbajo: $('probAbajo'),
   market: $('marketState'),
   marketLabel: $('marketLabel'),
   aviso: $('avisoClave'),
@@ -99,6 +109,7 @@ const state = {
   mtf: {},
   breakout: null,
   forecast: null,
+  nivel: null,        // el precio por el que se pregunta, si hay alguno
   quote: null,        // último precio devuelto por /api/stocks/quote
   clock: null,        // reloj del mercado
   source: null,
@@ -272,6 +283,7 @@ async function loadPrecio() {
     renderClock();
     avisos.evaluar();
     renderBreakout();
+    renderProbabilidad();
   } catch {
     // Un fallo puntual del precio no debe borrar el que ya se enseña: se
     // reintenta en el siguiente ciclo.
@@ -342,6 +354,76 @@ async function loadForecast() {
 function renderForecast() {
   if (el.forecast) PanelPrediccion.render(el.forecast, state.forecast, state.interval);
   PanelPrediccion.renderLinea(el.predLinea, state.forecast, state.interval);
+  renderProbabilidad({ force: true }); // datos nuevos: la tabla entera
+}
+
+// ---------------------------------------------------------------------------
+// «¿Termina por encima de X?»
+// ---------------------------------------------------------------------------
+//
+// Aquí el precio no llega diez veces por segundo como en cripto: el libro se
+// consulta cada cinco segundos con el mercado abierto. La cuenta sigue siendo
+// del navegador por lo mismo de siempre —la distribución ya viaja en la
+// respuesta— y además así el número cambia en el mismo instante en que se toca
+// el campo, sin ir y volver del servidor.
+//
+// Y con el mercado CERRADO el precio se queda quieto a propósito: ver
+// `precioActual`. La probabilidad se queda quieta con él, que es la verdad.
+
+function datosProb() {
+  return {
+    datos: state.forecast,
+    interval: state.interval,
+    nivel: state.nivel,
+    precio: precioActual(),
+    // Los plazos cuentan del reloj de pared. Con la bolsa cerrada, «4% de pasar
+    // de 366,40 dentro de cinco minutos» es la probabilidad de un movimiento
+    // que no puede ocurrir, porque no hay mercado donde ocurra.
+    nota: abierto() ? null : 'El mercado está cerrado: el precio no se mueve hasta la apertura, así que estos plazos sólo empiezan a contar de verdad entonces.',
+  };
+}
+
+function renderProbabilidad({ force = false } = {}) {
+  const d = datosProb();
+  if (force || !PanelProbabilidad.actualizar(el.probPanel, d)) {
+    PanelProbabilidad.render(el.probPanel, d);
+  }
+  PanelProbabilidad.renderLinea(el.probLinea, d);
+}
+
+function fijarNivel(valor, { escribir = true } = {}) {
+  const n = Number(valor);
+  state.nivel = n > 0 ? n : null;
+
+  // Sólo se reescribe la casilla cuando el valor viene de un botón. Mientras
+  // alguien teclea no se le toca lo escrito: redondearlo a media palabra
+  // movería el cursor y borraría los dígitos que aún no ha terminado de poner.
+  if (escribir && el.probNivel) {
+    const redondo = PanelProbabilidad.redondearNivel(state.nivel);
+    state.nivel = redondo;
+    el.probNivel.value = redondo === null ? '' : String(redondo);
+  }
+
+  try {
+    if (state.nivel === null) localStorage.removeItem(NIVEL_KEY(state.symbol));
+    else localStorage.setItem(NIVEL_KEY(state.symbol), String(state.nivel));
+  } catch {
+    /* en modo privado localStorage lanza; se sigue sin recordar el nivel */
+  }
+
+  renderProbabilidad({ force: true });
+}
+
+function recuperarNivel() {
+  let guardado = null;
+  try {
+    guardado = localStorage.getItem(NIVEL_KEY(state.symbol));
+  } catch {
+    /* idem */
+  }
+  state.nivel = Number(guardado) > 0 ? Number(guardado) : null;
+  if (el.probNivel) el.probNivel.value = state.nivel === null ? '' : String(state.nivel);
+  renderProbabilidad({ force: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -626,6 +708,7 @@ function applyControls() {
     calma.reiniciar(); // valor nuevo: el primer precio no se compara con el anterior
     avisos.olvidarPrimera(); // valor nuevo: no se grita por lo que ya había pasado
     avisos.renderHint();
+    recuperarNivel(); // el nivel es de un valor concreto; no se arrastra al siguiente
   }
 
   loadPrecio();
@@ -636,6 +719,29 @@ function init() {
   // Antes de nada: si hay un orden guardado, se aplica ya. Hacerlo después de
   // pintar daría un salto visible al recolocar las tarjetas.
   Tarjetas.activar({ contenedor: document.querySelector('.side-panel'), clave: 'mtp.tarjetas.acciones' });
+
+  recuperarNivel();
+
+  // Se escucha `input` y no `change`: la probabilidad tiene que aparecer
+  // mientras se escribe, no al salir del campo.
+  if (el.probNivel) {
+    el.probNivel.addEventListener('input', () => fijarNivel(el.probNivel.value, { escribir: false }));
+  }
+  if (el.probAhora) el.probAhora.addEventListener('click', () => fijarNivel(precioActual()));
+
+  // Los dos niveles que el análisis de ruptura ya detectó.
+  if (el.probArriba) {
+    el.probArriba.addEventListener('click', () => {
+      const b = state.breakout;
+      if (b && b.ok && b.up && b.up.level > 0) fijarNivel(b.up.level);
+    });
+  }
+  if (el.probAbajo) {
+    el.probAbajo.addEventListener('click', () => {
+      const b = state.breakout;
+      if (b && b.ok && b.down && b.down.level > 0) fijarNivel(b.down.level);
+    });
+  }
 
   // Antes del primer dibujo: el seguimiento guardado aporta el stop y el
   // objetivo, y son dos líneas del gráfico.
@@ -679,6 +785,7 @@ function init() {
     renderClock();
     renderMarket();
     PanelPrediccion.tick(el.forecast);
+    PanelPrediccion.tick(el.probPanel); // la misma cuenta atrás, la otra tabla
     if (state.breakout && state.breakout.ok) renderBreakout();
   }, 250);
 

@@ -290,3 +290,131 @@ test('las bandas escalan con la raíz del tiempo sobre datos realistas', () => {
   // cuando la volatilidad de ahora está por encima de la de largo plazo.
   assert.ok(ratio > 6 && ratio < Math.sqrt(60) + 0.1, `ratio ${ratio}, esperado cerca de ${Math.sqrt(60)}`);
 });
+
+// --- La probabilidad de acabar por encima de un precio ----------------------
+
+test('la probabilidad y las bandas dicen lo mismo', () => {
+  // La invariante que sostiene el panel entero: si la banda del 90% acaba en
+  // 88.000, la probabilidad de acabar por encima de 88.000 tiene que ser el 5%.
+  // Si cada una saliera de una distribución distinta, dos filas contiguas de la
+  // misma tabla se contradirían y no habría forma de saber cuál creer.
+  const c = serie(600, 11);
+  const f = F.predecir(c, { bloques: 4 });
+  assert.ok(f.ok);
+  assert.ok(f.rejilla, 'la predicción tiene que traer la distribución empaquetada');
+
+  for (const q of [0.05, 0.25, 0.5, 0.75, 0.95]) {
+    const banda = f.bandas.find((b) => b.q === q);
+    const r = F.probabilidadEncima({
+      precio: f.precio, nivel: banda.price, sigmaHorizonte: f.sigmaHorizonte, rejilla: f.rejilla,
+    });
+    assert.ok(Math.abs(r.p - (1 - q)) < 0.01, `q=${q}: la banda dice ${1 - q} y la probabilidad ${r.p.toFixed(4)}`);
+  }
+});
+
+test('la rejilla usa la distribución conforme cuando la hay', () => {
+  // Las bandas prefieren los errores medidos a la forma de un paso. La
+  // probabilidad tiene que venir de la misma muestra, o volveríamos a la
+  // contradicción de arriba por otro camino.
+  const c = serie(600, 12);
+  const conformes = F.cuantilesConformes(c, { bloques: 4, paso: 2 });
+  assert.ok(conformes && conformes.rejilla, 'la corrección conforme trae su propia rejilla');
+
+  const f = F.predecir(c, { bloques: 4, conformes });
+  assert.equal(f.conforme, true);
+  assert.deepEqual(f.rejilla.z, conformes.rejilla.z, 'manda la conforme, no la de un paso');
+
+  const banda = f.bandas.find((b) => b.q === 0.95);
+  const r = F.probabilidadEncima({ precio: f.precio, nivel: banda.price, sigmaHorizonte: f.sigmaHorizonte, rejilla: f.rejilla });
+  assert.ok(Math.abs(r.p - 0.05) < 0.02, `con bandas conformes también: ${r.p.toFixed(4)}`);
+});
+
+test('un nivel absurdo no sale como imposible', () => {
+  // Decir 0% de algo que la muestra no ha visto es confundir "no lo he visto"
+  // con "no pasa". Bitcoin multiplicándose por diez en cuatro horas no está en
+  // el histórico, pero 0% es una afirmación que nadie puede hacer.
+  const c = serie(400, 13);
+  const f = F.predecir(c, { bloques: 2 });
+
+  const arriba = F.probabilidadEncima({ precio: f.precio, nivel: f.precio * 10, sigmaHorizonte: f.sigmaHorizonte, rejilla: f.rejilla });
+  assert.ok(arriba.p > 0, 'nunca cero');
+  assert.equal(arriba.fuera, 'arriba', 'y se avisa de que está fuera de la muestra');
+  assert.ok(arriba.p <= arriba.grano, 'como mucho, el grano de la muestra');
+
+  const abajo = F.probabilidadEncima({ precio: f.precio, nivel: f.precio / 10, sigmaHorizonte: f.sigmaHorizonte, rejilla: f.rejilla });
+  assert.ok(abajo.p < 1, 'nunca uno');
+  assert.equal(abajo.fuera, 'abajo');
+});
+
+test('la probabilidad se mueve con el precio y en la dirección correcta', () => {
+  // Es lo que hace que esto sirva en vivo: el nivel fijo, el precio subiendo,
+  // la probabilidad de superarlo subiendo con él.
+  const c = serie(500, 14);
+  const f = F.predecir(c, { bloques: 4 });
+  const nivel = f.precio * 1.01;
+
+  const p = (precio) => F.probabilidadEncima({ precio, nivel, sigmaHorizonte: f.sigmaHorizonte, rejilla: f.rejilla }).p;
+
+  const bajo = p(f.precio * 0.99);
+  const medio = p(f.precio);
+  const alto = p(f.precio * 1.03);
+
+  assert.ok(bajo < medio, `${bajo.toFixed(4)} < ${medio.toFixed(4)}`);
+  assert.ok(medio < alto, `${medio.toFixed(4)} < ${alto.toFixed(4)}`);
+  assert.ok(alto > 0.5, 'con el precio ya por encima del nivel, más probable que no');
+});
+
+test('en el nivel exacto del precio la probabilidad es la mitad', () => {
+  // No es una casualidad aritmética: es la consecuencia de no predecir
+  // dirección. Si saliera 58%, el motor estaría apostando al alza.
+  const c = serie(500, 15);
+  const f = F.predecir(c, { bloques: 4 });
+  const r = F.probabilidadEncima({ precio: f.precio, nivel: f.precio, sigmaHorizonte: f.sigmaHorizonte, rejilla: f.rejilla });
+  assert.ok(Math.abs(r.p - 0.5) < 0.03, `salió ${r.p.toFixed(4)}`);
+});
+
+test('la rejilla nunca tiene más puntos que observaciones', () => {
+  // Rellenar 128 puntos con 40 observaciones sería inventarse resolución.
+  const pocos = Array.from({ length: 40 }, (_, i) => i / 10 - 2);
+  const r = F.rejillaZ(pocos);
+  assert.equal(r.n, 40);
+  assert.equal(r.muestra, 40);
+
+  const muchos = Array.from({ length: 900 }, (_, i) => i / 100 - 4.5);
+  assert.equal(F.rejillaZ(muchos).n, F.PUNTOS_REJILLA);
+  assert.equal(F.rejillaZ(muchos).muestra, 900);
+
+  assert.equal(F.rejillaZ([1, 2, 3]), null, 'con tres observaciones no hay distribución que empaquetar');
+});
+
+test('la rejilla va ordenada y su frecuencia acumulada es monótona', () => {
+  const r = F.rejillaZ(Array.from({ length: 300 }, (_, i) => Math.sin(i) * 2));
+  for (let i = 1; i < r.z.length; i++) assert.ok(r.z[i] >= r.z[i - 1], `desordenada en ${i}`);
+
+  let anterior = 1;
+  for (const u of [-3, -1, -0.5, 0, 0.5, 1, 3]) {
+    const p = F.probEncima(r, u).p;
+    assert.ok(p <= anterior, `subiendo el umbral la probabilidad no puede subir: ${u}`);
+    anterior = p;
+  }
+});
+
+test('probCierreEncima usa la misma distribución que las bandas', () => {
+  const c = serie(500, 16);
+  const f = F.predecir(c, { bloques: 4 });
+  const banda = f.bandas.find((b) => b.q === 0.9);
+
+  const r = F.probCierreEncima(c, banda.price, { bloques: 4 });
+  assert.ok(r.ok);
+  assert.ok(Math.abs(r.probabilidad - 0.1) < 0.01, `salió ${r.probabilidad.toFixed(4)}`);
+  assert.equal(r.fuera, null, 'un nivel que sale de la propia banda está dentro de la muestra');
+});
+
+test('calibrarse no construye la rejilla, que sería trabajo tirado', () => {
+  // La rejilla se calcula para once horizontes en cada refresco; hacerlo
+  // también en cada uno de los cientos de pasos del walk-forward multiplicaba
+  // el coste de calibrarse sin que nadie mirase el resultado.
+  const c = serie(300, 17);
+  assert.equal(F.predecir(c, { bloques: 1, conRejilla: false }).rejilla, null);
+  assert.ok(F.predecir(c, { bloques: 1 }).rejilla, 'por defecto sí viene');
+});
