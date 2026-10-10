@@ -322,3 +322,26 @@ test('lo que se acaba de comprar no se vende en la misma vuelta', () => {
     assert.equal(b.estado.posiciones.size, 1);
   });
 });
+
+test('el bucle sigue vivo entre vueltas', async () => {
+  // El fallo que esto cierra: el temporizador llevaba `unref()`, y un
+  // temporizador sin referencia no mantiene vivo el bucle de eventos. El
+  // proceso se moría al acabar la primera vuelta. Un servicio pensado para
+  // durar días duraba una vuelta, y ninguna prueba lo veía porque todas
+  // llaman a `ciclo()` a mano con el corredor de tests sujetando el proceso.
+  const { b } = bucleDe({ cadaMs: 10 });
+
+  b.arrancar();
+  await new Promise((r) => setTimeout(r, 60));
+
+  assert.ok(b.estado.temporizador, 'hay una vuelta programada');
+  assert.equal(
+    typeof b.estado.temporizador.hasRef === 'function' ? b.estado.temporizador.hasRef() : true,
+    true,
+    'el temporizador tiene que sujetar el proceso, o el servicio se apaga solo',
+  );
+  assert.ok(b.estado.vueltas >= 2, `debería haber dado más de una vuelta, dio ${b.estado.vueltas}`);
+
+  b.parar();
+  assert.equal(b.estado.temporizador, null, 'y parar() lo suelta, que es como se termina de verdad');
+});
