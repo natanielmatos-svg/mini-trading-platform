@@ -1,7 +1,19 @@
 'use strict';
 const {VERSION}=require('./kalshi-model-benchmark');
-const MODELS=['timesfm','localAI','spot'];
-const LABELS={timesfm:'TimesFM',localAI:'IA local',spot:'Mantener consolidado'};
+// BRTI entra en el ranking como un competidor más.
+//
+// El dato ya se congelaba: `kalshi-model-benchmark.js` lleva `brti` en sus
+// `names` desde el principio y guarda `prices.brti` y `emittedAt.brti` con cada
+// muestra. Sólo el selector lo dejaba fuera, y eso tenía una consecuencia que
+// no se ve hasta que se busca: el selector NO PODÍA concluir «ninguno de tus
+// modelos gana a no hacer nada». Elegía siempre el mejor de tres, aunque los
+// tres fueran peores que quedarse con el valor del índice.
+//
+// Un banco de pruebas que excluye la referencia trivial de poder ganar es un
+// banco de pruebas que adula a sus modelos. Si «mantener BRTI» gana, hay que
+// enterarse.
+const MODELS=['timesfm','localAI','spot','brti'];
+const LABELS={timesfm:'TimesFM',localAI:'IA local',spot:'Mantener consolidado',brti:'Mantener BRTI'};
 // Select on resolved official contracts, all three frozen before the same close.
 // Reserve the last 20 contracts for error calibration, separate from selection.
 function select(events,{now=Date.now(),market=null}={}){
