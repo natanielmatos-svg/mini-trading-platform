@@ -1,6 +1,7 @@
 'use strict';
 (()=>{
  const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!=null)n.textContent=text;if(cls)n.className=cls;return n;};
+ const metricas=(host,pares)=>{const g=el('div',null,'learning-metrics');for(const [label,value] of pares){const b=el('div');const t=String(value);b.append(el('span',label),el('strong',t==='Sin resultados'||t==='Pendiente'?'—':t));g.append(b);}host.append(g);return g;};
  const money=n=>Number.isFinite(n)?n.toLocaleString('es-ES',{maximumFractionDigits:2})+' USD':'Sin resultados';
  function init(){
   const host=document.querySelector('.side-panel');if(!host)return;
@@ -12,7 +13,27 @@
   ['Inicio · 0–25% del bloque','25–50% del bloque','50–75% del bloque','75–100% del bloque'].forEach((text,i)=>{const o=el('option',text);o.value=i;phase.append(o);});
   filters.append(select,phase);const body=el('div');card.append(status,filters);const activity=LearningActivity.mount(card);card.append(body);host.append(card);
   let data=null,busy=false;
-  function render(){
+  function render(){pintar();agrupar();}
+  // Las secciones se escriben planas (h3 + párrafos). Agruparlas después en
+  // tarjetas evita repetir el envoltorio catorce veces y cubre las que se
+  // añadan más adelante sin tocarlas.
+  function agrupar(){
+   const hijos=[...body.children];if(!hijos.some(n=>n.tagName==='H3'))return;
+   const salida=[];let bloque=null;
+   for(const n of hijos){if(n.tagName==='H3'){bloque=el('section',null,'learning-block');salida.push(bloque);}bloque?bloque.append(n):salida.push(n);}
+   body.replaceChildren(...salida);
+   for(const b of body.querySelectorAll('.learning-block'))plegar(b);
+  }
+  // La prosa explicativa pesaba lo mismo que el dato. Las notas largas se
+  // pliegan; las cortas suelen llevar cifras y se quedan a la vista.
+  function plegar(bloque){
+   const largas=[...bloque.querySelectorAll(':scope > p.workspace-note')].filter(n=>n.textContent.length>120);
+   if(!largas.length)return;
+   const d=el('details',null,'workspace-help');d.append(el('summary','Cómo se calcula'));
+   for(const n of largas)d.append(n);
+   bloque.append(d);
+  }
+  function pintar(){
    const disclosures=[...body.querySelectorAll('details')].map(d=>d.open);body.replaceChildren();if(!data)return;activity.update(data,select.value,Number(phase.value));queueMicrotask(()=>body.querySelectorAll('details').forEach((d,i)=>{if(disclosures[i])d.open=true;}));
    const stale=!data.lastRun||Date.now()-data.lastRun>300000;
    status.textContent=(stale?'Sin ronda reciente':data.errors?.length?'Recolección con incidencias':'Recolector activo')+' · '+(data.lastRun?new Date(data.lastRun).toLocaleString('es-ES'):'esperando primera ronda');
@@ -23,27 +44,27 @@
    if(data.pilot?.midpointCalibrationTrial){const t=data.pilot.midpointCalibrationTrial;body.append(el('h3','Calibración · comparación nueva'),el('p',t.note,'workspace-note'));if(!t.groups.length)body.append(el('p','Sin cierres nuevos evaluados · '+t.pending+' pendientes. Los resultados anteriores no cuentan en esta prueba.'));for(const g of t.groups){body.append(el('p',g.contracts+' contratos compartidos · menor Brier es mejor'));for(const [k,label] of [['raw','Sin calibración'],['calibrated','Calibración actual'],['market','Mercado']]){const m=g.models[k];body.append(el('p',label+': Brier '+m.brier.toFixed(4)+' · '+m.correct+' aciertos'+(k==='market'?'':' · '+m.entries+' entradas teóricas · '+m.abstentions+' abstenciones · neto '+money(m.netBoundUSD))));}}}
    if(data.pilot?.midpointPriceTrial){const t=data.pilot.midpointPriceTrial;body.append(el('h3','Prueba nueva · entradas de 0,25 a menos de 0,50 USD'),el('p',t.note,'workspace-note'));if(!t.groups.length)body.append(el('p','Esperando capturas nuevas; el histórico anterior no cuenta.'));for(const g of t.groups){body.append(el('p',g.entries+'/100 entradas evaluadas · '+g.observedDays+'/7 días · '+g.pending+' pendientes · '+g.abstentions+' abstenciones'),el('p','Neto teórico: '+money(g.netUSD)+' · con peor ejecución: '+money(g.stressNetUSD)+' · caída máxima: '+money(g.maxDrawdownUSD)));if(g.entries)body.append(el('p','Ganaron '+g.wins+'/'+g.entries+' · probabilidad media estimada '+(g.meanPredictedWin*100).toFixed(1)+'% · Brier modelo '+g.brier.toFixed(4)+' / mercado '+g.marketBrier.toFixed(4)));if(g.reviewDue)body.append(el('p','Punto de revisión alcanzado. No autoriza operaciones.'));}}
    if(data.pilot?.marketResidualTrial){const t=data.pilot.marketResidualTrial;body.append(el('h3','Candidato · corrección del mercado'),el('p','Parte de Kalshi y estima su error histórico por tramo de probabilidad. Sólo evaluación futura; sin órdenes.','workspace-note'));if(!t.groups.length)body.append(el('p',t.latest?.reason||'Esperando capturas nuevas.'));for(const g of t.groups)body.append(el('p',g.contracts+' contratos nuevos · '+g.pending+' pendientes · Brier candidato '+(g.brier?.toFixed(4)??'—')+' / mercado '+(g.marketBrier?.toFixed(4)??'—')),el('p',g.entries+' entradas teóricas · '+g.abstentions+' abstenciones · neto '+money(g.netUSD)+' · con peor ejecución '+money(g.stressNetUSD)));}
-   if(data.lagLab){const p=data.lagLab;body.append(el('h3','Prueba de retraso · BRTI frente a Kalshi'),el('p',(p.sampler?.running?'Observación activa':'Observación detenida')+' · '+p.samples+' muestras · '+p.signals+' señales · '+p.closed+' recorridos teóricos completos · '+p.missed+' ventanas no ejecutables.'));
+   if(data.lagLab){const p=data.lagLab;body.append(el('h3','Prueba de retraso · BRTI frente a Kalshi'),el('p',p.sampler?.running?'Observación activa':'Observación detenida'));metricas(body,[['Muestras',p.samples],['Señales',p.signals],['Recorridos completos',p.closed],['Ventanas no ejecutables',p.missed]]);
     body.append(el('p','Resultado bruto teórico: '+money(p.grossUSD)+' · cota neta: '+money(p.netBoundUSD)+' sobre '+p.costed+' casos con tarifas verificadas · '+p.pending+' pendientes.','workspace-note'),el('p',p.note,'workspace-note'));if(p.error)body.append(el('p',p.error,'warning'));
    }
-   if(data.lagLab?.settlementMinute){const m=data.lagLab.settlementMinute,p=m.latest;body.append(el('h3','Último minuto · promedio frente al precio'),el('p',m.observations+' observaciones completas · '+m.incomplete+' incompletas · '+m.disagreements+' discrepancias de lado. Son muestras, no operaciones.','workspace-note'));if(p?.status==='observed')body.append(el('p',p.knownSeconds+' de 60 lecturas · promedio si el precio no cambiara: '+money(p.meanIfUnchanged)+' · promedio futuro necesario para la meta: '+money(p.requiredRemainingMean)),el('p',p.note,'workspace-note'));else body.append(el('p',p?.reason||'Esperando el último minuto del contrato. No emite órdenes.','workspace-note'));}
+   if(data.lagLab?.settlementMinute){const m=data.lagLab.settlementMinute,p=m.latest;body.append(el('h3','Último minuto · promedio frente al precio'));metricas(body,[['Observaciones completas',m.observations],['Incompletas',m.incomplete],['Discrepancias de lado',m.disagreements]]);body.append(el('p','Son muestras, no operaciones.','workspace-note'));if(p?.status==='observed')body.append(el('p',p.knownSeconds+' de 60 lecturas · promedio si el precio no cambiara: '+money(p.meanIfUnchanged)+' · promedio futuro necesario para la meta: '+money(p.requiredRemainingMean)),el('p',p.note,'workspace-note'));else body.append(el('p',p?.reason||'Esperando el último minuto del contrato. No emite órdenes.','workspace-note'));}
    if(data.pilot?.motionCandidate){const m=data.pilot.motionCandidate,c=data.pilot.featureCollection,p=m.latest;
     body.append(el('h3','Nuevo modelo de IA · BRTI y libro de Kalshi'),el('p',p?.status==='candidate'?'Estimación SÍ: '+(100*p.pYes).toFixed(1)+'% · experimental':p?.reason||'Esperando capturas nuevas con movimientos completos.'));
     body.append(el('p',(c?.samples??0)+' capturas nuevas · '+(c?.complete60sSamples??0)+' con cobertura completa de 60 segundos · '+(p?.trainingSamples??0)+' contratos de ajuste / 60 · '+(p?.calibrationSamples??0)+' de calibración / 20.','workspace-note'));
     for(const g of m.groups)body.append(el('p',g.evaluated+' predicciones futuras evaluadas · '+g.pending+' pendientes · Brier candidato: '+(g.brier==null?'Sin resultados':g.brier.toFixed(4))+' · mercado, mismos contratos: '+(g.marketBrier==null?'Sin resultados':g.marketBrier.toFixed(4))));
     body.append(el('p',m.note,'workspace-note'));
    }
-   if(data.pilot?.loadingHistory)body.append(el('p',data.pilot.historyError||'Recuperando el histórico del piloto… Los resultados aparecerán al terminar.','workspace-note'));
-   if(data.pilot&&!data.pilot.loadingHistory){const p=data.pilot;body.append(el('h3','Piloto BTC · Kalshi 15 minutos'),el('p',p.samples+' capturas · '+p.joinedSamples+' con predicción previa · '+p.resolvedContracts+' contratos liquidados oficialmente'),el('p','Última captura/ronda: '+(p.lastRun?new Date(p.lastRun).toLocaleString('es-ES'):'pendiente')+'. '+p.fixedWindowSamples+' capturas en la ventana de evaluación. Beneficio neto: no disponible; sólo observación.','workspace-note'));for(const error of p.errors||[])body.append(el('p',error,'warning'));}
+   if(data.pilot?.loadingHistory)body.append(el('h3','Piloto BTC · Kalshi 15 minutos'),el('p',data.pilot.historyError||'Recuperando el histórico del piloto… Los resultados aparecerán al terminar.','workspace-note'));
+   if(data.pilot&&!data.pilot.loadingHistory){const p=data.pilot;body.append(el('h3','Piloto BTC · Kalshi 15 minutos'));metricas(body,[['Capturas',p.samples],['Con predicción previa',p.joinedSamples],['Contratos liquidados',p.resolvedContracts],['En la ventana de evaluación',p.fixedWindowSamples]]);body.append(el('p','Última captura/ronda: '+(p.lastRun?new Date(p.lastRun).toLocaleString('es-ES'):'pendiente')+'. Beneficio neto: no disponible; sólo observación.','workspace-note'));for(const error of p.errors||[])body.append(el('p',error,'warning'));}
    if(data.pilot?.probability){const p=data.pilot.probability,f=p.latest;body.append(el('h3','Probabilidad de liquidación · candidato local'),el('p',f?.status==='candidate'?'Probabilidad SÍ: '+(f.pYes*100).toFixed(1)+'% · calibración experimental, sin validar.':(f?.reason||'Esperando la próxima ventana de 10 minutos para evaluar datos disponibles.')),el('p',(f?.trainingSamples??0)+' contratos de entrenamiento · '+(f?.calibrationSamples??0)+' de calibración · '+p.evaluatedContracts+' predicciones futuras evaluadas.','workspace-note'));if(p.evaluatedContracts)body.append(el('p','Brier candidato: '+p.brier.toFixed(4)+' · Kalshi: '+p.marketBrier.toFixed(4)+' (menos es mejor; mismos contratos).'));for(const c of p.filter?.candidates||[])body.append(el('p',(c.side==='yes'?'SÍ':'NO')+' · margen estimado por contrato: '+money(c.estimatedNetUSD)+' · '+(c.passesIllustrativeMargin?'supera margen ilustrativo':'no supera margen ilustrativo')));body.append(el('p',p.filter?.reason||'No hay señal ejecutable: costes y ventaja prospectiva pendientes.','workspace-note'));}
    if(data.pilot?.probability)body.append(el('p',data.pilot.probability.availableContracts+' contratos históricos con variables y etiqueta disponibles. Mínimo inicial: '+data.pilot.probability.minimum+' comparables; las versiones se separan al entrenar.','workspace-note'));
+   if(data.marketFeed||data.feePolicy)body.append(el('h3','Conexión y tarifas'));
    if(data.marketFeed){const f=data.marketFeed;body.append(el('p','Libro Kalshi: '+(f.bookReady?'WebSocket · datos recientes':f.connected?'WebSocket conectado · esperando libro reciente; respaldo REST':'Respaldo REST')+' · '+(f.sequenceGaps||0)+' discontinuidades detectadas.','workspace-note'));if(f.error)body.append(el('p',f.error,'warning'));}
    if(data.feePolicy)body.append(el('p','Tarifas: '+(data.feePolicy.valid?'fórmula revisada':'revisión vencida · entradas bloqueadas')+' · próxima revisión '+new Date(data.feePolicy.reviewBy).toLocaleString('es-ES')+'. Los multiplicadores se verifican al consultar.','workspace-note'));
    if(data.pilot?.brtiProspective){
     const p=data.pilot.brtiProspective;
     body.append(el('h3','Prueba económica BRTI · prospectiva'),el('p','BTC 15m · señal a 10 minutos ±30 s del cierre · un contrato teórico · mantener hasta liquidación oficial.','workspace-note'));
-    const grid=el('div',null,'arb-metrics');
-    for(const [label,value] of [['Evaluados',p.evaluated],['Pendientes',p.pending],['Abstenciones',p.abstentions],['Resultado teórico tras cota de comisiones',money(p.netBoundUSD)],['Cota de comisiones',money(p.feeBoundUSD)],['Caída máxima teórica',money(p.maxDrawdownUSD)],['Órdenes de esta prueba',p.executedOrders],['Beneficio ejecutado',money(p.actualNetUSD)]]){const box=el('div');box.append(el('span',label),el('strong',String(value)));grid.append(box);}body.append(grid,el('p',p.note,'workspace-note'));
+    metricas(body,[['Evaluados',p.evaluated],['Pendientes',p.pending],['Abstenciones',p.abstentions],['Resultado teórico tras cota de comisiones',money(p.netBoundUSD)],['Cota de comisiones',money(p.feeBoundUSD)],['Caída máxima teórica',money(p.maxDrawdownUSD)],['Órdenes de esta prueba',p.executedOrders],['Beneficio ejecutado',money(p.actualNetUSD)]]);body.append(el('p',p.note,'workspace-note'));
     if(p.latest)body.append(el('p','Última decisión: '+p.latest.ticker+' · '+new Date(p.latest.at).toLocaleString('es-ES')+' · '+p.latest.reason));
     const details=el('details');details.append(el('summary','Precios y resultados por contrato'));
     for(const r of p.recent)details.append(el('p',r.ticker+' · '+r.side.toUpperCase()+' · entrada al libro '+money(r.entryPriceUSD)+' · cota de comisión '+money(r.feeBoundUSD)+' · resultado teórico '+money(r.netBoundUSD)));
@@ -82,7 +103,7 @@
     if(!h.groups.length)body.append(el('p','Sin predicciones futuras evaluadas todavía. El histórico sin movimiento intrabloque no se rellena.'));
     for(const g of h.groups){
      const tile=el('section',null,'learning-model-card');tile.append(el('h4','Híbrido · muestra independiente'),el('strong',Number.isFinite(g.accuracy)?(g.accuracy*100).toFixed(1)+'%':'—','learning-model-score'));
-     const metrics=el('div',null,'arb-metrics');for(const [label,value] of [['Aciertos',g.correct],['Fallos',g.wrong],['Evaluados',g.contracts],['Brier · menos es mejor',Number.isFinite(g.brier)?g.brier.toFixed(4):'Sin resultados']]){const box=el('div');box.append(el('span',label),el('strong',String(value)));metrics.append(box);}tile.append(metrics,el('p','Sobre estos mismos '+g.contracts+' contratos: TimesFM '+g.timesfmCorrect+' aciertos, consolidado '+g.spotCorrect+', BRTI '+g.brtiCorrect+'. Esta muestra es distinta de la comparación anterior.','workspace-note'));const detail=el('details');detail.append(el('summary','Versiones del híbrido'),el('p',g.key,'workspace-note'));tile.append(detail);body.append(tile);
+     const metrics=el('div');metricas(metrics,[['Aciertos',g.correct],['Fallos',g.wrong],['Evaluados',g.contracts],['Brier · menos es mejor',Number.isFinite(g.brier)?g.brier.toFixed(4):'Sin resultados']]);tile.append(metrics,el('p','Sobre estos mismos '+g.contracts+' contratos: TimesFM '+g.timesfmCorrect+' aciertos, consolidado '+g.spotCorrect+', BRTI '+g.brtiCorrect+'. Esta muestra es distinta de la comparación anterior.','workspace-note'));const detail=el('details');detail.append(el('summary','Versiones del híbrido'),el('p',g.key,'workspace-note'));tile.append(detail);body.append(tile);
     }
     body.append(el('p',h.pending+' pendientes. Sólo observación: sin órdenes ni sustitución automática del modelo activo.','workspace-note'));
    }
@@ -98,9 +119,8 @@
    const group=data.groups?.find(g=>JSON.stringify([g.symbol,g.interval,g.source,g.venues])===select.value);
    if(!group){body.append(el('p','Aún no hay bloques registrados. El servidor recopila BTC y ETH a 15 minutos.'));return;}
    const local=data.localAI?.groups?.find(g=>g.group===select.value&&g.phase===Number(phase.value));
-   const metrics=el('div',null,'arb-metrics');
-   for(const [label,value] of [['Cierres recopilados',group.closed],['Ventana móvil · hasta 500 cierres',local?.latest?.trainingSamples??'Pendiente'],['Cierres evaluados de IA local',local?.samples??0],['Modo actual','En evaluación']]){const box=el('div');box.append(el('span',label),el('strong',String(value)));metrics.append(box);}
-   body.append(metrics,el('p',group.source+' · '+(group.venues||[]).join(', '),'workspace-note'));
+   metricas(body,[['Cierres recopilados',group.closed],['Ventana móvil · hasta 500 cierres',local?.latest?.trainingSamples??'Pendiente'],['Cierres evaluados de IA local',local?.samples??0],['Modo actual','En evaluación']]);
+   body.append(el('p',group.source+' · '+(group.venues||[]).join(', '),'workspace-note'));
    const progress=el('progress');progress.max=100;progress.value=Math.min(100,local?.samples||0);progress.setAttribute('aria-label','Cierres evaluados hacia una revisión mínima de 100');
    body.append(el('h3','Evaluación de la IA local'),progress,el('p',(local?.samples||0)+' / 100 cierres para una revisión inicial. Alcanzar 100 no garantiza precisión ni activa el modelo.','workspace-note'));
    if(local?.latest){const p=local.latest;body.append(el('p','Último ajuste de la IA local: '+new Date(p.at).toLocaleString('es-ES')+'. Usa los últimos '+p.trainingSamples+' cierres válidos; la ventana se renueva al incorporar cierres nuevos.','workspace-note'));body.append(el('p','Última estimación: '+money(p.price)+' · '+(Date.now()<p.closesAt?'cierre pendiente':'bloque terminado')+' · objetivo '+new Date(p.closesAt).toLocaleString('es-ES')));}
