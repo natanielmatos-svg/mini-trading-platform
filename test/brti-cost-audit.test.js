@@ -1,0 +1,4 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),{purchase,stats}=require('../scripts/audit-brti-cost');
+test('buy price uses opposite bids and sweeps available depth; no invented liquidity',()=>{const b={no:[{precio:.3,cantidad:2},{precio:.4,cantidad:.5}],yes:[{precio:.2,cantidad:1}]};assert.equal(purchase(b,'yes'),.65);assert.equal(purchase(b,'no'),.8);assert.equal(purchase({yes:[]},'no'),null);assert.equal(purchase({no:[{precio:.9,cantidad:.1}]},'yes'),null);});
+test('cost totals use only priced rows and costs are not counted twice',()=>{const s=stats([{cost:.7,won:true,quoteDifference:0,feesVerified:false},{cost:.8,won:false,quoteDifference:.1,feesVerified:false},{cost:null,won:true}]);assert.equal(s.contracts,3);assert.equal(s.correct,2);assert.equal(s.priced,2);assert.equal(s.payout,1);assert.equal(s.grossPnl,-.5);assert.equal(s.feeScenarios[2].netPnl,-.54);assert.equal(s.quoteDiscrepancies,1);});

@@ -13,6 +13,8 @@ ExecStart=/usr/bin/node server.js
 
 Environment=NODE_ENV=production
 Environment=PORT=3000
+Environment=HOST=127.0.0.1
+Environment=DEMO=0
 Environment=PREDICTIONS_TTL_MS=30000
 Environment=TRUST_PROXY_HOPS=1
 Environment=KLINES_FETCH_LIMIT=500
@@ -32,6 +34,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadOnlyPaths=/opt/mini-trading-platform
+ReadWritePaths=/opt/mini-trading-platform/data /opt/mini-trading-platform/datos
 
 StandardOutput=journal
 StandardError=journal

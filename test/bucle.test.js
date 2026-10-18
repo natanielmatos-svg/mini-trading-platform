@@ -45,7 +45,7 @@ const mercadoJugoso = (extra = {}) => ({
   ticker: 'KXBTCD-TEST', tipo: 'mayor', suelo: 99.9, techo: null,
   vencimiento: 1_000_000 + 900_000,
   yesBid: 0.40, yesAsk: 0.42, noBid: 0.58, noAsk: 0.60,
-  libro: { yesAsk: 5000, noAsk: 5000 },
+  libro: { yesAsk: 5000, noAsk: 5000, yesBid: 5000, noBid: 5000 },
   ...extra,
 });
 
@@ -62,6 +62,103 @@ function bucleDe({ mercados = [mercadoJugoso()], fuentes = [], reg = cuaderno(),
   });
   return { b, reg };
 }
+
+test('riesgo diario agregado limita las entradas de todo el ciclo', async () => {
+  const mercados=Array.from({length:20},(_,i)=>mercadoJugoso({ticker:'KXBTCD-RISK-'+i}));
+  const {b}=bucleDe({mercados,riesgoActual:()=>({capital:50,maxPerTrade:50,dailyRemaining:2.5})});
+  await b.ciclo();
+  const cost=[...b.estado.posiciones.values()].reduce((s,p)=>s+p.contratos*p.precioEntrada+p.comisionEntrada,0);
+  assert.ok(cost>0);assert.ok(cost<=2.5);
+});
+
+test('salida de riesgo funciona aunque falle el listado y conserva el remanente al reiniciar', async () => {
+  const m=mercadoJugoso({bookAt:1000000,libro:{yesBid:8,noBid:8,yesAsk:8,noAsk:8}});
+  const {b,reg}=bucleDe({obtenerMercados:async()=>{throw Error('sin listado');},refrescarMercado:async()=>m,riesgoActual:()=>({capital:50,maxPerTrade:50,dailyRemaining:0})});
+  const entrada={tipo:'entrada',ticker:m.ticker,lado:'yes',contratos:10,precio:.42,comisionEntrada:.2,vencimiento:m.vencimiento};
+  reg.anotar(entrada);b.estado.posiciones=reconstruir(reg.entradas);
+  await b.ciclo();
+  const salida=reg.entradas.find(e=>e.tipo==='salida');
+  assert.equal(salida.contratos,2);assert.equal(b.estado.posiciones.get(m.ticker).contratos,8);
+  assert.ok(Math.abs(b.estado.posiciones.get(m.ticker).comisionEntrada-.16)<1e-9);
+  assert.deepEqual(reconstruir(reg.entradas),b.estado.posiciones);
+});
+
+test('un libro viejo no permite cerrar por riesgo ni abrir',async()=>{
+  const m=mercadoJugoso({bookAt:1});
+  const {b,reg}=bucleDe({refrescarMercado:async()=>m,riesgoActual:()=>({capital:50,maxPerTrade:50,dailyRemaining:0})});
+  b.estado.posiciones.set(m.ticker,{ticker:m.ticker,lado:'yes',contratos:3,precioEntrada:.42,vencimiento:m.vencimiento});
+  await b.ciclo();assert.equal(reg.entradas.filter(e=>['entrada','salida'].includes(e.tipo)).length,0);
+});
+
+test('la liquidación de otro contrato continúa si falla una consulta',async()=>{
+  const {b,reg}=bucleDe({mercados:[],obtenerLiquidacion:async ticker=>{if(ticker==='A')throw Error('red');return 'yes';}});
+  for(const ticker of ['A','B'])b.estado.posiciones.set(ticker,{ticker,lado:'yes',contratos:1,precioEntrada:.5,vencimiento:1});
+  await b.ciclo();assert.ok(b.estado.posiciones.has('A'));assert.ok(!b.estado.posiciones.has('B'));
+  assert.equal(reg.entradas.filter(e=>e.tipo==='liquidacion').length,1);
+});
+
+test('guardar observaciones falla antes de abrir y el bloqueo conserva la decisión sin veto',async()=>{
+  let observation;
+  const {b}=bucleDe({obtenerPrediccion:async()=>({...prediccionFalsa(),bloqueoEntradas:'Objetivo pendiente'}),observar:async d=>{observation=d;throw Error('disco lleno');}});
+  await b.ciclo();assert.equal(b.estado.posiciones.size,0);assert.equal(observation.cruda.operar,true);assert.equal(observation.decision.operar,false);
+});
+test('pausar las entradas respeta el cambio de configuración entre ciclos', async () => {
+  let paused=true;
+  const {b}=bucleDe({riesgoActual:()=>({capital:50,maxPerTrade:50,dailyRemaining:2.5,blocked:paused?'Pausa':null})});
+  await b.ciclo();assert.equal(b.estado.posiciones.size,0);
+  paused=false;await b.ciclo();assert.ok(b.estado.posiciones.size>0);
+});
+test('configuración de riesgo corrupta falla sin abrir posiciones',async()=>{
+  const {b}=bucleDe({riesgoActual:()=>({capital:50,maxPerTrade:NaN,dailyRemaining:2.5})});
+  await b.ciclo();assert.equal(b.estado.posiciones.size,0);assert.equal(b.estado.fallosSeguidos,1);
+});
+test('el capital se reserva entre mercados, incluidas las comisiones', async () => {
+  const mercados = Array.from({ length: 100 }, (_, i) => mercadoJugoso({ ticker: 'KXBTCD-' + i }));
+  const { b } = bucleDe({ mercados, capital: 100 });
+  await b.ciclo();
+  const coste = [...b.estado.posiciones.values()].reduce((sum,p) => sum + p.contratos*p.precioEntrada + p.comisionEntrada,0);
+  assert.ok(coste > 0 && coste <= 100, 'nunca puede comprometer más que el saldo');
+});
+
+test('dos vueltas simultáneas no duplican decisiones ni posiciones', async () => {
+  let release;
+  const pending = new Promise(resolve => { release=resolve; });
+  const { b } = bucleDe({ obtenerMercados: () => pending });
+  const first = b.ciclo();
+  assert.equal((await b.ciclo()).omitida,true);
+  release({mercados:[mercadoJugoso()]});
+  await first;
+  assert.equal(b.estado.vueltas,1);
+  assert.equal(b.estado.posiciones.size,1);
+});
+
+test('liquidar requiere un resultado oficial y se contabiliza una sola vez', async () => {
+  let resultado = null;
+  const { b, reg } = bucleDe({ mercados: [], obtenerLiquidacion: async () => resultado });
+  b.estado.posiciones.set('EXPIRED', { ticker:'EXPIRED', lado:'yes', contratos:10, precioEntrada:.4, comisionEntrada:.2, vencimiento:999_000 });
+  await b.ciclo();
+  assert.equal(b.estado.posiciones.size,1);
+  resultado='yes';
+  await b.ciclo(); await b.ciclo();
+  assert.equal(b.estado.posiciones.size,0);
+  assert.equal(b.estado.pnlRealizado,5.8);
+  assert.equal(reg.entradas.filter(e=>e.tipo==='liquidacion').length,1);
+});
+
+test('el bot se detiene si no puede guardar sus decisiones', async () => {
+  const { b } = bucleDe({ reg:{anotar:()=>false} });
+  const r=await b.ciclo();
+  assert.equal(r.detenido,true);
+  assert.equal(b.estado.posiciones.size,0);
+});
+
+test('un fallo al registrar la entrada no crea una posición sin respaldo', async () => {
+  const { b } = bucleDe({ reg: { anotar: e => e.tipo !== 'entrada' } });
+  const r = await b.ciclo();
+  assert.match(r.error, /registro/);
+  assert.equal(b.estado.posiciones.size, 0);
+  assert.equal(b.estado.pnlRealizado, 0);
+});
 
 test('una vuelta anota TODO, se opere o no', async () => {
   // El cuaderno que sólo guarda lo operado no sirve para la autopsia: la
@@ -134,13 +231,14 @@ test('un veto impide abrir pero NO impide salir', async () => {
   assert.equal(b2.estado.posiciones.size, 0);
 });
 
-test('una posición que llega al vencimiento se cierra sola y gratis', async () => {
+test('una posición vencida conserva el capital hasta conocer su liquidación', async () => {
   const { b, reg } = bucleDe({ mercados: [mercadoJugoso({ vencimiento: 999_000 })] });
   b.estado.posiciones.set('KXBTCD-TEST', { ticker: 'KXBTCD-TEST', lado: 'yes', contratos: 10, precioEntrada: 0.5 });
 
   await b.ciclo();
-  assert.equal(b.estado.posiciones.size, 0);
-  assert.ok(reg.entradas.some((e) => e.tipo === 'vencida'));
+  assert.equal(b.estado.posiciones.size, 1);
+  assert.equal(b.estado.posiciones.get('KXBTCD-TEST').pendienteLiquidacion, true);
+  assert.ok(reg.entradas.some((e) => e.tipo === 'pendiente_liquidacion'));
 });
 
 test('una vuelta que falla no tumba el proceso', async () => {

@@ -37,8 +37,9 @@ function round(value, decimals) {
 function consolidate(quotes = [], { now = Date.now(), staleMs = STALE_MS } = {}) {
   const detalle = quotes.map((q) => {
     const ageMs = Number.isFinite(q.at) ? Math.max(now - q.at, 0) : null;
-    const usable = q.ok !== false && q.price > 0 && (ageMs === null || ageMs <= staleMs);
-    return { ...q, ageMs, usable };
+    const currencyCompatible = q.valueQuote === 'USD' || !q.quote || q.quote === 'USD' || (q.quote === 'USDT' && q.converted === true);
+    const usable = currencyCompatible && q.ok !== false && Number.isFinite(q.price) && q.price > 0 && (ageMs === null || ageMs <= staleMs);
+    return { ...q, ageMs, usable, excludedReason: !currencyCompatible ? 'sin conversión a USD' : null };
   });
 
   const usados = detalle.filter((q) => q.usable);
@@ -71,8 +72,8 @@ function consolidate(quotes = [], { now = Date.now(), staleMs = STALE_MS } = {})
     used: usados.length,
     venues: detalle.map((q) => ({
       ...q,
-      diff: q.price > 0 ? round(q.price - price, priceDecimals(price)) : null,
-      diffPct: q.price > 0 ? round(((q.price - price) / price) * 100, 4) : null,
+      diff: q.usable ? round(q.price - price, priceDecimals(price)) : null,
+      diffPct: q.usable ? round(((q.price - price) / price) * 100, 4) : null,
     })),
     spread: round(spread, priceDecimals(price)),
     spreadPct: round(spreadPct, 4),

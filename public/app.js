@@ -29,7 +29,7 @@ const NIVEL_KEY = (symbol) => `mtp.nivel.${symbol}`;
 
 const state = {
   symbol: 'BTCUSDT',
-  interval: '1h',
+  interval: '15m',
   candles: [],
   mtf: {},
   breakout: null,
@@ -51,6 +51,14 @@ const state = {
   refreshTimer: null,
   hover: null,
 };
+
+let selectionRevision = 0;
+const requests = {};
+function ticket(channel) {
+  const revision = selectionRevision;
+  const id = requests[channel] = (requests[channel] || 0) + 1;
+  return () => revision === selectionRevision && requests[channel] === id;
+}
 
 const $ = (id) => document.getElementById(id);
 
@@ -104,6 +112,10 @@ const pairKey = () => `${state.symbol}|${state.interval}`;
 // las velas de Binance, así que medir la distancia a un nivel con el precio de
 // otra casa haría que "faltan 0,87% hasta el nivel" fuera sutilmente falso.
 function precioActual() {
+  if (state.source === 'consolidado') {
+    if (state.consolidado?.price > 0) return state.consolidado.price;
+    return state.candles.length ? state.candles[state.candles.length - 1].close : null;
+  }
   if (state.livePrice && state.livePrice.price > 0) return state.livePrice.price;
   const ultima = state.candles[state.candles.length - 1];
   return ultima ? ultima.close : null;
@@ -116,13 +128,7 @@ function precioActual() {
 // consulta se mueve con el tick de Binance manteniendo la diferencia medida
 // con los otros dos, que cambia despacio; cada consulta la vuelve a medir.
 function precioTitular() {
-  const binance = precioActual();
-  if (state.consolidado && state.consolidado.price > 0) {
-    if (binance === null) return state.consolidado.price;
-    // Sin base utilizable, manda el consolidado: no se inventa un número.
-    return state.base === 0 ? state.consolidado.price : binance + state.base;
-  }
-  return binance;
+  return state.consolidado && state.consolidado.price > 0 ? state.consolidado.price : null;
 }
 
 // Ventana de la vela en curso, anclada a la apertura que dio Binance.
@@ -184,8 +190,8 @@ function saveMercados() {
 // Datos
 // ---------------------------------------------------------------------------
 
-async function getJson(url) {
-  const resp = await fetch(url);
+async function getJson(url, timeoutMs = 30000) {
+  const resp = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), cache: 'no-store' });
   if (!resp.ok) {
     let detail = '';
     try {
@@ -242,13 +248,15 @@ async function loadSymbols() {
     if (!el.symbolSelect.value) selectOther(state.symbol);
     el.symbolSelect.title = verified ? 'Pares verificados contra Binance' : 'Lista sin verificar (Binance no respondió)';
   } catch {
+    setTimeout(()=>{if(!document.hidden)loadSymbols();},60000);
     // Sin la lista se sigue pudiendo escribir el par a mano.
     selectOther(state.symbol);
   }
 }
 
 async function loadAll({ silent = false } = {}) {
-  if (state.loading) return; // sin esto, una carga lenta se solapa con la siguiente
+  if (silent && state.loading) return;
+  const current = ticket('all');
   state.loading = true;
   if (!silent) setStatus(`Cargando ${state.symbol}…`);
 
@@ -258,6 +266,7 @@ async function loadAll({ silent = false } = {}) {
     const needed = [...new Set([state.interval, ...MTF])];
     const results = await Promise.all(needed.map((tf) => getJson(klinesUrl(tf))));
 
+    if (!current()) return;
     const byInterval = {};
     needed.forEach((tf, i) => {
       byInterval[tf] = results[i];
@@ -271,26 +280,34 @@ async function loadAll({ silent = false } = {}) {
     state.failures = 0;
 
     await loadBreakout();
+    if (!current()) return;
     loadForecast(); // sin await: es cara y no debe retrasar el gráfico
     avisos.evaluar();
     render({ force: true });
     setStatus('');
   } catch (err) {
+    if (!current()) return;
     state.failures += 1;
     setStatus(`No se pudieron cargar los datos: ${err.message}`, true);
   } finally {
+    if (!current()) return;
     state.loading = false;
     scheduleRefresh();
   }
 }
 
 async function loadBreakout() {
+  const current = ticket('loadBreakout');
   try {
-    const price = state.live ? state.live.close : null;
+    const price = precioActual();
     const url = `/api/breakout?symbol=${encodeURIComponent(state.symbol)}&interval=${state.interval}${price ? `&price=${price}` : ''}${paramMercados()}`;
-    state.breakout = await getJson(url);
+    const data = await getJson(url);
+    if (!current()) return;
+    if (!current()) return;
+    state.breakout = data;
     state.breakoutPriceAtFetch = state.breakout.price;
   } catch (err) {
+    if (!current()) return;
     state.breakout = { ok: false, reason: `No se pudo calcular: ${err.message}` };
   }
 }
@@ -308,14 +325,16 @@ async function loadCatalogo() {
 }
 
 async function loadConsolidado() {
+  if (state.cargandoPrecio) return;
+  const current = ticket('loadConsolidado');
   // Sin guardia, una consulta lenta se solapa con la siguiente cada dos
   // segundos y acaban pisándose.
-  if (state.cargandoPrecio) return;
   state.cargandoPrecio = true;
 
   try {
     const eleccion = state.mercados && state.mercados.length ? `&venues=${state.mercados.join(',')}` : '';
-    const data = await getJson(`/api/price?symbol=${encodeURIComponent(state.symbol)}${eleccion}`);
+    const data = await getJson(`/api/price?symbol=${encodeURIComponent(state.symbol)}${eleccion}`, 10000);
+    if (!current()) return;
     if (data.symbol !== state.symbol) return; // llegó tarde, ya cambiamos de par
     state.consolidado = data;
 
@@ -332,8 +351,12 @@ async function loadConsolidado() {
     state.base = Math.abs(base) <= data.price * 0.005 ? base : 0;
 
     state.precioError = null;
+    if(state.source==='consolidado')setStreamState('consolidado');
     renderClock();
+    renderBreakout();
+    renderProbabilidad();
   } catch (err) {
+    if (!current()) return;
     // Se guarda el motivo: tragárselo dejaba la interfaz diciendo
     // "consolidando…" para siempre, sin pista de qué pasaba.
     state.consolidado = null;
@@ -341,6 +364,7 @@ async function loadConsolidado() {
     state.precioError = err.message;
     renderClock();
   } finally {
+    if (!current()) return;
     state.cargandoPrecio = false;
   }
 }
@@ -370,7 +394,9 @@ function scheduleRefresh() {
 // Datos en vivo (SSE)
 // ---------------------------------------------------------------------------
 
+let streamRetryTimer=null,streamFailures=0;
 function connectStream() {
+  clearTimeout(streamRetryTimer);
   if (state.sse) state.sse.close();
 
   const url = `/api/stream?symbol=${encodeURIComponent(state.symbol)}&interval=${state.interval}`;
@@ -379,6 +405,7 @@ function connectStream() {
   setStreamState('conectando');
 
   sse.addEventListener('kline', (event) => {
+    if (state.sse !== sse) return;
     try {
       onTick(JSON.parse(event.data));
     } catch {
@@ -387,6 +414,7 @@ function connectStream() {
   });
 
   sse.addEventListener('price', (event) => {
+    if (state.sse !== sse) return;
     try {
       const data = JSON.parse(event.data);
       if (data.symbol !== state.symbol || !(data.price > 0)) return;
@@ -412,12 +440,24 @@ function connectStream() {
     }
   });
 
-  sse.onerror = () => setStreamState(sse.readyState === EventSource.CLOSED ? 'desconectado' : 'reconectando');
-  sse.onopen = () => setStreamState('en vivo');
+  sse.onerror = () => {
+    if(state.sse!==sse)return;
+    sse.close();setStreamState('reconectando');
+    clearTimeout(streamRetryTimer);
+    const delay=Math.min(60000,5000*2**Math.min(streamFailures++,4));
+    streamRetryTimer=setTimeout(connectStream,delay);
+  };
+  sse.onopen = () => {if(state.sse!==sse)return;streamFailures=0;setStreamState('en vivo');};
 }
 
 function onTick(tick) {
   if (tick.symbol !== state.symbol || tick.interval !== state.interval) return;
+  if (state.source === 'consolidado') {
+    const last = state.candles.at(-1);
+    if (last && tick.openTime > last.openTime) loadAll({ silent: true });
+    setStreamState('consolidado');
+    return; // Un tick USDT de Binance no sustituye una vela consolidada USD.
+  }
 
   state.live = tick;
   setStreamState(tick.source === 'demo' ? 'demo' : tick.source === 'poll' ? 'sondeo' : 'en vivo');
@@ -498,12 +538,15 @@ const avisos = Avisos.crearAvisos({
 // La predicción es cara —recorre el histórico prediciendo hacia delante para
 // calibrarse— así que va por su cuenta y no bloquea el resto de la carga.
 async function loadForecast() {
+  const current = ticket('loadForecast');
   try {
     const data = await getJson(`/api/forecast?symbol=${encodeURIComponent(state.symbol)}&interval=${state.interval}${paramMercados()}`);
+    if (!current()) return;
     if (data.symbol !== state.symbol) return; // llegó tarde
     data.recibido = Date.now(); // el ancla de las cuentas atrás
     state.forecast = data;
   } catch (err) {
+    if (!current()) return;
     state.forecast = { error: `No se pudo predecir: ${err.message}` };
   }
   renderForecast();
@@ -526,6 +569,43 @@ function renderForecast() {
 // nivel» sería sutilmente falso, que es el mismo motivo por el que el análisis
 // de ruptura usa ése y no otro.
 
+let probKalshiAuto=true,probKalshiRequest=0,probKalshiBusy=false,probKalshiContracts=[],probKalshiCurrent=null;
+function syncProbControls(){
+ for(const [id,source,value] of [['probCrypto',el.symbolSelect,state.symbol],['probTimeframe',el.interval,state.interval]]){
+  const target=$(id);if(!target)return;
+  const options=[...source.options].filter(o=>o.value&&o.value!=='__otro');
+  const signature=JSON.stringify(options.map(o=>[o.value,o.textContent]));
+  if(target.dataset.options!==signature){target.replaceChildren(...options.map(o=>o.cloneNode(true)));target.dataset.options=signature;}
+  target.value=value;
+ }
+}
+try{probKalshiAuto=localStorage.getItem('mtp.prob.source')!=='manual';}catch{}
+function probSourceMode(auto){
+ probKalshiAuto=auto;probKalshiRequest++;probKalshiBusy=false;
+ if($('probSource'))$('probSource').value=auto?'kalshi':'manual';
+ try{localStorage.setItem('mtp.prob.source',auto?'kalshi':'manual');}catch{}
+ if(!auto){probKalshiCurrent=null;$('probKalshiNote').textContent='Escribe el precio que quieres analizar.';}
+ document.querySelector('.prob-entrada').hidden=auto;
+}
+function applyKalshiContract(contract){
+ probKalshiCurrent=contract||null;state.nivel=contract?.threshold??null;
+ if(el.probNivel)el.probNivel.value=state.nivel===null?'':String(state.nivel);
+ $('probKalshiNote').textContent=contract?`Base de Kalshi: ${contract.threshold.toLocaleString('es-ES',{maximumFractionDigits:8})} USD · cierre ${new Date(contract.closesAt).toLocaleTimeString('es-ES')}. Probabilidad propia sobre la vela, no sobre la liquidación de Kalshi.`:'Consultando precio base…';
+ renderProbabilidad({force:true});
+}
+async function loadKalshiThreshold(){
+ if(!probKalshiAuto||probKalshiBusy||!$('probSource'))return;
+ probKalshiBusy=true;const request=++probKalshiRequest,symbol=state.symbol,interval=state.interval;
+ try{
+  const res=await fetch('/api/kalshi-threshold?symbol='+encodeURIComponent(symbol)+'&interval='+encodeURIComponent(interval),{cache:'no-store',signal:AbortSignal.timeout(10000)});const d=await res.json();
+  if(request!==probKalshiRequest||!probKalshiAuto||symbol!==state.symbol||interval!==state.interval)return;
+  probKalshiContracts=(d.contracts||[]).filter(c=>c.closesAt>Date.now());
+  const selected=probKalshiContracts.length===1?probKalshiContracts[0]:null;
+  applyKalshiContract(selected);
+  if(!selected)$('probKalshiNote').textContent=probKalshiContracts.length>1?'Kalshi no tiene una base única para este bloque. Para base automática usa BTC o ETH en 15m.':d.reason||'Esperando el precio base del bloque actual.';
+ }catch{if(request===probKalshiRequest&&probKalshiAuto){applyKalshiContract(null);$('probKalshiNote').textContent='Umbral no disponible. Se reintentará automáticamente.';}}
+ finally{if(request===probKalshiRequest)probKalshiBusy=false;}
+}
 function datosProb() {
   // La vela en curso del bloque elegido arriba: es lo que sincroniza la cifra
   // grande con el Timeframe. La misma ventana que usa el reloj, así que las
@@ -539,12 +619,30 @@ function datosProb() {
     vela: v ? { cierraEn: v.close } : null,
   };
 }
+function updateProbCountdown(){
+ const clock=$('probCountdown');if(!clock)return;
+ const now=Date.now(),window=ventanaActual(now);
+ $('probBlockLabel').textContent='Bloque de '+state.interval;
+ clock.textContent=window?Format.formatClock(Math.max(0,window.close-now)):'--:--';
+ $('probClosesLabel').textContent=window?'Cierra '+fmtHora(window.close):'Esperando horario';
+ const duration=intervalToMs(state.interval);
+ $('probBlockProgress').value=window?Math.max(0,Math.min(100,100*(1-(window.close-now)/duration))):0;
+}
 
 // `force` repinta la tabla; sin él sólo se reescriben los números, que es lo
 // que corre con cada tick. Si `actualizar` no reconoce la tabla —porque los
 // horizontes cambiaron— lo dice y se repinta.
 function renderProbabilidad({ force = false } = {}) {
   const d = datosProb();
+  if($('probBaseValue')){
+   $('probBaseValue').textContent=state.nivel>0?state.nivel.toLocaleString('es-ES',{maximumFractionDigits:8}):'—';
+   $('probBaseLabel').textContent=probKalshiAuto?'Precio base · Kalshi':'Precio base · personalizado';
+   updateProbCountdown();
+  }
+  if(probKalshiAuto&&$('probSource')&&state.nivel===null){
+    el.probPanel.textContent='La estimación aparecerá cuando haya un precio base disponible para esta cripto y bloque.';
+    PanelProbabilidad.renderLinea(el.probLinea,d);return;
+  }
   if (force || !PanelProbabilidad.actualizar(el.probPanel, d)) {
     PanelProbabilidad.render(el.probPanel, d);
   }
@@ -552,6 +650,7 @@ function renderProbabilidad({ force = false } = {}) {
 }
 
 function fijarNivel(valor, { escribir = true } = {}) {
+  if($('probSource'))probSourceMode(false);
   const n = Number(valor);
   state.nivel = n > 0 ? n : null;
 
@@ -576,6 +675,8 @@ function fijarNivel(valor, { escribir = true } = {}) {
 
 // Al cambiar de par se recupera el nivel de ESE par, no se arrastra el anterior.
 function recuperarNivel() {
+  if($('probCrypto'))syncProbControls();
+  if(probKalshiAuto&&$('probSource')){probKalshiRequest++;probKalshiBusy=false;probKalshiContracts=[];applyKalshiContract(null);loadKalshiThreshold();return;}
   let guardado = null;
   try {
     guardado = localStorage.getItem(NIVEL_KEY(state.symbol));
@@ -739,12 +840,16 @@ function renderVenues() {
       const igualQueDefecto =
         siguiente.length === porDefecto.length && porDefecto.every((x) => siguiente.includes(x));
       state.mercados = igualQueDefecto ? null : siguiente;
+      selectionRevision++;
+      state.loading = false;
+      state.forecast = null;
+      state.breakout = null;
       saveMercados();
       loadConsolidado();
       // Las velas del análisis salen de estas mismas casas: cambiar la
       // selección y dejar el análisis como estaba sería justo la
       // incoherencia que esto viene a quitar.
-      loadAll({ silent: true });
+      loadAll();
     });
   }
 }
@@ -765,19 +870,8 @@ function renderClock() {
 
   // `siguiente` devuelve null casi siempre: sólo habla cuando el precio se ha
   // movido lo bastante como para que cambie algún dígito que se enseña.
-  const nuevo = calma.siguiente(precioTitular());
-  if (nuevo) {
-    el.price.textContent = formatPrice(nuevo.valor, nuevo.decimales);
-
-    // Destello sólo cuando el número cambia de verdad. Antes saltaba con cada
-    // tick, y a diez por segundo el ojo veía muchísimo más movimiento del que
-    // había.
-    if (nuevo.direccion) {
-      el.price.classList.remove('sube', 'baja');
-      void el.price.offsetWidth; // reinicia la animación
-      el.price.classList.add(nuevo.direccion);
-    }
-  }
+  const precioVisible = precioTitular();
+  el.price.textContent = precioVisible > 0 ? formatPrice(precioVisible) : '—';
 
   // El porcentaje va FUERA del `if`: también cambia cuando se abre una vela
   // nueva, y metido dentro se quedaba en blanco para siempre en cuanto el
@@ -789,7 +883,7 @@ function renderClock() {
   // titular quieto y parecerían dos números distintos de la misma cosa.
   const abierta = state.candles[state.candles.length - 1];
   const apertura = abierta && abierta.openTime === ventana.open ? abierta.open : null;
-  const mostrado = calma.valor;
+  const mostrado = precioVisible;
 
   if (apertura > 0 && mostrado !== null) {
     const cambio = (mostrado - apertura) / apertura;
@@ -819,6 +913,7 @@ function renderClock() {
 // queda sólo lo que depende del estado de ESTA página: qué niveles pintar y el
 // tooltip de la vela bajo el cursor.
 
+let chartSizeTimer;
 function resizeCanvas() {
   Chart.resize(el.canvas, ctx);
   drawChart();
@@ -953,9 +1048,14 @@ function applyControls({ symbol = null } = {}) {
   const changed = limpio !== state.symbol || el.interval.value !== state.interval;
   state.symbol = limpio;
   state.interval = el.interval.value;
+  try{localStorage.setItem('mtp.crypto.interval',state.interval);}catch{}
   if (el.symbolSelect.value === '__otro') el.symbol.value = limpio;
 
   if (changed) {
+    selectionRevision++;
+    state.loading = false;
+    state.cargandoPrecio = false;
+    state.forecast = null;
     state.candles = [];
     state.live = null;
     state.livePrice = null;
@@ -972,12 +1072,27 @@ function applyControls({ symbol = null } = {}) {
 }
 
 function init() {
+  try{const saved=localStorage.getItem('mtp.crypto.interval');if([...el.interval.options].some(o=>o.value===saved))state.interval=saved;}catch{}
+  el.interval.value=state.interval;
   // Antes de nada: si hay un orden guardado, se aplica ya. Hacerlo después de
   // pintar daría un salto visible al recolocar las tarjetas.
   Tarjetas.activar({ contenedor: document.querySelector('.side-panel'), clave: 'mtp.tarjetas.cripto' });
 
   loadMercados();
   recuperarNivel();
+
+  if($('probSource')){
+   $('probSource').value=probKalshiAuto?'kalshi':'manual';
+   updateProbCountdown();setInterval(updateProbCountdown,1000);
+   document.querySelector('.prob-entrada').hidden=probKalshiAuto;
+   syncProbControls();
+   new MutationObserver(syncProbControls).observe(el.symbolSelect,{childList:true,subtree:true});
+   $('probCrypto').addEventListener('change',()=>{el.symbolSelect.value=$('probCrypto').value;el.symbolSelect.dispatchEvent(new Event('change',{bubbles:true}));});
+   $('probTimeframe').addEventListener('change',()=>{el.interval.value=$('probTimeframe').value;el.interval.dispatchEvent(new Event('change',{bubbles:true}));});
+   $('probSource').addEventListener('change',()=>{probSourceMode($('probSource').value==='kalshi');recuperarNivel();});
+   setInterval(()=>{if(probKalshiAuto&&probKalshiCurrent?.closesAt<=Date.now()){applyKalshiContract(null);loadKalshiThreshold();}},1000);
+   setInterval(()=>{if(!document.hidden)loadKalshiThreshold();},10000);
+  }
 
   // El campo del precio. Se escucha `input` y no `change`: la probabilidad
   // tiene que aparecer mientras se escribe, no al salir del campo.
@@ -1006,6 +1121,7 @@ function init() {
   // objetivo, y son dos líneas del gráfico.
   avisos.init();
   resizeCanvas();
+  new ResizeObserver(() => { clearTimeout(chartSizeTimer); chartSizeTimer = setTimeout(resizeCanvas, 80); }).observe(el.canvas.parentElement);
 
   el.symbolSelect.addEventListener('change', () => {
     if (el.symbolSelect.value === '__otro') {

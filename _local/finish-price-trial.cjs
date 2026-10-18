@@ -1,0 +1,4 @@
+const fs=require('node:fs');let p='test/midpoint-price-trial.test.js';fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('s.book.no[0].precio=.75;','s.book.yes[0].precio=.2;s.book.no[0].precio=.75;'));
+p='src/midpoint-price-trial.js';fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('if(!f||!comparison||comparison.key!==f.key)','if(!f||!comparison||!Number.isFinite(comparison.market)||comparison.market<0||comparison.market>1||comparison.key!==f.key)'));
+const deploy=fs.readFileSync('_local/deploy-calibration-trial.cjs','utf8').replaceAll('6904','5816').replaceAll('calibration-trial','price-trial');fs.writeFileSync('_local/deploy-price-trial.cjs',deploy);
+fs.writeFileSync('_local/check-price-trial.cjs',fs.readFileSync('_local/check-calibration-trial.cjs','utf8').replaceAll('midpointCalibrationTrial','midpointPriceTrial'));

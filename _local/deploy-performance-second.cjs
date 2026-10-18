@@ -1,0 +1,4 @@
+const fs=require('node:fs'),path=require('node:path'),{spawn,execFileSync}=require('node:child_process');const root=path.join(__dirname,'..');
+for(const name of ['index.html','acciones.html']){const p=path.join(root,'public',name);let s=fs.readFileSync(p,'utf8').replace('/minute-flow.js?v=1','/minute-flow.js?v=2').replace('/live-learning.js?v=2','/live-learning.js?v=3');fs.writeFileSync(p,s);}
+const net=execFileSync('netstat',['-ano','-p','tcp'],{encoding:'utf8'});if(!/127\.0\.0\.1:3000\s+\S+\s+LISTENING\s+21896\b/.test(net))throw Error('PID changed; refusing restart');process.kill(21896);
+setTimeout(()=>{const out=fs.openSync(path.join(root,'datos/diagnosticos/performance-server.log'),'a'),err=fs.openSync(path.join(root,'datos/diagnosticos/performance-server-error.log'),'a');const child=spawn(process.execPath,[path.join(root,'server.js')],{cwd:root,windowsHide:true,detached:true,stdio:['ignore',out,err]});child.unref();console.log('server pid',child.pid);},1500);

@@ -4,6 +4,7 @@
 // tiene su ámbito— pero en el navegador se carga con <script> y el ámbito es
 // global: sin esto, dos módulos que declaren lo mismo se pisan.
 (function () {
+function chartColor(token,fallback){return typeof document==='undefined'?fallback:getComputedStyle(document.documentElement).getPropertyValue(token).trim()||fallback;}
 
 // El gráfico de velas: ejes, rejilla, volumen, EMAs, niveles y crosshair.
 //
@@ -95,11 +96,11 @@ function draw(canvas, { candles = [], interval = '1h', emaFast = null, emaSlow =
   const proyW = plotTotal - plotW;
 
   ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = '#020617';
+  ctx.fillStyle = chartColor('--chart-bg','#020617');
   ctx.fillRect(0, 0, w, h);
 
   if (candles.length < 2) {
-    ctx.fillStyle = '#64748b';
+    ctx.fillStyle = chartColor('--chart-label','#64748b');
     ctx.font = '13px system-ui, sans-serif';
     ctx.fillText('Sin datos todavía…', PAD.left + 10, PAD.top + 20);
     return;
@@ -157,13 +158,13 @@ function draw(canvas, { candles = [], interval = '1h', emaFast = null, emaSlow =
   ctx.textBaseline = 'middle';
   for (let price = Math.ceil(minPrice / step) * step; price < maxPrice; price += step) {
     const y = yFor(price);
-    ctx.strokeStyle = '#111c33';
+    ctx.strokeStyle = chartColor('--chart-grid','#111c33');
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(PAD.left, y);
     ctx.lineTo(PAD.left + plotTotal, y);
     ctx.stroke();
-    ctx.fillStyle = '#64748b';
+    ctx.fillStyle = chartColor('--chart-label','#64748b');
     ctx.textAlign = 'left';
     ctx.fillText(formatPrice(price), PAD.left + plotTotal + 6, y);
   }
@@ -174,12 +175,12 @@ function draw(canvas, { candles = [], interval = '1h', emaFast = null, emaSlow =
   ctx.textBaseline = 'top';
   for (let i = 0; i < candles.length; i += tickEvery) {
     const x = xFor(i);
-    ctx.strokeStyle = '#0d1729';
+    ctx.strokeStyle = chartColor('--chart-grid','#0d1729');
     ctx.beginPath();
     ctx.moveTo(x, PAD.top);
     ctx.lineTo(x, PAD.top + plotH);
     ctx.stroke();
-    ctx.fillStyle = '#64748b';
+    ctx.fillStyle = chartColor('--chart-label','#64748b');
     ctx.fillText(fmtTimeAxis(candles[i].openTime, interval), x, h - PAD.bottom + 6);
   }
 
@@ -213,7 +214,7 @@ function draw(canvas, { candles = [], interval = '1h', emaFast = null, emaSlow =
 
     // La vela en formación va hueca: se ve de un vistazo qué aún puede cambiar.
     if (!c.closed) {
-      ctx.fillStyle = '#020617';
+      ctx.fillStyle = chartColor('--chart-bg','#020617');
       ctx.fillRect(x - bodyW / 2 + 1, top + 1, Math.max(0, bodyW - 2), Math.max(0, height - 2));
       ctx.strokeStyle = color;
       ctx.strokeRect(x - bodyW / 2, top, bodyW, height);
@@ -330,7 +331,7 @@ function abanico(ctx, { horizontes, etiqueta }, x0, ancho, yFor, plotH) {
   ctx.restore();
 
   if (etiqueta) {
-    ctx.fillStyle = '#64748b';
+    ctx.fillStyle = chartColor('--chart-label','#64748b');
     ctx.font = '10px system-ui, sans-serif';
     // Anclada a la derecha: centrada se salía del área y se cortaba a media
     // palabra, que es peor que no ponerla.
@@ -393,7 +394,7 @@ function etiquetaPrecio(ctx, price, color, plotW, yFor) {
   const ancho = ctx.measureText(texto).width + 10;
   ctx.fillStyle = color;
   ctx.fillRect(PAD.left + plotW + 2, y - 8, ancho, 16);
-  ctx.fillStyle = '#020617';
+  ctx.fillStyle = chartColor('--chart-bg','#020617');
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.fillText(texto, PAD.left + plotW + 7, y);

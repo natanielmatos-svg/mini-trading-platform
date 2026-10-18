@@ -5,10 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Mini Plataforma de Trading</title>
   <link rel="stylesheet" href="/estilo.css" />
+<link rel="stylesheet" href="/workspace.css?v=2" />
+<link rel="stylesheet" href="/desktop.css?v=15" /><link rel="stylesheet" href="/appearance.css?v=13" />
+<script src="/appearance.js?v=1"></script>
+<script src="/disclosure-state.js?v=1"></script>
+<script src="/panel-polling.js?v=1"></script><link rel="stylesheet" href="/learning-activity.css?v=3" />
 </head>
 <body>
+<a class="skip-link" href="#workspaceMain">Ir al contenido</a>
+  <div class="workspace-nav">
+    <a class="workspace-brand" href="/"><span class="workspace-mark" aria-hidden="true">↗</span>Mercado<span style="font-weight:400;color:#9cb0c2">/ terminal</span></a>
+    <nav aria-label="Mercados"><a href="/" aria-current="page">Criptomonedas</a><a href="/acciones.html" >Acciones</a><a href="/predicciones.html" >Predicciones</a></nav>
+    <span class="workspace-badge">Análisis de mercado</span>
+  </div>
+  <p class="workspace-demo" id="workspaceDemo" hidden>Modo demostración · los precios y resultados son simulados.</p>
   <header>
-    <h1>Mini Plataforma de Trading</h1>
+    <h1>Mercado cripto</h1>
 
     <span class="stream"><span class="dot" id="streamDot"></span><span id="streamLabel">desconectado</span></span>
 
@@ -17,33 +29,43 @@
         <select id="symbolSelect"></select>
       </label>
       <input id="symbolInput" value="BTCUSDT" hidden placeholder="Par" autocomplete="off" />
-      <label>Timeframe
+      <label>Bloque de tiempo
         <select id="intervalSelect">
           <option value="1m">1m</option>
           <option value="5m">5m</option>
-          <option value="15m">15m</option>
+          <option value="15m" selected>15m</option>
           <option value="30m">30m</option>
-          <option value="1h" selected>1h</option>
+          <option value="1h">1h</option>
           <option value="4h">4h</option>
           <option value="12h">12h</option>
           <option value="1d">1d</option>
           <option value="1w">1w</option>
         </select>
       </label>
-      <button id="loadBtn">Cargar</button>
+      <button id="loadBtn">Actualizar</button>
       <a href="/acciones.html">Acciones →</a>
       <a href="/predicciones.html">Predicciones →</a>
     </div>
   </header>
 
-  <div class="container">
+  <div class="container" id="workspaceMain" role="main">
     <div class="main-col">
       <div class="chart-area">
         <canvas id="priceChart"></canvas>
         <div id="tooltip"></div>
       </div>
-      <div class="card prob-card">
-        <h2>¿Termina por encima de…? <small>probabilidad en vivo</small></h2>
+      <div class="card prob-card probability-redesign">
+        <div class="prob-heading"><div><p class="workspace-eyebrow">PROBABILIDAD AL CIERRE</p><h2>¿Termina por encima?</h2></div><span class="prob-live-label">Estimación</span></div>
+        <div class="prob-market-controls">
+          <label>Cripto<select id="probCrypto" aria-label="Cripto para probabilidad"></select></label>
+          <label>Bloque de tiempo<select id="probTimeframe" aria-label="Bloque para probabilidad"></select></label>
+        </div>
+        <div class="prob-overview">
+          <div class="prob-base"><span id="probBaseLabel">Precio base · Kalshi</span><strong id="probBaseValue">—</strong><small>USD</small></div>
+          <div class="prob-timer"><span id="probBlockLabel">Tiempo restante</span><strong id="probCountdown" role="timer" aria-label="Tiempo restante del bloque">--:--</strong><small id="probClosesLabel">Al cierre de la vela</small></div>
+        </div>
+        <progress id="probBlockProgress" max="100" value="0" aria-label="Progreso del bloque"></progress>
+        <label class="prob-source-control">Referencia <select id="probSource"><option value="kalshi">Automática · Kalshi</option><option value="manual">Personalizada</option></select></label>
         <div class="prob-entrada">
           <input type="number" id="probNivel" step="any" min="0" inputmode="decimal" placeholder="precio" aria-label="Precio de referencia" />
           <button type="button" id="probAhora" class="ghost small" title="El precio de ahora">ahora</button>
@@ -51,10 +73,18 @@
           <button type="button" id="probAbajo" class="ghost small" title="El nivel de soporte que detecta el análisis de ruptura">soporte</button>
         </div>
         <div id="probPanel"><p class="muted">Escribe un precio y aparece la probabilidad de acabar por encima y por debajo: al cierre de la vela que estás mirando, y a cada plazo.</p></div>
-      </div>
+        <p id="probKalshiNote" class="workspace-note" role="status"></p>
+      </div><div class="workspace-grid">
+    <section class="card"><p class="workspace-eyebrow">Modelo neuronal · experimental</p><h2>Estimación al cierre</h2>
+      <p class="workspace-note">TimesFM 2.5 estima el cierre de la vela a partir de velas completas. Es una predicción experimental, no un cierre real confirmado.</p>
+      <button type="button" class="primary-action" id="neuralRun" style="margin:16px 0">Calcular estimación</button>
+      <div id="neuralResult" role="status">Calcula una estimación para el activo y bloque seleccionados.</div>
+    </section>
+    <section class="card"><p class="workspace-eyebrow">Referencia independiente</p><h2>Índice de Kalshi</h2><div class="workspace-value" id="referenceValue">Consultando…</div><p class="workspace-note" id="referenceNote"></p><details class="workspace-help"><summary>¿Por qué puede diferir del gráfico?</summary>El gráfico combina mercados al contado. Kalshi puede resolver con un índice y un promedio temporal específicos. El índice instantáneo tampoco equivale al precio final de liquidación. Consulta las reglas de cada contrato.</details></section>
+    </div>
     </div>
 
-    <div class="side-panel">
+    <div class="side-panel"><section class="card" data-tarjeta="sistema"><p class="workspace-eyebrow">Automatización</p><h2>Investigación y supervisión</h2><div class="workspace-row"><span>Simulador</span><strong>Simulación</strong></div><div class="workspace-row"><span>Agente</span><strong id="agentStatus">Comprobando…</strong></div><p class="workspace-note">El agente revisa el contexto y puede bloquear entradas. Consulta el proceso y ajusta el riesgo en Capital y límites.</p></section>
       <div class="card clock-card" data-tarjeta="reloj">
         <div class="clock-head">
           <span id="clockPair">—</span>
@@ -79,18 +109,18 @@
       </div>
 
       <div class="card" data-tarjeta="prediccion">
-        <h2>¿Dónde estará el precio? <small>distribución, no adivinanza</small></h2>
+        <h2>Escenarios de precio <small>Rangos estadísticos por horizonte</small></h2>
         <div id="forecastPanel"><p class="muted">Calculando…</p></div>
       </div>
 
 
       <div class="card" data-tarjeta="ruptura">
-        <h2>¿Rompe esta vela?</h2>
+        <h2>Probabilidad de ruptura</h2>
         <div id="breakoutPanel"><p class="muted">Calculando…</p></div>
       </div>
 
       <div class="card" data-tarjeta="tendencia">
-        <h2>Tendencia multi-timeframe</h2>
+        <h2>Tendencia por horizonte</h2>
         <table>
           <thead>
             <tr><th>H1</th><th>H4</th><th>D1</th><th>W1</th></tr>
@@ -162,8 +192,11 @@
   <script src="/lib/precio-vivo.js"></script>
   <script src="/lib/panel-prediccion.js"></script>
   <script src="/lib/forecast.js"></script>
-  <script src="/lib/panel-probabilidad.js"></script>
+  <script src="/lib/panel-probabilidad.js?v=2"></script>
   <script src="/lib/tarjetas.js"></script>
-  <script src="/app.js"></script>
+  <script src="/app.js?v=24"></script>
+<footer class="workspace-footer">Precios con su fuente · estimaciones con incertidumbre · operaciones del bot en simulación.</footer>
+<script src="/workspace.js?v=11"></script>
+<link rel="stylesheet" href="/minute-flow.css?v=1"><script src="/minute-flow.js?v=2"></script><script src="/live-learning.js?v=3"></script><script src="/learning-activity.js?v=3"></script><script src="/learning.js?v=17"></script><script src="/arbitrage.js?v=3"></script><script src="/summary-clock.js?v=3"></script><script src="/proposals.js?v=3"></script><script src="/account.js?v=4"></script><script src="/desktop.js?v=17"></script><script src="/operation-panel.js" defer></script>
 </body>
 </html>

@@ -1,0 +1,7 @@
+# Completar con el UUID de un túnel independiente. No reemplazar el de MaroAutoGroup.
+tunnel: TRADING_TUNNEL_UUID
+credentials-file: C:\Users\natan\.cloudflared\TRADING_TUNNEL_UUID.json
+ingress:
+  - hostname: trading.maroautogroup.com
+    service: http://127.0.0.1:3002
+  - service: http_status:404

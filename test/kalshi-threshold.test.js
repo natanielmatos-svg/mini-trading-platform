@@ -1,0 +1,7 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict');const {select}=require('../src/kalshi-threshold');
+const now=1790299900000,close=(Math.floor(now/900000)+1)*900000;
+const base={ticker:'KXBTC15M-TEST',market_type:'binary',status:'active',open_time:new Date(close-900000).toISOString(),close_time:new Date(close).toISOString(),strike_type:'greater_or_equal',floor_strike:84473.36};
+test('importa el umbral exacto, operador y cierre sin confundirlo con precio spot',()=>{const d=select([base],{symbol:'BTCUSDT',interval:'15m',now});assert.equal(d.contracts[0].threshold,84473.36);assert.equal(d.contracts[0].operator,'>=');assert.equal(d.closesAt,close);});
+test('no arrastra umbrales vencidos ni de otro activo o bloque; no inventa datos',()=>{for(const patch of [{ticker:'KXETH15M-TEST'},{floor_strike:null},{status:'finalized'},{strike_type:'between'},{close_time:new Date(close+900000).toISOString()},{open_time:new Date(now+1).toISOString()}])assert.equal(select([{...base,...patch}],{symbol:'BTCUSDT',interval:'15m',now}).contracts.length,0);assert.equal(select([base],{symbol:'BTCUSDT',interval:'15m',now:close}).ok,false);assert.equal(select([base],{symbol:'SOLUSDT',interval:'5m',now}).ok,false);});
+test('conserva todos los contratos por umbral sin elegir el más cercano arbitrariamente',()=>{const d=select([base,{...base,ticker:'KXBTC15M-OTHER',floor_strike:84500}],{symbol:'BTCUSDT',interval:'15m',now});assert.equal(d.contracts.length,2);});

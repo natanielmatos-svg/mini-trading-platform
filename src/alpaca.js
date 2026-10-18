@@ -274,7 +274,13 @@ async function fetchClock({ timeoutMs = 6_000 } = {}) {
   );
 }
 
+const calendarCache=new TtlCache({ttlMs:3600000,maxEntries:16});
+async function fetchCalendar(start,end){
+  exigirClave('el calendario');const clock=await fetchClock();
+  return calendarCache.wrap(start+':'+end,()=>fetchJson(clock.api+'/v2/calendar',{searchParams:{start,end},headers:cabeceras(),timeoutMs:10000,retries:1}));
+}
 module.exports = {
+  fetchCalendar,
   TIMEFRAMES, FEED, TRADING_APIS, HORQUILLA_MAX, hayClave, parseSymbol, parseInterval, intervalMinutes,
   toCandle, fetchCandles, fetchQuote, fetchClock, _relojCache: relojCache,
   _olvidarTradingApi: () => { tradingApiBueno = null; },

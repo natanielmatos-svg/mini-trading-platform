@@ -54,6 +54,14 @@ const VELAS_CERRADO_MS = 10 * 60_000;
 
 const MS = { '1m': 60e3, '5m': 300e3, '15m': 900e3, '30m': 1800e3, '1h': 3600e3, '2h': 7200e3, '4h': 14400e3, '1d': 86400e3, '1w': 604800e3 };
 
+let selectionRevision = 0;
+const requests = {};
+function ticket(channel) {
+  const revision = selectionRevision;
+  const id = requests[channel] = (requests[channel] || 0) + 1;
+  return () => revision === selectionRevision && requests[channel] === id;
+}
+
 const $ = (id) => document.getElementById(id);
 
 const el = {
@@ -222,7 +230,8 @@ async function loadClock() {
 }
 
 async function loadAll({ silent = false } = {}) {
-  if (state.loading) return; // sin esto, una carga lenta se solapa con la siguiente
+  if (silent && state.loading) return;
+  const current = ticket('all');
   state.loading = true;
   if (!silent) setStatus(`Cargando ${state.symbol}…`);
 
@@ -232,6 +241,7 @@ async function loadAll({ silent = false } = {}) {
     const needed = [...new Set([state.interval, ...MTF])];
     const results = await Promise.all(needed.map((tf) => getJson(velasUrl(tf))));
 
+    if (!current()) return;
     const byInterval = {};
     needed.forEach((tf, i) => {
       byInterval[tf] = results[i];
@@ -244,13 +254,16 @@ async function loadAll({ silent = false } = {}) {
     state.mtf = Object.fromEntries(MTF.map((tf) => [tf, byInterval[tf].candles]));
 
     await loadBreakout();
+    if (!current()) return;
     loadForecast(); // sin await: es cara y no debe retrasar el gráfico
     avisos.evaluar();
     render({ force: true });
     setStatus('');
   } catch (err) {
+    if (!current()) return;
     setStatus(`No se pudieron cargar los datos: ${err.message}`, true);
   } finally {
+    if (!current()) return;
     state.loading = false;
     renderAviso();
     programarVelas();
@@ -258,25 +271,29 @@ async function loadAll({ silent = false } = {}) {
 }
 
 async function loadBreakout() {
+  const current = ticket('loadBreakout');
   try {
     const price = precioActual();
     const url = `/api/stocks/breakout?symbol=${encodeURIComponent(state.symbol)}&interval=${state.interval}${price ? `&price=${price}` : ''}`;
     const data = await getJson(url);
+    if (!current()) return;
     if (data.symbol !== state.symbol) return; // llegó tarde, ya cambiamos de valor
     state.breakout = data;
     if (data.clock) state.clock = data.clock;
     if (data.aviso) state.aviso = data.aviso;
   } catch (err) {
+    if (!current()) return;
     state.breakout = { ok: false, reason: `No se pudo calcular: ${err.message}` };
   }
 }
 
 async function loadPrecio() {
-  if (state.cargandoPrecio) return;
+  const current = ticket('loadPrecio');
   state.cargandoPrecio = true;
 
   try {
     const data = await getJson(`/api/stocks/quote?symbol=${encodeURIComponent(state.symbol)}`);
+    if (!current()) return;
     if (data.symbol !== state.symbol) return;
     state.quote = data;
     if (data.aviso) state.aviso = data.aviso;
@@ -288,6 +305,7 @@ async function loadPrecio() {
     // Un fallo puntual del precio no debe borrar el que ya se enseña: se
     // reintenta en el siguiente ciclo.
   } finally {
+    if (!current()) return;
     state.cargandoPrecio = false;
     programarPrecio();
   }
@@ -339,12 +357,15 @@ const avisos = Avisos.crearAvisos({
 // La predicción es cara —recorre el histórico prediciendo hacia delante para
 // calibrarse— así que va por su cuenta y no bloquea el resto de la carga.
 async function loadForecast() {
+  const current = ticket('loadForecast');
   try {
     const data = await getJson(`/api/stocks/forecast?symbol=${encodeURIComponent(state.symbol)}&interval=${state.interval}`);
+    if (!current()) return;
     if (data.symbol !== state.symbol) return; // llegó tarde
     data.recibido = Date.now(); // el ancla de las cuentas atrás
     state.forecast = data;
   } catch (err) {
+    if (!current()) return;
     state.forecast = { error: `No se pudo predecir: ${err.message}` };
   }
   renderForecast();
@@ -581,6 +602,7 @@ function renderClock() {
 
 // --- Gráfico ---------------------------------------------------------------
 
+let chartSizeTimer;
 function resizeCanvas() {
   Chart.resize(el.canvas, ctx);
   drawChart();
@@ -710,6 +732,10 @@ function applyControls() {
   state.interval = interval;
 
   if (changed) {
+    selectionRevision++;
+    state.loading = false;
+    state.cargandoPrecio = false;
+    state.forecast = null;
     state.candles = [];
     state.quote = null;
     state.breakout = null;
@@ -755,6 +781,7 @@ function init() {
   // objetivo, y son dos líneas del gráfico.
   avisos.init();
   resizeCanvas();
+  new ResizeObserver(() => { clearTimeout(chartSizeTimer); chartSizeTimer = setTimeout(resizeCanvas, 80); }).observe(el.canvas.parentElement);
 
   el.symbolSelect.addEventListener('change', applyControls);
   el.interval.addEventListener('change', applyControls);

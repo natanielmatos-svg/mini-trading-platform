@@ -103,18 +103,23 @@ function ewmaSigma(rets, lambda = LAMBDA) {
   const limpios = rets.filter(Number.isFinite);
   if (limpios.length < 10) return [];
 
-  // Arranque: varianza de la primera mitad, para no heredar el primer valor.
-  const arranque = limpios.slice(0, Math.max(10, Math.floor(limpios.length / 2)));
-  const media = arranque.reduce((a, b) => a + b, 0) / arranque.length;
-  let varianza = arranque.reduce((a, b) => a + (b - media) ** 2, 0) / arranque.length;
-
+  // Cada sigma depende únicamente de retornos anteriores. Los primeros diez
+  // se reservan para arranque y no entran en la muestra estandarizada.
   const sigmas = [];
+  const iniciales = [];
+  let varianza = null;
   for (const r of rets) {
-    sigmas.push(Math.sqrt(varianza));          // la que se conocía ANTES de r
-    if (Number.isFinite(r)) varianza = lambda * varianza + (1 - lambda) * r * r;
+    sigmas.push(varianza === null ? null : Math.sqrt(varianza));
+    if (!Number.isFinite(r)) continue;
+    if (varianza === null) {
+      iniciales.push(r);
+      if (iniciales.length === 10) {
+        const media = iniciales.reduce((a,b) => a+b,0)/10;
+        varianza = iniciales.reduce((a,b) => a+(b-media)**2,0)/10;
+      }
+    } else varianza = lambda * varianza + (1-lambda)*r*r;
   }
-  // Y una más: la que rige para el rendimiento que aún no ha pasado.
-  sigmas.push(Math.sqrt(varianza));
+  sigmas.push(varianza === null ? null : Math.sqrt(varianza));
   return sigmas;
 }
 
@@ -550,9 +555,9 @@ function planDeHorizontes(interval) {
 // Viaja con cada respuesta. Quien consuma la API por su cuenta tiene que leer
 // esto antes de hacer nada con los números.
 const AVISO =
-  'Esto NO predice un precio. La banda central es el precio de ahora a propósito: a estos horizontes la ' +
-  'deriva es indistinguible del ruido, y cualquier estimación puntual que se aparte del precio actual está ' +
-  'inventada. Lo que se estima es la distribución: dónde caerá el precio con cada probabilidad, con las colas ' +
+  'Esto NO predice un precio direccional: este modelo toma el precio de ahora, observado al calcular, como mediana. ' +
+  'Es una referencia estadística que otros modelos deben superar en pruebas fuera de muestra. ' +
+  'Lo que se estima es la distribución: rangos nominales del precio, con las colas ' +
   'medidas sobre el propio histórico. Cada horizonte trae su calibración: si dice que la banda del 90% ' +
   'contiene el 84%, es que a ese plazo el modelo se queda corto y hay que fiarse menos.';
 

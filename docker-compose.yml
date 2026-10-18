@@ -1,13 +1,23 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      target: neural
+    init: true
     restart: unless-stopped
     # Sólo escucha en loopback: quien expone al mundo es Nginx, con TLS.
     ports:
       - "127.0.0.1:3000:3000"
+    env_file:
+      - .env
+    volumes:
+      - model-data:/app/data/models
+      - bot-data:/app/datos
     environment:
       NODE_ENV: production
       PORT: "3000"
+      HOST: "0.0.0.0"
+      DEMO: "0"
       # Ventana de caché de los datos de mercado. Subirla alivia los rate
       # limits ajenos a cambio de precios algo más viejos.
       PREDICTIONS_TTL_MS: "30000"
@@ -23,3 +33,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  model-data:
+  bot-data:

@@ -1,0 +1,6 @@
+const {test}=require('node:test'),assert=require('node:assert/strict');const {windowFor,slots}=require('../public/minute-flow');
+const c=(at,closed)=>({openTime:at,closeTime:at+59999,open:10,high:12,low:9,close:11,closed});
+test('clock rolls into new target block without manufacturing confirmed closes',()=>{assert.equal(windowFor('15m',899999).remaining,1);assert.equal(windowFor('15m',900000).remaining,900000);const rows=slots([c(0,true),c(60000,false)],'5m',90000);assert.deepEqual(rows.map(r=>r.state),['closed','forming','future','future','future']);});
+test('one minute view shows four previous minutes and actual active minute',()=>{const rows=slots([c(240000,true),c(300000,false)],'1m',310000);assert.equal(rows.length,5);assert.equal(rows.at(-1).at,300000);assert.equal(rows.at(-1).state,'forming');assert.equal(rows[0].state,'missing');});
+test('invalid candles are gaps; unfinished candles are never confirmed by clock alone',()=>{const rows=slots([{...c(0,true),close:NaN},c(60000,false)],'5m',180000);assert.equal(rows[0].state,'missing');assert.notEqual(rows[1].state,'closed');});
+test('long blocks show current minute rather than an entirely future hour',()=>{const now=3*3600000;const rows=slots([c(now,false)],'4h',now+1000);assert.equal(rows.at(-1).at,now);assert.equal(rows.at(-1).state,'forming');});

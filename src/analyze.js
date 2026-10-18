@@ -66,7 +66,7 @@ function bestExecution(quotes, consensusProb) {
   let best = null;
   for (const q of quotes) {
     const ask = q.option.ask;
-    if (ask === null || ask === undefined || ask <= 0 || ask >= 1) continue;
+    if (!Number.isFinite(ask) || ask <= 0 || ask >= 1) continue;
     if (!best || ask < best.ask) {
       best = { platform: q.platform, platformLabel: q.platformLabel, ask, url: q.option.url || q.event.url };
     }
@@ -111,8 +111,12 @@ function analyzeCluster(cluster) {
   // deben sumar 1: sin este paso el ranking sigue siendo correcto pero los
   // porcentajes mostrados no son comparables entre eventos.
   const mutuallyExclusive = cluster.events.some((e) => e.mutuallyExclusive);
+  // La exclusión mutua no demuestra que la lista esté completa.
+  const optionsComplete = anchor.optionsComplete === true &&
+    options.length === anchor.options.length &&
+    cluster.events.every((e) => e.optionsComplete !== false);
   let consensusOverround = null;
-  if (mutuallyExclusive && options.length > 1) {
+  if (mutuallyExclusive && optionsComplete && options.length > 1) {
     const { probabilities, overround } = devig(options.map((o) => o.probability));
     probabilities.forEach((p, i) => {
       if (p !== null) options[i].probability = p;
@@ -120,6 +124,10 @@ function analyzeCluster(cluster) {
     consensusOverround = overround;
   }
 
+  for (const option of options) {
+    if (option.bestPrice) option.bestPrice.edge = optionsComplete
+      ? option.probability - option.bestPrice.ask : null;
+  }
   options.sort((a, b) => b.probability - a.probability);
 
   // "Other" y compañía agrupan a todos los demás: son informativos, pero no son
@@ -154,6 +162,7 @@ function analyzeCluster(cluster) {
     daysToClose,
     matchScore: cluster.matchScore,
     mutuallyExclusive,
+    optionsComplete,
     crossPlatform: platformsInvolved > 1,
     consensusOverround,
     totalLiquidity: cluster.events.reduce((acc, e) => acc + (e.liquidity || 0), 0),
@@ -178,7 +187,7 @@ function analyzeCluster(cluster) {
       : null,
     catchAll: catchAll ? { label: catchAll.label, probability: catchAll.probability } : null,
     confidence,
-    arbitrage: findArbitrage(options, mutuallyExclusive),
+    arbitrage: findArbitrage(options, mutuallyExclusive, optionsComplete),
   };
 
   analysis.flags = buildFlags(analysis);
@@ -196,9 +205,9 @@ function scoreConfidence({ totalWeight, platformsInvolved, meanAgreement }) {
 
 // Si se puede comprar "Sí" en todas las opciones de un evento excluyente por
 // menos de 1$ en total, una de ellas paga 1$ pase lo que pase.
-function findArbitrage(options, mutuallyExclusive) {
-  if (!mutuallyExclusive || options.length < 2) return null;
-  if (!options.every((o) => o.bestPrice && Number.isFinite(o.bestPrice.ask))) return null;
+function findArbitrage(options, mutuallyExclusive, optionsComplete = false) {
+  if (!mutuallyExclusive || !optionsComplete || options.length < 2) return null;
+  if (!options.every((o) => o.bestPrice && Number.isFinite(o.bestPrice.ask) && o.bestPrice.ask > 0 && o.bestPrice.ask < 1)) return null;
 
   const cost = options.reduce((acc, o) => acc + o.bestPrice.ask, 0);
   if (cost >= 0.995) return null; // por debajo de eso, las comisiones se lo comen
@@ -217,6 +226,10 @@ function findArbitrage(options, mutuallyExclusive) {
 
 function buildFlags(analysis) {
   const flags = [];
+  if (!analysis.optionsComplete) {
+    flags.push({ level: 'warn', code: 'incomplete_options',
+      message: 'Cobertura incompleta o sin verificar: no se normalizan las opciones al 100% ni se anuncian oportunidades de arbitraje.' });
+  }
 
   if (!analysis.crossPlatform) {
     flags.push({
@@ -247,7 +260,7 @@ function buildFlags(analysis) {
     flags.push({
       level: 'good',
       code: 'arbitrage',
-      message: `Comprar todas las opciones cuesta ${(analysis.arbitrage.cost * 100).toFixed(1)}¢ y paga 100¢.`,
+      message: `Diferencia teórica: las opciones cotizadas suman ${(analysis.arbitrage.cost * 100).toFixed(1)}¢. Falta verificar reglas de resolución, disponibilidad y costes de ejecución.`,
     });
   }
 
@@ -289,6 +302,9 @@ function confidenceLabel(score) {
 }
 
 function buildVerdict(analysis) {
+  if (!analysis.optionsComplete) {
+    return { text: 'Faltan opciones o no se ha verificado su cobertura. No hay datos suficientes para dar un favorito.', confidenceLabel: 'baja', decisive: false };
+  }
   if (!analysis.mostLikely) {
     return { text: 'Sin datos suficientes para elegir una opción.', confidenceLabel: 'baja' };
   }

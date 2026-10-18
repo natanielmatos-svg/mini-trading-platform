@@ -38,7 +38,7 @@ const mercadoDe = (extra = {}) => ({
   ticker: 'KXBTC-TEST', tipo: 'mayor', suelo: 100, techo: null,
   vencimiento: 1_000_000 + 900_000,
   yesBid: 0.48, yesAsk: 0.50, noBid: 0.50, noAsk: 0.52,
-  libro: { yesAsk: 10_000, noAsk: 10_000 },
+  libro: { yesAsk: 10_000, noAsk: 10_000, yesBid: 10_000, noBid: 10_000 },
   ...extra,
 });
 
@@ -184,7 +184,7 @@ test('no se pide más de lo que hay puesto en el libro', () => {
   const sinLibro = E.tamano({ p: 0.7, precio: 0.5, capital: 1e6, libro: null, limites });
   const conLibro = E.tamano({ p: 0.7, precio: 0.5, capital: 1e6, libro: 40, limites });
 
-  assert.ok(sinLibro > 1000);
+  assert.equal(sinLibro, 0, 'sin profundidad no se simula una compra');
   assert.equal(conLibro, 10, 'un cuarto de los 40 que hay puestos');
 });
 

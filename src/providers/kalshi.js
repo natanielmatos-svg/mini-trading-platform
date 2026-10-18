@@ -43,9 +43,13 @@ function volumeOf(market) {
 }
 
 function liquidityOf(market) {
-  const dollars = toNumber(market.liquidity_dollars);
-  if (dollars !== null) return dollars;
-  return (toNumber(market.liquidity) || 0) / 100; // la API vieja daba centavos
+  // Removed by Kalshi. Best-level contract counts are not dollar liquidity.
+  return null;
+}
+function depthOf(m,side='yes') {
+ const size=k=>{const n=toNumber(m[k]);return n!==null&&n>=0?n:null;};
+ const yesBid=size('yes_bid_size_fp'),yesAsk=size('yes_ask_size_fp');
+ return {unit:'contracts',bid:side==='yes'?yesBid:yesAsk,ask:side==='yes'?yesAsk:yesBid,scope:'best-level'};
 }
 
 function usableMarkets(event) {
@@ -71,6 +75,7 @@ function optionsFromEvent(event) {
     return [
       {
         label: m.yes_sub_title || 'Sí',
+        bookDepth:depthOf(m,'yes'),
         bid: priceOf(m, 'yes_bid'),
         ask: priceOf(m, 'yes_ask'),
         last: yesLast,
@@ -79,6 +84,7 @@ function optionsFromEvent(event) {
       },
       {
         label: m.no_sub_title || 'No',
+        bookDepth:depthOf(m,'no'),
         bid: priceOf(m, 'no_bid'),
         ask: priceOf(m, 'no_ask'),
         last: yesLast === null ? null : 1 - yesLast,
@@ -90,6 +96,7 @@ function optionsFromEvent(event) {
 
   return markets.map((m) => ({
     label: m.yes_sub_title || m.subtitle || m.title || m.ticker,
+    bookDepth:depthOf(m,'yes'),
     bid: priceOf(m, 'yes_bid'),
     ask: priceOf(m, 'yes_ask'),
     last: priceOf(m, 'last_price'),

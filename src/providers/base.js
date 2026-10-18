@@ -28,7 +28,8 @@ function buildOption(raw) {
     spread,
     priceSource: source,
     volume: toNumber(raw.volume) || 0,
-    liquidity: toNumber(raw.liquidity) || 0,
+    liquidity: raw.liquidity===null?null:toNumber(raw.liquidity) || 0,
+    ...(raw.bookDepth?{bookDepth:raw.bookDepth}:{}),
     url: raw.url || null,
   };
 }
@@ -39,9 +40,10 @@ function buildEvent(raw) {
     .filter((opt) => opt.price !== null);
 
   if (options.length === 0) return null;
+  const optionsComplete = raw.optionsComplete !== false && options.length === (raw.options || []).length;
 
   let overround = null;
-  if (raw.mutuallyExclusive && options.length > 1) {
+  if (raw.mutuallyExclusive && optionsComplete && options.length > 1) {
     const { probabilities, overround: over } = devig(options.map((o) => o.price));
     probabilities.forEach((p, i) => {
       if (p !== null) options[i].impliedProb = p;
@@ -60,8 +62,10 @@ function buildEvent(raw) {
     url: raw.url || null,
     closesAt: raw.closesAt || null,
     mutuallyExclusive: Boolean(raw.mutuallyExclusive),
+    optionsComplete,
+    missingOptionCount: (raw.options || []).length - options.length,
     volume: toNumber(raw.volume) ?? sum('volume'),
-    liquidity: toNumber(raw.liquidity) ?? sum('liquidity'),
+    liquidity: options.every(o=>o.liquidity===null)?null:toNumber(raw.liquidity) ?? sum('liquidity'),
     overround,
     options,
   };

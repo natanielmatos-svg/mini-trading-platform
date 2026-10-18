@@ -1,0 +1,75 @@
+/* Workspace: readable hierarchy, consistent navigation and comfortable controls. */
+:root { --bg:#0b121b; --panel:#111d29; --line:#263747; --text:#e7eef5; --muted:#9cb0c2; --up:#46d7af; --down:#ff8094; --accent:#67d5cf; color-scheme:dark; }
+body { background:var(--bg); font-size:14px; line-height:1.55; }
+.workspace-nav { min-height:76px; padding:16px 32px; display:flex; align-items:center; justify-content:space-between; gap:24px; background:#101a25; border-bottom:1px solid var(--line); font-family:system-ui,sans-serif; }
+.workspace-brand { color:#f0f7fc; font-size:19px; font-weight:700; letter-spacing:-.6px; display:flex; gap:12px; align-items:center; }
+.workspace-mark { display:grid; place-items:center; width:34px; height:34px; border-radius:10px; background:#21443f; color:#80e6cb; font-size:22px; }
+.workspace-nav nav { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.workspace-nav nav a { color:#a6bacb; padding:9px 15px; border-radius:8px; text-decoration:none; font-size:13px; }
+.workspace-nav nav a:hover { background:#1b2b39; color:#fff; }
+.workspace-nav nav a[aria-current=page] { background:#213a3b; color:#88e6d3; }
+.workspace-badge { font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#a6bacb; border:1px solid #344657; border-radius:20px; padding:5px 11px; }
+.skip-link { position:absolute; top:-80px; left:20px; z-index:100; background:#e9fff9; color:#123; padding:12px; }
+.skip-link:focus { top:8px; }
+body>header { background:transparent; border:0; padding:26px 32px 14px; gap:20px; }
+body>header h1 { font-size:25px; letter-spacing:-.7px; }
+body>header .controls>a { display:none; }
+.controls { gap:12px; font-size:12px; }
+.controls label { gap:6px; }
+input,select,button { font-size:13px; padding:10px 12px; min-height:40px; border-radius:8px; }
+select { min-width:86px; }
+#symbolSelect { min-width:190px; }
+button { background:#213343; }
+#loadBtn,.primary-action { background:#6ddac3; color:#102b29; font-weight:650; border:1px solid #6ddac3; }
+button:disabled { opacity:.55; cursor:wait; }
+:focus-visible { outline:2px solid #8ef0d7; outline-offset:3px; }
+.container { padding:14px 32px 40px; gap:22px; max-width:1880px; margin:auto; align-items:flex-start; }
+.main-col { flex:1 1 620px; gap:20px; }
+.side-panel { flex:0 0 370px; min-width:0; gap:18px; }
+.chart-area { height:55vh; min-height:370px; max-height:650px; border-radius:14px; background:#101b27; }
+.card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:20px; box-shadow:0 4px 16px #00000012; }
+.card h2 { font-size:15px; letter-spacing:-.2px; margin-bottom:14px; color:#ecf3f8; }
+.card h2 small { display:block; font-size:12px; font-weight:400; color:var(--muted); margin-top:4px; }
+.card p { line-height:1.6; }
+.muted,small { color:var(--muted); }
+.clock-card { border-color:#345356; background:linear-gradient(135deg,#162d33,#111e2b 80%); }
+.clock-head { font-size:13px; letter-spacing:.5px; }
+#bigPrice { font-size:36px; letter-spacing:-1.4px; font-weight:650; }
+.clock-count .time { font-size:32px; letter-spacing:-1px; }
+.clock-bar { height:5px; border-radius:8px; }
+.clock-bar>span { background:#6ddac3; }
+.clock-foot { font-size:12px; }
+.venue-box { padding:12px 0; }
+.prob-card { border-top:2px solid #68cabc; }
+.prob-entrada { flex-wrap:wrap; gap:8px; }
+.prob-entrada input { flex:1; min-width:130px; }
+table { font-size:12px; font-variant-numeric:tabular-nums; }
+td,th { padding:10px 8px; }
+.workspace-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+.workspace-grid .card { min-width:0; }
+.workspace-eyebrow { text-transform:uppercase; letter-spacing:1.6px; font-size:10px; color:#82c6c1; margin:0 0 7px; font-weight:700; }
+.workspace-note { font-size:12px; color:var(--muted); margin-bottom:0; }
+.workspace-value { font-size:26px; font-weight:650; letter-spacing:-.7px; margin:10px 0; font-variant-numeric:tabular-nums; }
+.workspace-row { display:flex; justify-content:space-between; gap:12px; padding:9px 0; border-bottom:1px solid var(--line); font-size:12px; }
+.workspace-status { color:#edc887; }
+.side-panel>[data-tarjeta=sistema] { order:10; }
+.card h2 { justify-content:flex-start; gap:10px; flex-wrap:wrap; }
+.card h2 small { width:100%; }
+.workspace-success { color:var(--up); }
+.workspace-help { padding:12px 0 0; font-size:12px; color:var(--muted); }
+.workspace-help summary { cursor:pointer; padding:8px 0; color:var(--text); }
+.workspace-footer { max-width:1816px; padding:0 32px 32px; margin:auto; font-size:12px; color:var(--muted); }
+.workspace-demo { background:#423623; color:#f5d495; border-radius:8px; padding:10px 15px; margin:0 32px; font-size:13px; }
+[hidden] { display:none!important; }
+@media(min-width:1600px) { .side-panel { flex-basis:405px; } }
+@media(max-width:1100px) { .container { display:grid; grid-template-columns:minmax(0,1fr); } .side-panel { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); } .side-panel .clock-card { grid-column:1/-1; } }
+@media(max-width:650px) { .workspace-nav { padding:15px 18px; flex-wrap:wrap; gap:14px; } .workspace-nav nav { width:100%; } .workspace-nav nav a { flex:1; padding:8px 7px; text-align:center; } .workspace-badge { display:none; } body>header { padding:22px 18px 12px; } body>header h1 { font-size:23px; } .controls { width:100%; } .controls label:first-child { flex:1; } #symbolSelect { width:100%; min-width:130px; } .container { padding:10px 14px 24px; gap:18px; } .side-panel,.workspace-grid { display:grid; grid-template-columns:minmax(0,1fr); } .chart-area { height:44vh; min-height:300px; } .card { padding:17px; border-radius:12px; } .workspace-footer { padding:0 18px 26px; } .workspace-demo { margin:0 18px; } }
+@media(prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none!important; transition:none!important; } }
+
+body:has(.topbar) { background:var(--ground); color:var(--ink); }
+body:has(.topbar) .topbar { padding:24px 32px; }
+body:has(.topbar) .brand h1 { font:650 25px system-ui,sans-serif; letter-spacing:-.7px; }
+body:has(.topbar) .brand>a { display:none; }
+body:has(.topbar) main { max-width:1240px; }
+body:has(.topbar) input,body:has(.topbar) button { background:var(--surface); color:var(--ink); border-color:var(--rule); }
+body:has(.topbar) .entry { border-radius:14px; }

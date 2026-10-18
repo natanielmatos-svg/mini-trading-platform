@@ -38,7 +38,7 @@ function fecha(v) {
  * deliberadamente corta: los que se sabe leer.
  */
 function normalizar(market) {
-  if (!market || market.status === 'closed' || market.status === 'settled') return null;
+  if (!market || ['closed','determined','disputed','amended','finalized','settled'].includes(market.status)) return null;
 
   // CUÁL DE LAS CUATRO FECHAS. Kalshi publica `close_time`,
   // `expected_expiration_time`, `expiration_time` y `latest_expiration_time`, y
@@ -304,7 +304,7 @@ function mercadosDemo({ precio, horizontes, sesgo = 0, symbol = 'BTCUSDT', ahora
         tipo: 'mayor', suelo, techo: null,
         vencimiento: ahora + falta,
         yesBid, yesAsk, noBid: 1 - yesAsk, noAsk: 1 - yesBid,
-        libro: { yesAsk: 500, noAsk: 500 },
+        libro: { yesAsk: 500, noAsk: 500, yesBid: 500, noBid: 500 },
         volumen: 1000, interesAbierto: 500,
       });
     }

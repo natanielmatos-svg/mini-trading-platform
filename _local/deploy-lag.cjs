@@ -1,0 +1,5 @@
+const fs=require('node:fs'),{execFileSync,spawn}=require('node:child_process');
+let s=fs.readFileSync('public/learning.js','utf8');const marker='data=await r.json();const old=select.value;';if(!s.includes(marker))throw Error('UI marker missing');s=s.replace(marker,"data=await r.json();try{const lr=await fetch('/api/kalshi-lag',{cache:'no-store'});if(lr.ok)data.lagLab=await lr.json();}catch{}const old=select.value;");fs.writeFileSync('public/learning.js',s);
+for(const f of ['public/index.html','public/acciones.html'])fs.writeFileSync(f,fs.readFileSync(f,'utf8').replace('/learning.js?v=11','/learning.js?v=12'));
+const c=execFileSync('netstat',['-ano','-p','tcp'],{encoding:'utf8',windowsHide:true});if(!c.split('\n').some(l=>/127\.0\.0\.1:3000\s+0\.0\.0\.0:0\s+LISTENING\s+22224\s*$/.test(l)))throw Error('PID changed');process.kill(22224);
+setTimeout(()=>{const log=fs.openSync('datos/logs/lag-server.log','a');const p=spawn(process.execPath,['server.js'],{cwd:'C:/opt/mini-trading-platform',windowsHide:true,detached:true,stdio:['ignore',log,log]});p.unref();console.log('server',p.pid);},1500);

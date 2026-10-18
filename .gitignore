@@ -4,3 +4,12 @@ npm-debug.log*
 .env
 datos/
 vetos.json
+.venv-forecast/
+data/models/
+*.log
+__pycache__/
+data/ledger/
+.env.*
+!.env.example
+*.pem
+*.key

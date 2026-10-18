@@ -187,8 +187,8 @@ function render(contenedor, { datos, interval, nivel, precio, nota = null, vela 
     ${nota ? `<p class="prob-aviso">${nota}</p>` : ''}
     ${bloqueCierre({ datos, interval, nivel, precio, vela })}
     <p class="prob-nivel">${distancia(nivel, precio)}</p>
-    <p class="prob-otros">y a plazo fijo, contando desde ahora:</p>
-    <div class="prob-plazos">${tiles}</div>
+    <details class="method prob-horizons" data-k="prob-plazos"><summary>Ver otros plazos</summary><p class="prob-otros">A plazo fijo, contando desde ahora:</p>
+    <div class="prob-plazos">${tiles}</div></details>
     <details class="method" data-k="prob-como">
       <summary>De dónde sale este número</summary>
       <p>

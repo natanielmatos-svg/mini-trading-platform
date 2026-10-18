@@ -223,8 +223,8 @@ function evaluarMercado(mercado, forecastResp, { precio, capital, ahora = Date.n
   const L = { ...LIMITES, ...limites };
 
   if (!mercado || !mercado.tipo) return rechazo('el mercado no dice contra qué liquida');
-  if (!(precio > 0)) return rechazo('no hay precio en vivo del activo');
-  if (!(capital > 0)) return rechazo('no hay capital declarado');
+  if (!Number.isFinite(precio) || !(precio > 0)) return rechazo('no hay precio en vivo del activo');
+  if (!Number.isFinite(capital) || !(capital > 0)) return rechazo('no hay capital declarado');
 
   const falta = mercado.vencimiento - ahora;
   if (!(falta > 0)) return rechazo('ya venció');
@@ -308,6 +308,7 @@ function revisarCalibracion(cal, errorMax) {
   }
   const c90 = cal.cobertura.find((c) => c.nominal === 0.9);
   if (!c90) return { ok: false, motivo: 'la calibración no trae la banda del 90%' };
+  if (!Number.isFinite(c90.observada) || c90.observada < 0 || c90.observada > 1) return { ok: false, motivo: 'calibración inválida' };
 
   const error = Math.abs(c90.observada - 0.9);
   if (error > errorMax) {
@@ -353,7 +354,7 @@ function tamano({ p, precio, capital, libro, limites }) {
   const f = kelly(p, precio) * limites.fraccionKelly;
   const porKelly = Math.floor((f * capital) / precio);
   const porTope = limites.maxContratosPorMercado;
-  const porLibro = libro > 0 ? Math.floor(libro * limites.fraccionDelLibro) : Infinity;
+  const porLibro = Number.isFinite(libro) && libro > 0 ? Math.floor(libro * limites.fraccionDelLibro) : 0;
 
   return Math.max(0, Math.min(porKelly, porTope, porLibro));
 }
@@ -389,16 +390,19 @@ function evaluarSalida(posicion, mercado, forecastResp, { precio, ahora = Date.n
   const puja = posicion.lado === 'yes' ? mercado.yesBid : mercado.noBid;
   if (!(puja > 0)) return { salir: false, motivo: 'nadie puja: no se puede salir aunque se quisiera' };
 
-  const feeSalida = comisionUnitaria(posicion.contratos, puja);
+  const profundidad = mercado.libro?.[posicion.lado === 'yes' ? 'yesBid' : 'noBid'];
+  const contratos = Number.isFinite(profundidad) ? Math.min(posicion.contratos, Math.floor(profundidad * L.fraccionDelLibro)) : 0;
+  if (!(contratos > 0)) return { salir: false, motivo: 'Sin profundidad verificable para salir' };
+  const feeSalida = comisionUnitaria(contratos, puja);
   const ganaSaliendo = puja - justo - feeSalida;
 
   if (ganaSaliendo >= L.margenMinimo) {
     return {
       salir: true,
-      contratos: posicion.contratos,
+      contratos,
       precio: puja,
       justo,
-      comision: comision(posicion.contratos, puja),
+      comision: comision(contratos, puja),
       ventaja: ganaSaliendo,
       motivo: `el mercado paga ${(puja * 100).toFixed(0)}¢ por algo que ahora vale ${(justo * 100).toFixed(0)}¢`,
     };

@@ -86,6 +86,7 @@ function combinar(series, { minMercados = MIN_MERCADOS } = {}) {
       closeTime: trozos[0].closeTime,
       closed: trozos.every((t) => t.closed),
       mercados: trozos.length,
+      provenance: trozos.map(t=>({venue:t.venueId,openTime:t.openTime,closeTime:t.closeTime,raw:t.provenanceRaw||{open:t.open,high:t.high,low:t.low,close:t.close,volume:t.volume},conversion:t.provenanceConversion||{rate:1,quote:'USD'}})),
     });
   }
 
@@ -134,9 +135,11 @@ async function getVelasConsolidadas({ symbol, interval, limit = 400, venues = nu
     }
 
     const rate = enUsdt ? stable.rate : 1;
-    const candles = rate === 1 ? r.candles : r.candles.map((c) => ({
+    const candles = r.candles.map((c) => ({
       ...c,
       open: c.open * rate, high: c.high * rate, low: c.low * rate, close: c.close * rate,
+      provenanceRaw:{open:c.open,high:c.high,low:c.low,close:c.close,volume:c.volume},
+      provenanceConversion:{rate,quote:enUsdt?'USDT':'USD',capturedAt:Date.now(),rateAt:enUsdt?(stable.at??null):null,source:enUsdt?stable.source:'native USD',historicalRate:!enUsdt},
     }));
 
     series.push({ venueId: r.venueId, candles });

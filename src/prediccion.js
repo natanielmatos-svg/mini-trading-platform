@@ -7,13 +7,14 @@
 // mismo desde un script. Dos implementaciones de esto acabarían discrepando en
 // silencio, y la que discrepara sería la que opera con dinero.
 
+const { createHash } = require('node:crypto');
 const forecast = require('./forecast');
 const calibracion = require('./calibracion');
 const { TtlCache } = require('./cache');
 
 // Los cuantiles conformes recorren el histórico prediciendo hacia delante: es
-// la parte cara, y sólo cambia cuando cambian las velas. La clave lleva la
-// última apertura, así que una vela nueva invalida la entrada sola.
+// la parte cara. La huella de fechas y cierres separa activos y correcciones
+// históricas aunque compartan número de velas y última apertura.
 const cacheConforme = new TtlCache({ ttlMs: 300_000, maxEntries: 200 });
 
 /**
@@ -24,13 +25,19 @@ const cacheConforme = new TtlCache({ ttlMs: 300_000, maxEntries: 200 });
  *               cada tick— pero la API y los scripts sí.
  */
 async function predecirActivo({ candles, interval, precio, bloques, nivel = null }) {
-  const clave = `${interval}:${bloques}:${candles.length}:${candles[candles.length - 1].openTime}`;
+  if (!(precio > 0)) precio = Array.isArray(candles) ? candles.at(-1)?.close : null;
+  candles = (Array.isArray(candles) ? candles : []).filter(c => c.closed !== false);
+  if (!candles.length) return { ok: false, reason: 'Sin velas cerradas para estimar.' };
+  const digest = createHash('sha256').update(JSON.stringify(candles.map(c => [c.openTime, c.close]))).digest('hex');
+  const clave = interval + ':' + bloques + ':' + digest;
   const conformes = await cacheConforme.wrap(clave, async () => forecast.cuantilesConformes(candles, { bloques }), 300_000);
 
   const f = forecast.predecir(candles, { bloques, precio, conformes });
   if (!f.ok) return f;
 
-  const cal = calibracion.calibrar(candles, { bloques, paso: Math.max(1, Math.floor(candles.length / 300)) });
+  const cal = await cacheConforme.wrap('validation:' + clave, async () => calibracion.calibrar(candles, {
+    bloques, paso: Math.max(1, Math.floor((candles.length - 210 - 2 * bloques) / 45)), usarConformes: true,
+  }), 300_000);
   const salida = { ...f, calibracion: cal.ok ? { ...cal, veredicto: calibracion.veredicto(cal) } : { ok: false, reason: cal.reason } };
 
   // La probabilidad de acabar por encima de un nivel, para quien consuma la API

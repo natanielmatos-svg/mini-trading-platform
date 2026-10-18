@@ -121,7 +121,9 @@ setInterval(() => {
 }, RATE_WINDOW_MS).unref();
 
 function rateLimit(req, res, next) {
-  const ip = req.ip || 'desconocida';
+  const bucket=require('./src/request-bucket').bucket(req.method,req.path);
+  if(bucket==='stream')return next(); // Concurrent stream limit applies in its route.
+  const ip = (req.ip || 'desconocida')+'|'+bucket;
   const now = Date.now();
   const stamps = (hits.get(ip) || []).filter((t) => t > now - RATE_WINDOW_MS);
 
@@ -237,10 +239,163 @@ app.get('/api/price', async (req, res) => {
   const venues = parseVenues(req.query.venues);
 
   try {
-    const quotes = await fetchAllPrices({ symbol, demo, venues });
+    const standardBtc = symbol==='BTCUSDT' && !demo && venues && [...venues].sort().join(',')===[...timingVenues].sort().join(',');
+    const quotes = await (standardBtc ? timingPrices({symbol,venues}) : fetchAllPrices({ symbol, demo, venues }));
     sendJson(res, { symbol, requested: venues, ...consolidate(quotes), venuesSupported: listVenues() });
   } catch (err) {
     marketError(res, err, '/api/price');
+  }
+});
+
+const timingCache = new (require('./src/cache').TtlCache)({ttlMs:1000,maxEntries:4});
+const timingVenues = require('./src/price-timing').VENUES;
+function timingPrices(options) {
+  return timingCache.wrap('BTCUSDT',()=>fetchAllPrices({...options,symbol:'BTCUSDT',venues:timingVenues}));
+}
+const lagLabModule=require('./src/kalshi-lag-lab');
+const lagLab=lagLabModule.create({dir:path.join(__dirname,'datos','diagnosticos','kalshi-lag')});
+const priceTiming = require('./src/price-timing').createSampler({
+  prices:timingPrices,
+  reference:options=>require('./src/kalshi-reference').getReference(options),
+  market:lagLabModule.createMarketReader(),
+  onSample:row=>lagLab.observe(row),
+  dir:path.join(__dirname,'datos','diagnosticos','timing'),
+});
+app.get('/api/price-timing', (req,res)=>sendJson(res,priceTiming.status()));
+app.get('/api/kalshi-lag', (req,res)=>sendJson(res,{...lagLab.snapshot(),sampler:priceTiming.status()}));
+
+app.get('/api/reference', async (req, res) => {
+  const { symbol, demo } = marketParams(req);
+  try { sendJson(res, await require('./src/kalshi-reference').getReference({ symbol, demo })); }
+  catch (err) { marketError(res, err, '/api/reference'); }
+});
+
+app.get('/api/system-status', (req, res) => {
+  sendJson(res, {
+    demo: DEMO_ALWAYS,
+    demoBot: require('./src/demo-bot-control').status(),
+    control: {...require('./src/bot-control').read(),paused:require('./src/trading-settings').read().paused},
+    bot: { ...require('./src/bot-runtime').read(), liveOrders: false },
+    agent: { configured: Boolean(process.env[require('./src/agente').PROVEEDOR === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY']), provider: require('./src/agente').PROVEEDOR, role: 'Solo puede vetar operaciones', model: require('./src/agente').MODELO },
+    reference: { configured: Boolean(process.env.KALSHI_API_KEY_ID && process.env.KALSHI_PRIVATE_KEY_PATH) },
+  });
+});
+
+
+app.post('/api/bot-control', express.json({limit:'1kb'}), async(req,res)=>{
+  const expected='http://'+req.get('host');let hostname='';try{hostname=new URL(expected).hostname;}catch{}
+  if(!['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.socket.remoteAddress)||!['localhost','127.0.0.1','[::1]'].includes(hostname)||req.get('origin')!==expected||!req.is('application/json'))return res.status(403).json({error:'Solo se permite controlar desde esta app local'});
+  if(DEMO_ALWAYS)return res.status(409).json({error:'Controles no disponibles en el servidor demo'});
+  try{if(req.body?.scope==='demo-bot')return res.json({control:require('./src/demo-bot-control').command(req.body?.action),liveEnabled:false});const control=await require('./src/bot-control').command(req.body?.action);res.json({control,liveEnabled:false});}
+  catch(e){res.status(409).json({error:e.message});}
+});
+
+app.get('/api/arbitrage', (req,res)=>{
+  res.setHeader('Cache-Control','no-store');
+  try { res.json(require('./src/arbitrage-scanner').snapshot()); }
+  catch { res.status(503).json({error:'No se pudo verificar el escáner de arbitraje',liveEnabled:false}); }
+});
+
+app.get('/api/evidence', (req,res)=>{
+  try { sendJson(res, { ...require('./src/evidencia').leerResumen(), bot: require('./src/bot-runtime').read() }); }
+  catch { res.status(503).json({error:'No se pudo verificar el registro de evidencia'}); }
+});
+
+const proposalReview=require('./src/proposal-review').create();
+const prepareSupervisedTicket=require('./src/supervised-ticket').create({proposals:proposalReview});
+function proposalLocal(req,res,next){let host='';try{host=new URL('http://'+req.get('host')).hostname;}catch{}
+ if(!['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.socket.remoteAddress)||!['localhost','127.0.0.1','[::1]'].includes(host))return res.status(403).json({error:'Solo disponible localmente'});
+ res.setHeader('Cache-Control','no-store');next();}
+app.get('/api/proposals',proposalLocal,(req,res)=>{try{res.json(proposalReview.snapshot());}catch{res.status(503).json({error:'No se pudo verificar el registro de propuestas',liveEnabled:false});}});
+app.get('/api/proposals/:id/ticket',proposalLocal,async(req,res)=>{
+ if(DEMO_ALWAYS)return res.status(409).json({error:'Ficha real no disponible en demo'});
+ try{res.json(await prepareSupervisedTicket(req.params.id));}catch{res.status(409).json({error:'No se pudo preparar la ficha. Actualiza las propuestas y vuelve a intentarlo.'});}
+});
+app.get('/api/kalshi-threshold',async(req,res)=>{
+ res.setHeader('Cache-Control','no-store');
+ if(DEMO_ALWAYS)return res.json({ok:false,contracts:[],reason:'Umbral real no disponible en demo.'});
+ try{res.json(await require('./src/kalshi-threshold').get({symbol:String(req.query.symbol||'BTCUSDT'),interval:String(req.query.interval||'15m')}));}
+ catch{res.status(503).json({ok:false,contracts:[],reason:'No se pudo consultar el umbral oficial de Kalshi.'});}
+});
+app.post('/api/proposals/review',proposalLocal,express.json({limit:'2kb'}),(req,res)=>{
+ if(DEMO_ALWAYS||req.get('origin')!=='http://'+req.get('host')||!req.is('application/json'))return res.status(403).json({error:'Revisión permitida solo desde la app local'});
+ try{res.json({review:proposalReview.review(req.body?.id,req.body?.action),liveEnabled:false});}catch(e){res.status(409).json({error:e.message,liveEnabled:false});}
+});
+
+app.get('/api/kalshi-account',async(req,res)=>{
+ let hostname='';try{hostname=new URL('http://'+req.get('host')).hostname;}catch{}
+ if(!['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.socket.remoteAddress)||!['localhost','127.0.0.1','[::1]'].includes(hostname))return res.status(403).json({error:'Cuenta disponible solo localmente'});
+ res.setHeader('Cache-Control','no-store');
+ if(DEMO_ALWAYS)return res.status(409).json({error:'Cuenta real no disponible en demo'});
+ try{res.json(await require('./src/kalshi-account').snapshot());}catch{res.status(503).json({error:'No se pudo consultar la cuenta. Revisa conexión y permisos de lectura.'});}
+});
+
+app.get('/api/production-readiness', async(req,res)=>{
+  let hostname='';try{hostname=new URL('http://'+req.get('host')).hostname;}catch{}
+  if(!['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.socket.remoteAddress)||!['localhost','127.0.0.1','[::1]'].includes(hostname))return res.status(403).json({error:'Consulta disponible solo localmente'});
+  res.setHeader('Cache-Control','no-store');
+  try{
+    const service=require('./src/production-readiness');
+    const account=DEMO_ALWAYS?{ok:false,reason:'Servidor demo'}:await service.account();
+    res.json(service.assess({config:require('./src/trading-settings').read(),bot:require('./src/bot-runtime').read(),learning:learningService().snapshot(),account,demo:DEMO_ALWAYS}));
+  }catch{res.status(503).json({ready:false,liveEnabled:false,error:'No se pudo comprobar la preparación; no asumir disponibilidad.'});}
+});
+
+app.get('/api/trading-settings', (req,res)=>{
+  try { const settings=require('./src/trading-settings');const config=settings.read();sendJson(res,{config,liveEnabled:false,blockers:settings.blockers(config)}); }
+  catch { res.status(503).json({error:'No se pudo leer la configuración'}); }
+});
+app.put('/api/trading-settings', (req,res,next)=>{
+  const remote=req.socket.remoteAddress;
+  const local=['127.0.0.1','::1','::ffff:127.0.0.1'].includes(remote);
+  const expected='http://'+req.get('host');
+  let hostname='';try{hostname=new URL(expected).hostname;}catch{}
+  if(!local||!['localhost','127.0.0.1','[::1]'].includes(hostname)||req.get('origin')!==expected||!req.is('application/json'))return res.status(403).json({error:'Solo se permite guardar desde esta app local'});
+  next();
+},express.json({limit:'4kb'}),(req,res)=>{
+  try {const settings=require('./src/trading-settings');const config=settings.save(req.body);res.json({config,liveEnabled:false,blockers:settings.blockers(config)});}
+  catch(e){res.status(400).json({error:e.message});}
+});
+
+let closeLearner;
+function learningService(){
+  if(!closeLearner)closeLearner=require('./src/close-learning').create({
+    asyncPersistence:true,
+    pilot:require('./src/btc15m-capture').create({backgroundReplay:true,book:(ticker,options)=>require('./src/kalshi-market-feed').obtener(ticker,options),brti:{reference:()=>require('./src/kalshi-reference').getReference({symbol:'BTCUSDT'}),fees:m=>require('./src/brti-prospective').feesFor(m)}}),
+    minuteLab:require('./src/timesfm-minute-lab').create({getData:target=>velasDelAnalisis({...target,demo:false}),predict:require('./src/forecast-neural').predictExperiment}),
+    getData:target=>velasDelAnalisis({...target,limit:400,demo:false,venues:null}),
+    getReference:target=>require('./src/kalshi-reference').getReference(target),
+    predict:data=>require('./src/forecast-neural').forecast(data),
+  });
+  return closeLearner;
+}
+const learningViewCache=new (require('./src/cache').TtlCache)({ttlMs:5000,maxEntries:1});
+app.get('/api/learning', async (req,res)=>{
+  res.set('Cache-Control','no-store');
+  try{const snapshot=await learningViewCache.wrap('view',()=>({...learningService().snapshot(),viewGeneratedAt:Date.now()}));res.json({...snapshot,marketFeed:require('./src/kalshi-market-feed').status(),feePolicy:require('./src/kalshi-fee-policy').status()});}catch{res.status(503).json({error:'Aprendizaje no disponible'});}
+});
+app.get('/api/neural-forecast', async (req, res) => {
+  const isStocks = req.query.market === 'stocks';
+  const { symbol, interval, demo } = isStocks ? stockParams(req) : marketParams(req);
+  try {
+    let data; let clock = null;
+    if (isStocks) {
+      clock = await stocks.getClock({ demo });
+      data = await stocks.getStockCandles({ symbol, interval, limit: 400, demo });
+      if(clock?.isOpen&&!demo&&data.candles?.length){const sessions=require('./src/stock-neural-session');data.calendar=await require('./src/alpaca').fetchCalendar(sessions.dateNY(data.candles[0].openTime),sessions.dateNY(Date.now()));}
+    } else {
+      data = await velasDelAnalisis({ symbol, interval, limit: 400, demo, venues: parseVenues(req.query.venues) });
+    }
+    const result = await require('./src/forecast-neural').forecast({ ...data, symbol, interval, source: data.source || data.fuente }, { market: isStocks ? 'stocks' : 'crypto', clock });
+    try { result.prospective = require('./src/neural-evidence').record(result, { ...data, symbol, interval }); }
+    catch { result.evidenceWarning = 'No se pudo guardar la evaluación prospectiva.'; }
+    if(!isStocks&&!demo){
+      try{const learner=learningService();learner.watch({symbol,interval});learner.ingest({symbol,interval},data,null,result);result.learning=learner.snapshot();}
+      catch{result.learningWarning='No se pudo registrar el aprendizaje del cierre.';}
+    }
+    sendJson(res, result);
+  } catch (err) {
+    sendJson(res, { ok: false, reason: err.message });
   }
 });
 
@@ -348,6 +503,7 @@ app.get('/api/klines/consolidadas', async (req, res) => {
 
   try {
     const { candles, fuente, fetchedAt, consolidado } = await velasDelAnalisis({ symbol, interval, demo, venues, limit });
+    if(req.query.compact==='1')return sendJson(res,{symbol,interval,source:fuente,fetchedAt,count:candles.length,candles:candles.map(({openTime,closeTime,open,high,low,close,closed})=>({openTime,closeTime,open,high,low,close,closed}))});
     sendJson(res, { symbol, interval, source: fuente, fetchedAt, consolidado, count: candles.length, candles });
   } catch (err) {
     marketError(res, err, '/api/klines/consolidadas');
@@ -396,6 +552,20 @@ app.get('/api/stream', (req, res) => {
 // el histórico, es decir, si las bandas que promete se cumplen de verdad. Un
 // predictor que publica su propio boletín de notas.
 
+app.get('/api/activity/stream', (req, res) => {
+  const ip=req.ip, open=streamsByIp.get(ip)||0;
+  if(open>=MAX_STREAMS_PER_IP)return res.status(429).json({error:'Demasiadas conexiones en vivo'});
+  streamsByIp.set(ip,open+1);
+  const events=require('./src/learning-events'),client=sseClient(res);
+  const unsubscribe=events.subscribe(event=>{
+    // Disconnect slow consumers instead of accumulating unbounded UI telemetry.
+    if(res.writableLength>65536){client.close();return;}
+    client.send('activity',event);
+  });
+  client.onGone(()=>{unsubscribe();const left=(streamsByIp.get(ip)||1)-1;if(left>0)streamsByIp.set(ip,left);else streamsByIp.delete(ip);});
+  client.send('snapshot',events.snapshot());
+});
+
 app.get('/api/forecast', async (req, res) => {
   const { symbol, interval, demo } = marketParams(req);
   const venues = parseVenues(req.query.venues);
@@ -414,7 +584,7 @@ app.get('/api/forecast', async (req, res) => {
     }));
 
     const base = series[interval] || series[necesarios[0]];
-    const precio = Number.isFinite(livePrice) && livePrice > 0 ? livePrice : null;
+    const precio = Number.isFinite(livePrice) && livePrice > 0 ? livePrice : base.candles.at(-1)?.close;
 
     const predicciones = [];
     for (const h of plan) {
@@ -651,7 +821,7 @@ app.get('/api/predictions', async (req, res) => {
 // —los tests lo hacen— se obtiene la app sin puerto ni manejadores de señal,
 // que es lo que permite levantarla en un puerto efímero y cerrarla.
 function start(port = PORT) {
-  const server = app.listen(port, () => {
+  const server = app.listen(port, process.env.HOST || '127.0.0.1', () => {
     const address = server.address();
     console.log(`Servidor escuchando en http://localhost:${address.port}`);
     console.log('Criptomonedas: /index.html');
@@ -671,15 +841,23 @@ function start(port = PORT) {
       console.log('Sin clave de Alpaca: /acciones.html usará datos de ejemplo. `npm run alpaca` explica cómo ponerla.');
     }
     if (DEMO_ALWAYS) console.log('MODO DEMO activo: datos de ejemplo, no precios reales.');
+    if (require.main === module && !DEMO_ALWAYS) { require('./src/arbitrage-scanner').start(); priceTiming.start(); }
+    if (require.main === module && !DEMO_ALWAYS) { try { learningService().start(); } catch { console.error('No se pudo iniciar aprendizaje local'); } }
   });
 
   // systemd y Docker mandan SIGTERM al reiniciar: se deja terminar lo que hay
   // en vuelo en vez de cortar respuestas a medias. Las conexiones SSE son
   // eternas por definición, así que ésas se cierran a mano o el proceso no
   // saldría nunca.
-  function shutdown(signal) {
+  async function shutdown(signal) {
     console.log(`${signal} recibido, cerrando...`);
     stream.closeAll();
+    require('./src/arbitrage-scanner').stop();
+    try{await closeLearner?.stop();}catch{console.error('No se pudo finalizar el guardado de aprendizaje');}
+    require('./src/kalshi-market-feed').close();
+    priceTiming.stop();
+    const neural = require.cache[require.resolve('./src/forecast-neural')];
+    if (neural) neural.exports.stop();
     server.close(() => {
       console.log('Servidor cerrado.');
       process.exit(0);

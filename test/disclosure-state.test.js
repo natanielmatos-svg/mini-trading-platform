@@ -1,0 +1,5 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict');const {createState}=require('../public/disclosure-state');
+test('detalle abierto sobrevive a reemplazos y a un estado intermedio de carga',()=>{const s=createState(),old={open:false};s.restore(old,'exclusions');old.open=true;s.remember(old);const fresh={open:false};s.restore(fresh,'exclusions');assert.equal(fresh.open,true);s.restore(fresh,'exclusions');assert.equal(fresh.open,true);});
+test('cerrar explícitamente permanece cerrado en el siguiente refresco',()=>{const s=createState(),old={open:true};s.restore(old,'rules');old.open=false;s.remember(old);const fresh={open:true};s.restore(fresh,'rules');assert.equal(fresh.open,false);});
+test('no mezcla reglas de contratos diferentes y restaura detalles anidados',()=>{const s=createState(),outer={open:true},a={open:true},b={open:false};s.restore(outer,'excluded');s.restore(a,'market-a');s.restore(b,'market-b');const next=[{open:false},{open:false},{open:false}];next.forEach((n,i)=>s.restore(n,['excluded','market-a','market-b'][i]));assert.deepEqual(next.map(n=>n.open),[true,true,false]);});

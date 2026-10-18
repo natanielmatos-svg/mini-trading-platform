@@ -253,7 +253,7 @@ function global(archivo) {
 for (const pagina of PAGINAS) {
   test(`${pagina} sólo carga módulos que el servidor publica`, () => {
     const html = leer('public', pagina);
-    const cargados = [...html.matchAll(/src="\/lib\/([\w.-]+)"/g)].map((m) => m[1]);
+    const cargados = [...html.matchAll(/src="\/lib\/([\w.-]+)(?:\?[^"#]*)?"/g)].map((m) => m[1]);
     assert.ok(cargados.length, 'la página tiene que cargar algún módulo compartido');
 
     for (const m of cargados) {
@@ -263,7 +263,7 @@ for (const pagina of PAGINAS) {
 
   test(`${pagina} carga cada módulo antes de quien lo necesita`, () => {
     const html = leer('public', pagina);
-    const cargados = [...html.matchAll(/src="\/lib\/([\w.-]+)"/g)].map((m) => m[1]);
+    const cargados = [...html.matchAll(/src="\/lib\/([\w.-]+)(?:\?[^"#]*)?"/g)].map((m) => m[1]);
 
     const disponibles = new Set();
     for (const archivo of cargados) {
@@ -283,7 +283,7 @@ for (const pagina of PAGINAS) {
     assert.ok(pide.length, 'algo tendrá que coger del ámbito global');
 
     const html = leer('public', pagina);
-    const cargados = [...html.matchAll(/src="\/lib\/([\w.-]+)"/g)].map((m) => m[1]);
+    const cargados = [...html.matchAll(/src="\/lib\/([\w.-]+)(?:\?[^"#]*)?"/g)].map((m) => m[1]);
     const disponibles = new Set(cargados.flatMap((a) => global(a).pone));
 
     for (const dep of pide) {
@@ -294,7 +294,7 @@ for (const pagina of PAGINAS) {
 
 test('el servidor no publica módulos que nadie carga', () => {
   // Publicar código que ninguna página pide es superficie por nada.
-  const cargados = new Set(PAGINAS.flatMap((p) => [...leer('public', p).matchAll(/src="\/lib\/([\w.-]+)"/g)].map((m) => m[1])));
+  const cargados = new Set(PAGINAS.flatMap((p) => [...leer('public', p).matchAll(/src="\/lib\/([\w.-]+)(?:\?[^"#]*)?"/g)].map((m) => m[1])));
   for (const m of publicados()) {
     assert.ok(cargados.has(m), `server.js publica ${m} y ninguna página lo carga`);
   }

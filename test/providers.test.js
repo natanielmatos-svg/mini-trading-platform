@@ -129,7 +129,7 @@ test('Kalshi: lee los campos nuevos en dólares', () => {
   assert.equal(event.options.length, 2);
   assert.ok(Math.abs(event.options[0].price - 0.63) < 1e-9, 'Sí = (0.62+0.64)/2');
   assert.ok(Math.abs(event.options[1].price - 0.37) < 1e-9, 'No = (0.36+0.38)/2');
-  assert.equal(event.options[0].liquidity, 340000, 'liquidity_dollars ya viene en dólares');
+  assert.equal(event.options[0].liquidity, null, 'liquidity_dollars fue retirado y no equivale a profundidad');
 });
 
 test('Kalshi: priceOf prefiere dólares y cae a centavos', () => {

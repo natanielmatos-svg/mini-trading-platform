@@ -119,7 +119,8 @@ test('la volatilidad condicional reacciona a lo reciente', () => {
   const sigmas = F.ewmaSigma(F.rendimientos(tranquila));
 
   assert.equal(sigmas.length, F.rendimientos(tranquila).length + 1, 'una sigma más: la del paso que aún no ha pasado');
-  assert.ok(sigmas.every((s) => s > 0));
+  assert.ok(sigmas.slice(0, 10).every((s) => s === null), 'arranque fuera de la muestra');
+  assert.ok(sigmas.slice(10).every((s) => s > 0));
 });
 
 test('los estandarizados se centran: la mediana de la muestra no es deriva', () => {

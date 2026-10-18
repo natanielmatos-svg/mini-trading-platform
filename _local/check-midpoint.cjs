@@ -1,0 +1,1 @@
+(async()=>{for(let i=0;i<20;i++){try{const r=await fetch('http://localhost:3000/api/learning');if(!r.ok)throw Error(r.status);const d=await r.json();if(d.pilot?.loadingHistory)throw Error('replay');console.log(JSON.stringify({midpoint:d.pilot?.midpoint,errors:d.errors}));return;}catch{await new Promise(r=>setTimeout(r,1500));}}process.exitCode=1;})();

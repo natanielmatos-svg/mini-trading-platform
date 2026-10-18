@@ -187,10 +187,10 @@ test('se pregunta a las cuatro casas y se consolida', async () => {
   assert.ok(quotes.every((q) => q.ok && q.price > 0));
 
   const out = consolidated.consolidate(quotes, { now: 1_000 });
-  assert.strictEqual(out.used, 4);
+  assert.strictEqual(out.used, 3, 'USDT sin un cambio válido no es un precio USD');
   // 86620,10 / 86644,30 / 86647,20 / 86650 -> media de los dos de en medio,
   // redondeada a la escala del precio
-  assert.strictEqual(out.price, 86645.8);
+  assert.strictEqual(out.price, 86647.2);
   assert.ok(out.spread > 0 && out.spreadPct < 0.1);
 });
 
@@ -411,7 +411,7 @@ test('una casa caída no deja sin precio a las demás', async () => {
   assert.strictEqual(caida.pair, 'BTCUSD', 'se dice qué par se intentó');
 
   const out = consolidated.consolidate(quotes, { now: 1_000 });
-  assert.strictEqual(out.used, 3, 'siguen las otras tres');
+  assert.strictEqual(out.used, 2, 'siguen las dos casas USD; USDT no tiene conversión');
   assert.ok(out.price > 0);
 });
 

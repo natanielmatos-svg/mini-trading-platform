@@ -55,6 +55,7 @@ test('lo que no se sabe leer se descarta, no se adivina', () => {
 test('un mercado ya cerrado o liquidado no se devuelve', () => {
   assert.equal(M.normalizar({ ...base, status: 'closed' }), null);
   assert.equal(M.normalizar({ ...base, status: 'settled' }), null);
+  for(const status of ['finalized','determined','disputed','amended'])assert.equal(M.normalizar({...base,status}),null);
 });
 
 test('se entienden las dos generaciones de precios de Kalshi', () => {

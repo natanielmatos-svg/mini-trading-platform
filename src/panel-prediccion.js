@@ -119,7 +119,7 @@ function render(contenedor, datos, interval) {
 
   contenedor.innerHTML = `
     <p class="pred-centro">
-      Centrado en <strong>${formatPrice(datos.precio)}</strong>, el precio de ahora.
+      Centrado en <strong>${formatPrice(datos.precio)}</strong>, referencia al calcular.
       <em>No se predice dirección.</em>
     </p>
     <table class="pred-tabla">

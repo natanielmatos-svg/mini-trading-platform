@@ -1,0 +1,8 @@
+'use strict';
+const fs=require('node:fs'),path=require('node:path'),{readJsonl}=require('../src/read-jsonl'),mid=require('../src/kalshi-midpoint'),{logit}=require('../src/settlement-probability');
+const root=path.join(__dirname,'..'),rows=[],results=new Map();
+for(const s of readJsonl(path.join(root,'datos/piloto-btc15m/events.jsonl'))){if(s.type==='settlement')results.set(s.ticker,s);if(s.midpointProbability?.version===mid.CONFIG.version&&s.midpointProbability.status==='candidate')rows.push(s);}
+const seen=new Set(),cases=[];for(const s of rows){if(seen.has(s.ticker))continue;seen.add(s.ticker);const r=results.get(s.ticker),f=mid.features(s);if(!f||!r||!['yes','no'].includes(r.resultado))continue;const p=s.midpointProbability,a=JSON.parse(fs.readFileSync(path.join(root,'datos/piloto-btc15m/models',p.modelId+'.json'))),raw=1/(1+Math.exp(-logit(a.model,f.x)));cases.push({ticker:s.ticker,raw,calibrated:p.pYes,y:Number(r.resultado==='yes'),calibrationSlope:a.calibrator.weights[1]/a.calibrator.scales[0]});}
+const mean=fn=>cases.reduce((n,c)=>n+fn(c),0)/cases.length;
+const report={at:new Date().toISOString(),purpose:'Diagnóstico retrospectivo; no validación independiente del modelo sin calibrar',cases:cases.length,rawBrier:mean(c=>(c.raw-c.y)**2),calibratedBrier:mean(c=>(c.calibrated-c.y)**2),negativeSlopes:cases.filter(c=>c.calibrationSlope<0).length,meanSlope:mean(c=>c.calibrationSlope),details:cases};
+fs.writeFileSync(path.join(root,'datos/diagnosticos/calibration-diagnosis.json'),JSON.stringify(report,null,2));const {details,...summary}=report;console.log(JSON.stringify(summary));

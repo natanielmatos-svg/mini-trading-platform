@@ -18,8 +18,11 @@
 // tratar lo segundo como lo primero es exactamente el fallo que se lamenta
 // después. Eso vive en `vetos.recoger`, y aquí sólo hay que dejarlo fallar.
 
-const MODELO = process.env.AGENTE_MODELO || 'claude-opus-5';
-const ESFUERZO = process.env.AGENTE_ESFUERZO || null; // low|medium|high|xhigh|max
+const PROVEEDOR = process.env.AGENTE_PROVEEDOR || (process.env.OPENAI_API_KEY ? 'openai' : 'anthropic');
+const MODELO = PROVEEDOR === 'openai'
+  ? (process.env.OPENAI_AGENT_MODEL || 'gpt-5.5')
+  : (process.env.AGENTE_MODELO || 'claude-opus-5');
+const ESFUERZO = PROVEEDOR === 'openai' ? (process.env.OPENAI_AGENT_EFFORT || 'low') : (process.env.AGENTE_ESFUERZO || null);
 
 // Una llamada por minuto a un modelo grande cuesta dinero, y la operación que
 // protege gana céntimos. `AGENTE_ESFUERZO=low` y un modelo más barato son
@@ -27,9 +30,11 @@ const ESFUERZO = process.env.AGENTE_ESFUERZO || null; // low|medium|high|xhigh|m
 // imprime al arrancar, en vez de tomarla por él en silencio.
 
 function cliente() {
+  if (PROVEEDOR === 'openai') return require('./agente-openai').cliente();
+  if (PROVEEDOR !== 'anthropic') throw new Error('Proveedor de agente desconocido');
   const mod = require('@anthropic-ai/sdk');
   const Anthropic = mod.default || mod;
-  return new Anthropic();
+  return new Anthropic({ timeout: 40_000, maxRetries: 0 });
 }
 
 // La ÚNICA herramienta. Aquí está la asimetría, y es todo lo que hace falta
@@ -165,7 +170,22 @@ async function vigilarContexto({ activo, mercados = [], conBusqueda = false, aho
     throw new Error(`el modelo declinó responder (${respuesta.stop_details && respuesta.stop_details.category})`);
   }
 
-  return llamadas(respuesta, 'vetar').map((v) => ({
+  if (!['end_turn', 'tool_use'].includes(respuesta.stop_reason)) {
+    throw new Error('respuesta del agente incompleta: ' + respuesta.stop_reason);
+  }
+  if ((respuesta.content || []).some(b => b.type === 'web_search_tool_result' && b.content?.type === 'web_search_tool_result_error')) {
+    throw new Error('La búsqueda de contexto falló');
+  }
+  const decisiones = llamadas(respuesta, 'vetar');
+  if (!Array.isArray(respuesta.content) || !respuesta.content.length || respuesta.content.some(b => b.type === 'tool_use' && b.name !== 'vetar')) {
+    throw new Error('respuesta del agente no verificable');
+  }
+  for (const v of decisiones) {
+    if (!v || typeof v.motivo !== 'string' || !v.motivo.trim() || !['todo','serie','ticker'].includes(v.alcance) ||
+        typeof v.objetivo !== 'string' || (v.alcance !== 'todo' && !v.objetivo.trim()) ||
+        !Number.isInteger(v.minutos) || v.minutos < 1 || v.minutos > 1440) throw new Error('veto del agente inválido');
+  }
+  return decisiones.map((v) => ({
     fuente: 'agente',
     motivo: v.motivo,
     alcance: v.alcance === 'todo' || !v.objetivo
@@ -200,7 +220,11 @@ async function leerReglas({ serie, texto }) {
   }
 
   const fichas = llamadas(respuesta, 'ficha');
-  if (!fichas.length) throw new Error('el modelo no consiguió extraer la ficha');
+  if (!['end_turn', 'tool_use'].includes(respuesta.stop_reason) || fichas.length !== 1) throw new Error('el modelo no consiguió extraer una ficha completa');
+  const ficha = fichas[0];
+  if (!ficha || !['alta','media','baja'].includes(ficha.confianza) ||
+      ['indice','proveedor','composicion','hora','cita'].some(k => typeof ficha[k] !== 'string') ||
+      (ficha.cita && !texto.includes(ficha.cita))) throw new Error('ficha sin evidencia verificable');
 
   return { serie, ...fichas[0], leidoEn: new Date().toISOString(), aprobado: false };
 }
@@ -217,10 +241,12 @@ function fuenteAgente({ activo, conBusqueda = false, cadaMs = 15 * 60_000 } = {}
   return {
     nombre: 'agente',
     async vetos({ mercados = [], ahora = Date.now() } = {}) {
-      if (ahora < cache.hasta) return cache.vetos;
+      if (!conBusqueda) return [{ fuente: 'agente', motivo: 'Sin búsqueda de contexto actual: activa --web para verificar eventos recientes.', alcance: 'todo', hasta: ahora + cadaMs }];
+      const clave = mercados.map(m => m.ticker).sort().join('|');
+      if (ahora < cache.hasta && cache.clave === clave) return cache.vetos;
 
       const nuevos = await vigilarContexto({ activo, mercados, conBusqueda, ahora });
-      cache = { hasta: ahora + cadaMs, vetos: nuevos };
+      cache = { clave, hasta: Math.min(ahora + cadaMs, ...nuevos.map(v => v.hasta)), vetos: nuevos };
       return nuevos;
     },
   };
@@ -228,5 +254,5 @@ function fuenteAgente({ activo, conBusqueda = false, cadaMs = 15 * 60_000 } = {}
 
 module.exports = {
   vigilarContexto, leerReglas, fuenteAgente, cliente,
-  HERRAMIENTA_VETO, HERRAMIENTA_FICHA, MODELO, llamadas,
+  HERRAMIENTA_VETO, HERRAMIENTA_FICHA, MODELO, PROVEEDOR, llamadas,
 };

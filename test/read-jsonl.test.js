@@ -1,0 +1,3 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),{readJsonl}=require('../src/read-jsonl');
+test('streamed replay preserves UTF-8, split lines and final records; corruption fails',()=>{const root=fs.mkdtempSync(path.join(os.tmpdir(),'jsonl-')),file=path.join(root,'events');try{fs.writeFileSync(file,'{"name":"cierre €"}\r\n\n{"id":2}');assert.deepEqual([...readJsonl(file,1)],[{name:'cierre €'},{id:2}]);fs.appendFileSync(file,'\nbroken');assert.throws(()=>[...readJsonl(file,3)]);fs.unlinkSync(file);}finally{fs.rmSync(root,{recursive:true,force:true});}});

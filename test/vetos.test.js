@@ -93,11 +93,11 @@ test('una fuente sin nada que decir no estorba', async () => {
   assert.deepEqual(await V.recoger(null), []);
 });
 
-test('lo que una fuente devuelva sin motivo se descarta', async () => {
+test('una respuesta de veto mal formada bloquea nuevas entradas', async () => {
   const rara = { nombre: 'x', vetos: async () => [{ alcance: 'todo' }, null, 'texto', { motivo: 'éste sí' }] };
   const vs = await V.recoger([rara]);
   assert.equal(vs.length, 1);
-  assert.equal(vs[0].motivo, 'éste sí');
+  assert.match(vs[0].motivo, /veto mal formado/);
 });
 
 // --- El interruptor del operador -------------------------------------------

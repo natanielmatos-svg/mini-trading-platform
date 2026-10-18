@@ -391,8 +391,19 @@
       .verdict-pct { font-size: 2.25rem; }
     }
   </style>
-</head>
+<link rel="stylesheet" href="/workspace.css?v=2" />
+<link rel="stylesheet" href="/desktop.css?v=15" /><link rel="stylesheet" href="/appearance.css?v=9" />
+<script src="/appearance.js?v=1"></script>
+<script src="/disclosure-state.js?v=1"></script>
+<script src="/panel-polling.js?v=1"></script></head>
 <body>
+<a class="skip-link" href="#workspaceMain">Ir al contenido</a>
+  <div class="workspace-nav">
+    <a class="workspace-brand" href="/"><span class="workspace-mark" aria-hidden="true">↗</span>Mercado<span style="font-weight:400;color:#9cb0c2">/ terminal</span></a>
+    <nav aria-label="Mercados"><a href="/" >Criptomonedas</a><a href="/acciones.html" >Acciones</a><a href="/predicciones.html" aria-current="page">Predicciones</a></nav>
+    <span class="workspace-badge">Análisis de mercado</span>
+  </div>
+  <p class="workspace-demo" id="workspaceDemo" hidden>Modo demostración · los precios y resultados son simulados.</p>
   <div class="topbar">
     <div class="brand">
       <h1>Consenso de Predicciones</h1>
@@ -409,7 +420,7 @@
     </div>
   </div>
 
-  <main>
+  <main id="workspaceMain">
     <div class="sources" id="sources"><span class="pill plain">Cargando…</span></div>
     <div id="results"></div>
 
@@ -570,8 +581,8 @@
       if (event.arbitrage) {
         arb = `
           <div class="arb">
-            <strong>Arbitraje:</strong> comprar todas las opciones cuesta ${cents(event.arbitrage.cost)}
-            y una de ellas paga 100,0¢ → ${(event.arbitrage.returnPct * 100).toFixed(1)}% de retorno.
+            <strong>Diferencia teórica:</strong> comprar todas las opciones cuesta ${cents(event.arbitrage.cost)}
+            y, si las reglas y cobertura coinciden, el pago bruto sería 100,0¢ → ${(event.arbitrage.returnPct * 100).toFixed(1)}% de retorno.
             <p>${event.arbitrage.legs.map((l) => `${esc(l.label)} en ${esc(l.platform)} a ${cents(l.ask)}`).join(' + ')}</p>
             <p>Resta comisiones y comprueba que hay tamaño real a esos precios.</p>
           </div>`;
@@ -592,7 +603,7 @@
 
           <div class="verdict">
             <div>
-              <span class="eyebrow">${event.verdict.decisive ? 'Más probable' : 'Empate técnico · va por delante'}</span>
+              <span class="eyebrow">${!event.optionsComplete ? 'Cobertura incompleta' : event.verdict.decisive ? 'Más probable' : 'Empate técnico · va por delante'}</span>
               <p class="verdict-name">${esc(top.label)}</p>
               <p class="verdict-note">${detail.join(' · ') || 'única opción cotizada'}</p>
             </div>
@@ -676,5 +687,7 @@
 
     run();
   </script>
-</body>
+<footer class="workspace-footer">Precios con su fuente · estimaciones con incertidumbre · operaciones del bot en simulación.</footer>
+<script src="/workspace.js?v=11"></script>
+<script src="/desktop.js?v=12"></script></body>
 </html>

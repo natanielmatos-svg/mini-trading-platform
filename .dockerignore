@@ -6,3 +6,17 @@ test
 *.zip
 *.md
 .env
+.env.*
+!.env.example
+.venv*/
+__pycache__/
+_local/
+data/*
+!data/demo/
+!data/demo/**
+datos/
+mercados.json
+vetos.json
+*.log
+*.pem
+*.key

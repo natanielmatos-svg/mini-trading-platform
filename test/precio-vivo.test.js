@@ -225,7 +225,7 @@ test('el calmado es sólo de pantalla: no toca el precio del análisis', () => {
     // El calmador sólo aparece en el pintado del reloj, nunca alimentando
     // evaluateSignals ni la petición de ruptura.
     const lineasCalma = código.split('\n').filter((l) => l.includes('calma.siguiente'));
-    assert.equal(lineasCalma.length, 1, `${pagina}: el calmador se usa en más de un sitio`);
+    assert.equal(lineasCalma.length, pagina.includes('acciones') ? 1 : 0, `${pagina}: precio consolidado sin suavizado; acciones solo en pantalla`);
     assert.doesNotMatch(código, /price:\s*calma\./, `${pagina}: el análisis no puede recibir el precio calmado`);
   }
 });

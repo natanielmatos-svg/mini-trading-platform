@@ -42,7 +42,7 @@ const OP = {
   serie: arg('serie', process.env.KALSHI_SERIE || 'KXBTCD'),
   symbol: arg('symbol', process.env.KALSHI_SYMBOL || 'BTCUSDT'),
   interval: arg('interval', '1h'),
-  capital: Number(arg('capital', process.env.KALSHI_CAPITAL || 500)),
+  capital: Number(arg('capital', require('../src/trading-settings').read().capital)),
   cada: Number(arg('cada', 60)) * 1000,
   vetosArchivo: arg('vetos', path.join(process.cwd(), 'vetos.json')),
   conAgente: tiene('agente'),
@@ -119,6 +119,9 @@ async function cmdAutopsia() {
 // --- Subcomando por defecto: el bucle --------------------------------------
 
 async function cmdVigilar() {
+  const control=require('../src/bot-control');
+  control.acquire();
+  if(!fs.existsSync(path.join(__dirname,'../datos/bot-control.json')))control.save({...control.read(),agentEnabled:OP.conAgente});
   console.log('Agente y bucle — mira, decide y anota. NO envía órdenes.\n');
   console.log(`  API            ${OP.demo ? '(ninguna: modo demo)' : KALSHI_BASE}`);
   console.log(`  serie          ${OP.serie}`);
@@ -137,12 +140,37 @@ async function cmdVigilar() {
     vetos.fuenteArchivo(OP.vetosArchivo),
     reglas.fuenteReglas(),
   ];
-  if (OP.conAgente) fuentes.push(agente.fuenteAgente({ activo: OP.symbol, conBusqueda: OP.conBusqueda }));
+  let agentBusy=false;
+  const agentSource=agente.fuenteAgente({ activo: OP.symbol, conBusqueda: OP.conBusqueda });
+  fuentes.push({nombre:'agente',async vetos(context){
+    if(!control.read().agentEnabled)return [];
+    agentBusy=true;
+    try{return await agentSource.vetos(context);}finally{agentBusy=false;}
+  }});
 
   // La predicción es cara: se recalcula cada dos minutos, no en cada vuelta.
+  const evidencia = OP.demo ? null : require('../src/evidencia').crear();
+  const book = require('../src/kalshi-book');
+  let referencia = null;
+  const liquidacion = require('../src/kalshi-settlement').fetchResult;
   let cache = { hasta: 0, valor: null, precio: null };
   async function prediccion() {
     const ahora = Date.now();
+    if (!OP.demo) {
+      referencia = await require('../src/kalshi-reference').getReference({ symbol: OP.symbol, collect: true });
+      if (!referencia.ok) throw new Error(referencia.reason);
+      const history = require('../src/reference-history');
+      const candles = history.continuas(history.leer(referencia.index), ahora).slice(-600);
+      if (ahora >= cache.hasta || !cache.valor) {
+        const horizontes = candles.length >= 400 ? await predecirHorizontes({ series: { '1m': candles }, interval: '1m' }) : [];
+        cache = { hasta: ahora + 60000, valor: { horizontes,
+          fuente: referencia.index + ' / CF Benchmarks vía Kalshi / USD',
+          objetivo: 'precio instantáneo; promedio de liquidación aún no validado',
+          bloqueoEntradas: candles.length < 400 ? `Recogiendo histórico del índice: ${candles.length}/400 minutos continuos` : 'Validación pendiente del objetivo de liquidación y tarifas por serie',
+          muestrasIndice: candles.length }, precio: referencia.price };
+      }
+      return cache.valor;
+    }
     if (ahora < cache.hasta && cache.valor) return cache.valor;
 
     const series = {};
@@ -156,14 +184,47 @@ async function cmdVigilar() {
 
   const bucle = crearBucle({
     obtenerMercados: async () => {
-      if (!OP.demo) return listarMercados({ serie: OP.serie });
+      if (!OP.demo) {
+        if (OP.symbol !== 'BTCUSDT' || OP.serie !== 'KXBTCD') throw new Error('Piloto acotado a BTC/KXBTCD hasta validar otros contratos');
+        const result = await listarMercados({ serie: OP.serie });
+        const ref = await require('../src/kalshi-reference').getReference({ symbol: OP.symbol, collect: true });
+        if (!ref.ok) throw new Error(ref.reason);
+        // Piloto explícito: 12 strikes próximos al índice y cierre en la próxima hora.
+        const now = Date.now();
+        result.mercados = result.mercados.filter(m => m.vencimiento - now > 120000 && m.vencimiento - now <= 3600000)
+          .sort((a,b) => Math.abs((a.suelo || a.techo) - ref.price) - Math.abs((b.suelo || b.techo) - ref.price)).slice(0,12);
+        return result;
+      }
       await prediccion();
       return mercadosDemo({ precio: cache.precio, horizontes: cache.valor.horizontes, sesgo: Number(arg('sesgo', 0)), symbol: OP.symbol });
     },
     obtenerPrediccion: prediccion,
-    obtenerPrecio: async () => { await prediccion(); return cache.precio; },
+    obtenerLiquidacion: OP.demo ? null : liquidacion,
+    supervisar: evidencia ? () => evidencia.resolver(liquidacion) : null,
+    observar: evidencia ? data => evidencia.observar({ ...data, referencia }) : null,
+    refrescarMercado: OP.demo ? null : async m => {
+      if (!m.tipo) m = (await require('../src/kalshi-mercados').verMercado({ ticker: m.ticker })).leido;
+      if (!m) throw new Error('Mercado cerrado');
+      return book.aplicar(m, await book.obtener(m.ticker));
+    },
+    obtenerPrecio: async () => {
+      if (OP.demo) { await prediccion(); return cache.precio; }
+      referencia = await require('../src/kalshi-reference').getReference({ symbol: OP.symbol });
+      if (!referencia.ok) throw new Error(referencia.reason);
+      return referencia.price;
+    },
     fuentes,
     capital: OP.capital,
+    riesgoActual: (ahora) => {
+      const config=require('../src/trading-settings').read();
+      const start=new Date(ahora).toISOString().slice(0,10);
+      const history=registro.leer();
+      if(history.rotas)throw new Error('Registro dañado');
+      const pnl=history.entradas.filter(e=>String(e.t).startsWith(start)&&['salida','liquidacion'].includes(e.tipo)).reduce((s,e)=>s+(Number.isFinite(e.pnl)?e.pnl:0),0);
+      const maxDailyLoss=config.capital*config.maxDailyLossPct/100;
+      return {...config,maxPerTrade:config.maxPerTrade??config.capital,dailyRemaining:Math.max(0,maxDailyLoss+Math.min(0,pnl)),
+        blocked:!control.read().botEnabled?'Detención solicitada':config.paused?'Entradas pausadas por el usuario':-pnl>=maxDailyLoss?'Pérdida diaria máxima alcanzada':null};
+    },
     cadaMs: OP.cada,
     // El ruido de base que se declaró al aprobar la serie, no el de por
     // defecto: operar con un número distinto del que alguien firmó sería
@@ -187,7 +248,10 @@ async function cmdVigilar() {
 
   // La cartera de antes de reiniciar: sin esto se creería plano y volvería a
   // «comprar» lo que ya tenía.
-  const previas = reconstruir(registro.leer().entradas);
+  const historial = registro.leer();
+  if (historial.rotas) throw new Error('El registro contiene líneas dañadas; revisar antes de reconstruir la cartera.');
+  const previas = reconstruir(historial.entradas);
+  bucle.estado.pnlRealizado = historial.entradas.reduce((sum, e) => sum + (['salida','liquidacion'].includes(e.tipo) && Number.isFinite(e.pnl) ? e.pnl : 0), 0);
   for (const [k, v] of previas) bucle.estado.posiciones.set(k, v);
   if (previas.size) console.log(`Recuperadas ${previas.size} posiciones de papel del cuaderno.\n`);
 
@@ -199,7 +263,20 @@ async function cmdVigilar() {
     });
   }
 
+  const runtime=require('../src/bot-runtime');
+  const heartbeat=()=>runtime.write({running:bucle.estado.corriendo,controlled:true,agentEnabled:control.read().agentEnabled,agentBusy,stopping:!control.read().botEnabled,cycle:bucle.estado.vueltas,symbol:OP.symbol,interval:OP.interval,lastError:bucle.estado.ultimoError,source:cache.valor?.fuente,warmup:cache.valor?.muestrasIndice,entryBlock:cache.valor?.bloqueoEntradas});
+  if(!control.read().botEnabled)return;
   bucle.arrancar();
+  heartbeat();
+  const controlTimer=setInterval(()=>{
+    try{
+      if(!control.read().botEnabled){
+        bucle.parar();heartbeat();
+        if(!bucle.estado.ocupado&&!agentBusy){clearInterval(controlTimer);process.exit(0);}
+      }
+    }catch{bucle.parar();}
+  },1000);controlTimer.unref();
+  setInterval(()=>{try{heartbeat();}catch{bucle.parar();}},15000).unref();
 }
 
 function fallo(mensaje) {

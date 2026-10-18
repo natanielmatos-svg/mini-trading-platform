@@ -1,0 +1,7 @@
+const fs=require('node:fs'),path=require('node:path'),{spawn,execFileSync}=require('node:child_process');
+const root=path.join(__dirname,'..'),logDir=path.join(root,'datos/logs');fs.mkdirSync(logDir,{recursive:true});
+function listening(port){return new RegExp('127\\.0\\.0\\.1:'+port+'\\s+\\S+\\s+LISTENING').test(execFileSync('netstat',['-ano','-p','tcp'],{encoding:'utf8'}));}
+function launch(name,args,env={}){const stamp=Date.now(),out=fs.openSync(path.join(logDir,name+'-'+stamp+'.out.log'),'a'),err=fs.openSync(path.join(logDir,name+'-'+stamp+'.err.log'),'a');const p=spawn(process.execPath,args,{cwd:root,env:{...process.env,...env},windowsHide:true,detached:true,stdio:['ignore',out,err]});p.unref();console.log(JSON.stringify({name,pid:p.pid}));}
+if(!listening(3000))launch('web',[path.join(root,'server.js')],{NODE_ENV:'production',DEMO:'0',HOST:'127.0.0.1',PORT:'3000'});else console.log('web already listening');
+if(!listening(3002))launch('gateway',[path.join(root,'scripts/remote-access.js')]);else console.log('gateway already listening');
+(async()=>{try{const r=await fetch('http://127.0.0.1:20241/metrics',{signal:AbortSignal.timeout(5000)});const s=await r.text();console.log(s.split('\n').filter(l=>!l.startsWith('#')&&(/tunnel_id|ha_connections/.test(l))).slice(0,8).join('\n'));}catch(e){console.log('tunnel metrics unavailable',e.name);}const cfg='C:\\Users\\natan\\.cloudflared\\trading.yml';if(fs.existsSync(cfg)){const s=fs.readFileSync(cfg,'utf8');console.log('trading tunnel',s.match(/^tunnel:\s*(.+)$/m)?.[1]);}})();

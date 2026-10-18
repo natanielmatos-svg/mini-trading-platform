@@ -131,7 +131,7 @@ test('findArbitrage detecta cuando comprar todas las opciones cuesta menos de 1'
     { label: 'C', bestPrice: { ask: 0.1, platformLabel: 'Z' } },
   ];
 
-  const arb = findArbitrage(options, true);
+  const arb = findArbitrage(options, true, true);
   assert.ok(arb);
   assert.ok(Math.abs(arb.cost - 0.95) < 1e-9);
   assert.ok(Math.abs(arb.profit - 0.05) < 1e-9);
@@ -177,6 +177,7 @@ test('un margen mínimo se presenta como empate, no como favorito', () => {
       url: '',
       closesAt: null,
       mutuallyExclusive: true,
+      optionsComplete: true,
       liquidity: 5e6,
       volume: 5e7,
       options: probabilidades.map(([label, p]) => ({

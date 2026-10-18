@@ -193,7 +193,7 @@ function render(contenedor, { breakout, price = null, remaining = 1, force = fal
     <div class="verdict ${nota ? 'flat' : bias.cls}">${nota || bias.text}</div>
     ${sideHtml(up, 'Ruptura al alza', 'up')}
     ${sideHtml(down, 'Ruptura a la baja', 'down')}
-    <details class="method" data-k="porque" open>
+    <details class="method" data-k="porque">
       <summary>Por qué</summary>
       ${b.explanation.map((line) => `<p>${line}</p>`).join('')}
     </details>

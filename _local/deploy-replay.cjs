@@ -1,0 +1,1 @@
+const fs=require('node:fs');let s=fs.readFileSync('_local/deploy-performance.cjs','utf8').replaceAll('25120','21896');fs.writeFileSync('_local/deploy-performance-second.cjs',s);for(const name of ['public/index.html','public/acciones.html'])fs.writeFileSync(name,fs.readFileSync(name,'utf8').replace('/learning.js?v=8','/learning.js?v=9'));require('./deploy-performance-second.cjs');

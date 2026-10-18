@@ -1,0 +1,2 @@
+const fs=require('node:fs');
+const file='src/kalshi-lag-lab.js';let s=fs.readFileSync(file,'utf8'),old='cached={ticker:c.ticker,closesAt:c.closesAt,fees,sellFees};';if(!s.includes(old))throw Error('Marker missing');s=s.replace(old,"cached={ticker:c.ticker,closesAt:c.closesAt,threshold:c.threshold,operator:c.operator,rulesHash:require('node:crypto').createHash('sha256').update(JSON.stringify([m.rules_primary||'',m.rules_secondary||''])).digest('hex'),fees,sellFees};");fs.writeFileSync(file,s);

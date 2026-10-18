@@ -77,18 +77,28 @@ async function recoger(fuentes, contexto = {}) {
   const todos = [];
 
   for (const fuente of fuentes || []) {
-    if (!fuente || typeof fuente.vetos !== 'function') continue;
+    let timer;
     try {
-      const r = await fuente.vetos(contexto);
-      for (const v of Array.isArray(r) ? r : []) {
-        if (v && v.motivo) todos.push(veto({ ...v, fuente: v.fuente || fuente.nombre }));
+      if (!fuente || typeof fuente.vetos !== 'function') throw new Error('fuente inválida');
+      const r = await Promise.race([
+        Promise.resolve().then(() => fuente.vetos(contexto)),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('tiempo de consulta agotado')), fuente.timeoutMs || 45_000); }),
+      ]);
+      if (!Array.isArray(r)) throw new Error('respuesta de vetos inválida');
+      for (const v of r) {
+        if (!v || typeof v.motivo !== 'string' || !v.motivo.trim() ||
+            (v.hasta != null && !Number.isFinite(v.hasta)) ||
+            (v.alcance != null && v.alcance !== 'todo' &&
+              !(typeof v.alcance.ticker === 'string' && v.alcance.ticker.trim()) &&
+              !(typeof v.alcance.serie === 'string' && v.alcance.serie.trim()))) throw new Error('veto mal formado');
+        todos.push(veto({ ...v, fuente: v.fuente || fuente.nombre }));
       }
     } catch (err) {
       todos.push(veto({
-        fuente: fuente.nombre || 'desconocida',
+        fuente: fuente?.nombre || 'desconocida',
         motivo: `no se pudo consultar (${err.message}); se prefiere no operar a operar a ciegas`,
       }));
-    }
+    } finally { clearTimeout(timer); }
   }
 
   return todos;
@@ -116,7 +126,7 @@ function fuenteArchivo(ruta, fs = require('node:fs')) {
 
       const datos = JSON.parse(crudo);
       const lista = Array.isArray(datos) ? datos : [datos];
-      return lista.filter((v) => v && v.motivo);
+      return lista;
     },
   };
 }

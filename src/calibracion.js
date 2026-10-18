@@ -100,7 +100,7 @@ function pinball(prediccion, real, q) {
  * @param candles   histórico completo
  * @param opciones  { bloques, paso, cuantiles, calentamiento }
  */
-function calibrar(candles, { bloques = 1, paso = 1, cuantiles = F.CUANTILES, calentamiento = CALENTAMIENTO } = {}) {
+function calibrar(candles, { bloques = 1, paso = 1, cuantiles = F.CUANTILES, calentamiento = CALENTAMIENTO, usarConformes = false } = {}) {
   if (!Array.isArray(candles) || candles.length < calentamiento + bloques + 20) {
     return { ok: false, reason: `hacen falta al menos ${calentamiento + bloques + 20} velas y hay ${Array.isArray(candles) ? candles.length : 0}` };
   }
@@ -122,7 +122,10 @@ function calibrar(candles, { bloques = 1, paso = 1, cuantiles = F.CUANTILES, cal
     const real = candles[t + bloques].close;
     if (!(real > 0)) continue;
 
-    const f = F.predecir(historia, { bloques, cuantiles, conRejilla: false });
+    const conformes = usarConformes ? F.cuantilesConformes(historia, { bloques }) : null;
+    // No mezclar resultados del modelo base con los del modelo publicado.
+    if (usarConformes && !conformes) continue;
+    const f = F.predecir(historia, { bloques, cuantiles, conformes, conRejilla: false });
     if (!f.ok) continue;
     const r = referencia(historia, { bloques, cuantiles });
     if (!r) continue;
@@ -152,6 +155,7 @@ function calibrar(candles, { bloques = 1, paso = 1, cuantiles = F.CUANTILES, cal
     ok: true,
     bloques,
     predicciones: n,
+    metodo: usarConformes ? 'conforme walk-forward' : 'base walk-forward',
     cobertura: intervalos.map(([lo, hi], i) => ({
       // Redondeado a propósito: 0,95 − 0,05 da 0,8999999999999999 y quien
       // busque la banda del 90% comparando por igualdad no la encuentra.

@@ -299,6 +299,7 @@ function demoQuotes({ symbol, now, venues = null }) {
     const ruido = Math.sin(now / 3000 + venue.meta.id.length) * 0.00003;
     return {
       ...venue.meta,
+      valueQuote: 'USD',
       ok: base !== null,
       price: base === null ? null : base * (1 + desvio + ruido),
       source: venue.meta.kind === 'índice' ? 'índice' : 'libro',
