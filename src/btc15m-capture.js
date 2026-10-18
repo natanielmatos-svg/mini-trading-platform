@@ -13,6 +13,44 @@ const midpoint=require('./kalshi-midpoint');
 const calibrationTrial=require('./midpoint-calibration-trial');
 const priceTrial=require('./midpoint-price-trial');
 const residualTrial=require('./market-residual-trial');
+// Cuál de los umbrales se captura.
+//
+// Kalshi publica una ESCALERA de strikes por cada cierre, no uno. Exigir
+// exactamente uno hacía abortar la captura en casi todas las rondas: diecisiete
+// contratos en tres semanas, cuando los de quince minutos dan noventa y seis al
+// día. El piloto no iba lento, no iba.
+//
+// Se elige el strike más cercano al precio observado. Es el de mayor contenido
+// informativo —su probabilidad está cerca del 50%— y por tanto el único donde
+// los modelos llegan a distinguirse entre sí. Quedarse con `contracts[0]`, que
+// viene ordenado por umbral ascendente, habría capturado siempre el más
+// profundo dentro del dinero: el contrato cuya respuesta se sabe de antemano y
+// que todos los modelos aciertan.
+//
+// Dos casos siguen abortando, y los dos a propósito:
+//
+//   · Sin precio observado no se elige. Coger uno arbitrario mezclaría en la
+//     muestra strikes triviales y difíciles que después nadie podría separar.
+//   · Dos umbrales a la misma distancia es ambigüedad de verdad —el mismo
+//     contrato listado dos veces, o una escalera simétrica— y ahí elegir sería
+//     inventarse un criterio.
+function elegirUmbral(chosen,blocks,hasta){
+ const candidatos=chosen.contracts;
+ if(candidatos.length<=1)return candidatos[0]||null;
+
+ const referencia=[...(blocks||[])]
+  .filter(b=>b.symbol==='BTCUSDT'&&b.interval==='15m'&&b.closesAt===chosen.closesAt)
+  .flatMap(b=>b.observations||[])
+  .filter(o=>o&&o.at<=hasta&&Number.isFinite(o.price)&&o.price>0)
+  .sort((a,b)=>b.at-a.at)[0]?.price;
+ if(!(referencia>0))return null;
+
+ const distancia=c=>Math.abs(c.threshold-referencia);
+ const mejor=candidatos.reduce((a,b)=>distancia(b)<distancia(a)?b:a);
+ if(candidatos.filter(c=>distancia(c)===distancia(mejor)).length>1)return null;
+ return mejor;
+}
+
 function create({root=path.join(__dirname,'..','datos','piloto-btc15m'),clock=Date.now,
   list=()=>fetchJson(BASE+'/markets?series_ticker=KXBTC15M&status=open&limit=1000',{timeoutMs:6000,retries:0}),
   market=ticker=>fetchJson(BASE+'/markets/'+encodeURIComponent(ticker),{timeoutMs:6000,retries:0}).then(r=>r.market),
@@ -51,8 +89,9 @@ function create({root=path.join(__dirname,'..','datos','piloto-btc15m'),clock=Da
     const requestedAt=clock(),response=await list(),receivedAt=clock();
     if(!Array.isArray(response.markets)||response.cursor)throw Error('Listado incompleto');
     const chosen=select(response.markets,{symbol:'BTCUSDT',interval:'15m',now:receivedAt});
-    if(chosen.contracts.length!==1){errors.push('No hay un único umbral BTC15m válido para este bloque');return;}
-    const c=chosen.contracts[0],m=response.markets.find(m=>m.ticker===c.ticker);
+    const c=elegirUmbral(chosen,blocks,requestedAt);
+    if(!c){errors.push('No hay un umbral BTC15m elegible para este bloque');return;}
+    const m=response.markets.find(m=>m.ticker===c.ticker);
     const observeBRTI=brti&&!brtiDecisions.has(c.ticker)&&Math.abs(c.closesAt-requestedAt-600000)<=30000;
     const observeMidpoint=brti&&Math.abs(c.closesAt-requestedAt-450000)<=30000&&!midpointHistory.some(s=>s.ticker===c.ticker&&s.midpointProbability);
     let reference=null,feeMetadata=null;
@@ -134,4 +173,4 @@ function create({root=path.join(__dirname,'..','datos','piloto-btc15m'),clock=Da
  const baseSnapshot=()=>({...snapshot(),midpoint:midpoint.summarize(midpointHistory,settlements),midpointCalibrationTrial:calibrationTrial.summarize(midpointHistory,settlements),midpointPriceTrial:priceTrial.summarize(midpointHistory,settlements),marketResidualTrial:residualTrial.summarize(midpointHistory,settlements),motionCandidate:motion.summarize(motionHistory,settlements),featureCollection:{version:'kalshi-market-features-v1',samples:motionSamples,complete60sSamples:completeMotionSamples,latest:latestMotion,modelChanged:false}});
  return {tick,snapshot:()=>!historyReady?{loadingHistory:true,mode:'observation',samples:null,joinedSamples:null,resolvedContracts:null,fixedWindowSamples:null,liveEnabled:false,errors:historyError?[historyError]:[],historyError}:{...baseSnapshot(),loadingHistory:false,brtiProspective:require('./brti-prospective').summarize(brtiDecisions,settlements),modelBenchmark:benchmark.summarize(history,settlements),hybrid:hybrid.summarize(history,settlements),ablation:require('./kalshi-ablation').summarize(history,settlements)}};
 }
-module.exports={create};
+module.exports={create,elegirUmbral};
