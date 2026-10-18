@@ -12,7 +12,8 @@
     "diagnose": "node scripts/diagnose.js",
     "alpaca": "node scripts/alpaca.js",
     "kalshi": "node scripts/kalshi.js",
-    "agente": "node scripts/agente.js"
+    "agente": "node scripts/agente.js",
+    "potencia": "node scripts/potencia.js"
   },
   "engines": {
     "node": ">=20"

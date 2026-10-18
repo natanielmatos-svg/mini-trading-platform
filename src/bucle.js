@@ -227,9 +227,20 @@ function crearBucle({
       if (!estado.corriendo) return;
       await ciclo();
       if (!estado.corriendo) return;
+      // El temporizador va REFERENCIADO, y es justo lo contrario de lo que
+      // ponía aquí. Llevaba un `unref()` con el razonamiento de que un reloj
+      // pendiente no debiera impedir que el proceso termine — pero un
+      // temporizador sin referencia no mantiene vivo el bucle de eventos de
+      // Node, así que el proceso se moría solo en cuanto acababa la primera
+      // vuelta. Un bucle pensado para llevar días encendido duraba una vuelta.
+      //
+      // No hacía ninguna falta: `parar()` ya hace `clearTimeout`, que es la
+      // forma correcta de dejar terminar el proceso.
+      //
+      // No lo cazó ninguna prueba porque las pruebas llaman a `ciclo()` a mano
+      // y el propio corredor de tests mantiene vivo el proceso. Sólo se ve
+      // ejecutando el servicio de verdad.
       estado.temporizador = setTimeout(tic, cadaMs);
-      // Un temporizador pendiente no debe impedir que el proceso termine si
-      // alguien lo para: el bucle manda sobre el reloj, no al revés.
     };
     tic();
   }

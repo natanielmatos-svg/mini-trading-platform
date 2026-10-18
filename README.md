@@ -19,7 +19,7 @@ mismo código (ver [Estructura](#estructura)).
 npm install
 npm start            # http://localhost:3000
 npm run demo         # datos de ejemplo, sin salida a Internet (también el gráfico)
-npm test             # 481 tests, sin red
+npm test             # 508 tests, sin red
 npm run smoke        # valida las APIs reales (obligatorio antes de desplegar)
 npm run static -- salida.html --demo   # instantánea estática autocontenida
 ```
@@ -38,7 +38,7 @@ versión anterior, y eso ya pasó una vez.
 ### Cómo se prueba
 
 ```bash
-npm test          # 481 tests, sin red, en unos ocho segundos
+npm test          # 508 tests, sin red, en unos ocho segundos
 npm run smoke     # llama a las APIs de verdad — la única prueba que las valida
 ```
 
@@ -825,7 +825,7 @@ y va aparte, para que nadie mueva dinero por lanzar un diagnóstico.
 **1. Sin red y sin claves.** Prueba la tubería entera antes de tocar nada real:
 
 ```bash
-npm test                                   # 481 tests
+npm test                                   # 508 tests
 npm run kalshi -- --demo --todos           # el escáner, con mercados inventados
 npm run kalshi -- --demo --sesgo 15        # y el camino positivo
 ```
@@ -907,6 +907,46 @@ Se lo comen tres cosas, y las tres están en `src/kalshi-edge.js`:
    horquilla son dos céntimos menos de ventaja.
 3. **El margen exigido.** Otros 2¢ por contrato, porque `p` es una estimación y
    no un dato.
+
+### Antes de recoger datos: ¿cuántos hacen falta?
+
+```bash
+npm run potencia -- --aciertos 11 --casos 17
+```
+
+Es la pregunta que va **antes** que «¿cuánto voy a ganar?», y que casi nunca se
+hace. Un porcentaje de aciertos sin su intervalo no distingue una estrategia
+ganadora de una perdedora:
+
+```
+  acierto observado   64,7%
+  intervalo 95%       41,3% a 82,7%
+  equilibrio          52%  (50¢ + 2¢ de comisión)
+
+  ⚠ la muestra es compatible con ganar Y con perder: no concluye nada
+```
+
+Un 64,7% suena estupendo. El intervalo va del 41% al 83% y el equilibrio cae
+justo en medio. Con esa muestra no se sabe nada, y cualquier cifra de
+rentabilidad que salga de ella es ruido con formato de resultado.
+
+Y cuántos contratos harían falta, según lo grande que sea la ventaja de verdad:
+
+| si el acierto real es | ventaja/contrato | contratos |
+|---:|---:|---:|
+| 64,7% *(el medido)* | 0,127 $ | 119 |
+| 60% | 0,080 $ | 303 |
+| 58% | 0,060 $ | 541 |
+| 56% | 0,040 $ | 1.220 |
+| 54% | 0,020 $ | 4.891 |
+
+**Media ventaja no cuesta el doble de muestra: cuesta cuatro veces.** Por eso
+planificar con la tasa medida es el error clásico — sale de una muestra corta
+y suele elegirse después de mirar los datos, así que es la más optimista que
+hay y da el tamaño de muestra más pequeño posible.
+
+El intervalo es de Wilson y no de Wald, que con muestras cortas se sale de
+[0,1] y da intervalos demasiado estrechos: miente justo donde más daño hace.
 
 ### Los tres interruptores que impiden operar
 
@@ -1498,6 +1538,7 @@ src/
   prediccion.js        qué horizontes se piden y con qué serie se calcula cada uno
   kalshi-edge.js       ¿está barato este contrato? comisiones, frenos y tamaño
   kalshi-mercados.js   los contratos de Kalshi, traducidos a algo valorable
+  potencia.js          cuántos contratos hacen falta para saber si hay ventaja
   vetos.js             el freno: sólo sabe decir que no, por construcción
   agente.js            el modelo leyendo lenguaje, con una sola herramienta
   reglas.js            contra qué liquida cada serie, y quién ha dicho que sí
@@ -1537,11 +1578,12 @@ public/
 data/demo/             datos de ejemplo (también usados por los tests)
 scripts/alpaca.js        comprueba la clave de Alpaca y nada más
 scripts/kalshi.js        qué operaría el bot en Kalshi; lee y calcula, no envía
+scripts/potencia.js      el tamaño de muestra por debajo del cual no se concluye
 scripts/agente.js        el bucle, el agente y la autopsia del cuaderno
 scripts/smoke.js         valida las APIs reales antes de desplegar
 scripts/build-static.js  instantánea estática autocontenida para compartir
 deploy/                  unidad systemd y configuración de Nginx
 .github/workflows/ci.yml tests en cada push + APIs reales una vez al día
 Dockerfile, docker-compose.yml
-test/                  481 tests, sin red
+test/                  508 tests, sin red
 ```
