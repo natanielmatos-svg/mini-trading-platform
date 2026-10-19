@@ -1,6 +1,9 @@
 'use strict';
 const crypto=require('node:crypto');
 const VERSION='local-ridge-v1';
+// Cierres resueltos que hacen falta EN LA MISMA FASE del bloque antes de
+// proponer nada. Con cuatro fases, no son 30 cierres: son 30 por fase.
+const MINIMO_ENTRENAMIENTO=30;
 const FEATURES=['remaining','returnPct','rangePct','momentumPct','basisPct','basisMissing'];
 function features(block,o){
   if(!(o.price>0)||!(o.open>0)||!Number.isFinite(o.high)||!Number.isFinite(o.low)||o.at<block.opensAt||o.at>=block.closesAt)return null;
@@ -26,7 +29,7 @@ function propose(block,observation,blocks){
     const o=b.observations.find(o=>phase(b,o)===bucket&&features(b,o));if(!o)continue;
     rows.push({x:features(b,o),y:100*(b.actual/o.price-1),closesAt:b.closesAt,resolvedAt:b.resolvedAt});
   }
-  rows.sort((a,b)=>a.closesAt-b.closesAt);const training=rows.slice(-500);if(training.length<30)return null;
+  rows.sort((a,b)=>a.closesAt-b.closesAt);const training=rows.slice(-500);if(training.length<MINIMO_ENTRENAMIENTO)return null;
   const n=training.length,means=x.map((_,j)=>training.reduce((s,r)=>s+r.x[j],0)/n);
   const scales=x.map((_,j)=>Math.sqrt(training.reduce((s,r)=>s+(r.x[j]-means[j])**2,0)/n)||1);
   const design=r=>[1,...r.map((v,j)=>(v-means[j])/scales[j])];
@@ -41,4 +44,4 @@ function propose(block,observation,blocks){
   const modelId=crypto.createHash('sha256').update(JSON.stringify(model)).digest('hex').slice(0,20);
   return {version:VERSION,modelId,model,at:observation.at,closesAt:block.closesAt,phase:bucket,price:observation.price*(1+bounded/100),baseline:observation.price,rawNeural:block.prediction?.at<=observation.at?block.prediction.raw:null,predictedReturnPct:bounded,clipped:bounded!==pct,trainingSamples:n,active:false,features:x};
 }
-module.exports={VERSION,FEATURES,features,phase,propose};
+module.exports={VERSION,MINIMO_ENTRENAMIENTO,FEATURES,features,phase,propose};

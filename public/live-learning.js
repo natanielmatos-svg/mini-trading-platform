@@ -37,5 +37,6 @@ window.mountLiveLearning=function(panel){
   window.addEventListener('pagehide',()=>{source?.close();source=null;quiet();});
   window.addEventListener('pageshow',connect);
   connect();
-  return {select(key){let next;try{next=JSON.parse(key);}catch{return;}if(JSON.stringify(next)!==JSON.stringify(selected)){selected=next;minutes?.select(next);quiet();nodes.forEach(n=>n.querySelector('small').textContent='Esperando evento');feed.textContent=next[0]+' · '+next[1]+' · procesamiento del aprendizaje, todas las fases';}}};
+  return {select(key){let next;try{next=JSON.parse(key);}catch{return;}if(JSON.stringify(next)!==JSON.stringify(selected)){selected=next;minutes?.select(next);quiet();nodes.forEach(n=>n.querySelector('small').textContent='Esperando evento');
+   nodes[2].querySelector('small').textContent=next[0]==='BTCUSDT'&&next[1]==='15m'?'Esperando · necesita 30 cierres de esta fase':'Sólo para BTCUSDT · 15m';feed.textContent=next[0]+' · '+next[1]+' · procesamiento del aprendizaje, todas las fases';}}};
 };
