@@ -13,7 +13,8 @@
     "alpaca": "node scripts/alpaca.js",
     "kalshi": "node scripts/kalshi.js",
     "agente": "node scripts/agente.js",
-    "potencia": "node scripts/potencia.js"
+    "potencia": "node scripts/potencia.js",
+    "pronosticos": "node scripts/pronosticos.js"
   },
   "engines": {
     "node": ">=20"
