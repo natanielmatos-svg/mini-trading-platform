@@ -14,7 +14,8 @@
     "kalshi": "node scripts/kalshi.js",
     "agente": "node scripts/agente.js",
     "potencia": "node scripts/potencia.js",
-    "pronosticos": "node scripts/pronosticos.js"
+    "pronosticos": "node scripts/pronosticos.js",
+    "precio-contrato": "node scripts/precio-contrato.js"
   },
   "engines": {
     "node": ">=20"
